@@ -9,12 +9,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync, rmSync } from "node:fs";
 import {
   checkedPlaneByPlane,
+  partlyByType,
   publishedCount,
   statedCount,
   trackingMethod,
 } from "../src/airlines/published-count";
 import {
   type AirlineConfig,
+  airlineSlug,
   enabledAirlines,
   hubContentAirlines,
   hubLookupAirlines,
@@ -300,6 +302,53 @@ describe("hub home page", () => {
     for (const sentence of descriptions.flatMap((d) => d.split(/(?<=\.)\s+/))) {
       if (!/plane[ -]by[ -]plane/i.test(sentence)) continue;
       for (const cfg of notPlaneByPlane) expect(sentence).not.toContain(cfg.shortName);
+    }
+  });
+
+  // "Not plane by plane" is the denial, and may name the airline it denies.
+  const INLINE = /<\/?(?:a|span|strong|em|b|i|abbr|time)\b[^>]*>/g;
+  const sentencesOf = (html: string) =>
+    html
+      .replace(/<(script|style)\b[\s\S]*?<\/\1>/g, "\n")
+      .replace(/<!-- -->/g, "")
+      .replace(INLINE, "")
+      .replace(/<[^>]+>/g, "\n")
+      .replace(/&#x27;/g, "'")
+      .split(/\n|(?<=\.)\s+/)
+      .map((s) => s.replace(/\bnot (?:checked )?plane by plane/gi, ""));
+  const saysPlaneByPlane = (s: string) => /plane[ -]by[ -]plane/i.test(s);
+
+  test("no hub page or /airlines description calls an airline with a type rule plane by plane", async () => {
+    const notPlaneByPlane = hubContentAirlines().filter((cfg) => !checkedPlaneByPlane(cfg));
+    if (!notPlaneByPlane.some(partlyByType)) {
+      throw new Error("no airline mixes a type rule with per-aircraft checks: nothing is tested");
+    }
+    const [home, index] = await Promise.all([bodyOf("/"), bodyOf("/airlines")]);
+    expect(home.status).toBe(200);
+    expect(index.status).toBe(200);
+    const sentences = [
+      ...sentencesOf(home.text),
+      ...sentencesOf(index.text),
+      ...descriptionsOf(index.text, "").flatMap((d) => d.split(/(?<=\.)\s+/)),
+    ];
+    expect(sentences.some(saysPlaneByPlane)).toBe(true);
+    for (const sentence of sentences.filter(saysPlaneByPlane)) {
+      for (const cfg of notPlaneByPlane) expect(sentence).not.toContain(cfg.shortName);
+    }
+    for (const cfg of notPlaneByPlane) {
+      // Alaska's row in the /airlines table, and its own page on the hub.
+      const at = index.text.indexOf(`>${cfg.name}</a>`);
+      expect(at).toBeGreaterThan(-1);
+      const row = index.text.slice(at, index.text.indexOf("</tr>", at));
+      expect(sentencesOf(row).some(saysPlaneByPlane)).toBe(false);
+      const page = await bodyOf(`/airlines/${airlineSlug(cfg)}`);
+      expect(page.status).toBe(200);
+      expect(sentencesOf(page.text).some(saysPlaneByPlane)).toBe(false);
+    }
+    for (const cfg of notPlaneByPlane.filter(partlyByType)) {
+      expect(
+        sentences.some((s) => s.includes(cfg.shortName) && /partly by aircraft type/.test(s))
+      ).toBe(true);
     }
   });
 

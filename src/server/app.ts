@@ -46,6 +46,7 @@ import {
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
+  countingMethodSentences,
   leadCount,
   ownCountAsOf,
   rosterDiffSentence,
@@ -4628,8 +4629,12 @@ const airlinesIndexPage: Handler = (ctx) => {
   const overviews = hubContentAirlines().map((cfg) => airlineOverview(ctx.getReader, cfg));
   const named = (method: ReturnType<typeof trackingMethod>) =>
     overviews.filter((o) => trackingMethod(o.cfg) === method).map((o) => o.cfg.shortName);
-  const perPlane = named("tail").join(" and ");
+  const liveCounts = named("tail").join(" and ");
   const byType = named("type").join(" and ");
+  const methods = countingMethodSentences(
+    overviews.map((o) => o.cfg),
+    "tracked"
+  );
   const roster = contentOnlyFacts();
   const others = roster.filter((e) => e.status !== "not_starlink").length;
   const negatives = roster.length - others;
@@ -4641,11 +4646,11 @@ const airlinesIndexPage: Handler = (ctx) => {
     "/airlines",
     {
       siteTitle: "Starlink Wi-Fi by Airline: Full List & Rollout Comparison",
-      siteDescription: `Every airline with Starlink Wi-Fi: ${perPlane} tracked plane by plane${byType ? `, ${byType} by aircraft type` : ""}, plus ${others} more rollouts and ${negatives} airlines that chose something else.`,
+      siteDescription: `Every airline with Starlink Wi-Fi. ${methods}${byType ? ` ${byType} by aircraft type alone.` : ""} Plus ${others} more rollouts and ${negatives} airlines that chose something else.`,
       keywords:
         "starlink wifi airlines list, airlines with starlink, airline starlink comparison, starlink rollout by airline, airlines without starlink",
       ogTitle: "Starlink Wi-Fi by Airline: Full List & Comparison",
-      ogDescription: `Starlink rollouts compared by airline: live counts for ${perPlane}, dated status for everyone else.`,
+      ogDescription: `Starlink rollouts compared by airline: live counts for ${liveCounts}, dated status for everyone else.`,
     },
     { airlines: overviews, roster: contentOnlyFacts(), comparisons: compareLinks(ctx) },
     200,

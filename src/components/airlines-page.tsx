@@ -10,7 +10,10 @@
 
 import { aircraftName } from "../airlines/aircraft-families";
 import {
+  checkedPlaneByPlane,
+  countingMethodSentences,
   ownCountAsOf,
+  partlyByType,
   publishedCount,
   trackingMethod,
   typeSumCredit,
@@ -245,6 +248,9 @@ const METHOD_LABEL = {
   community: "Community fleet list",
 } as const;
 
+const methodLabel = (cfg: AirlineOverview["cfg"]) =>
+  partlyByType(cfg) ? "Part by type, part by plane" : METHOD_LABEL[trackingMethod(cfg)];
+
 function EquippedCell({ o }: { o: AirlineOverview }) {
   const { cfg, stat } = o;
   if (stat.total === 0) return <span className="text-muted">No data yet</span>;
@@ -300,9 +306,6 @@ export function AirlinesIndexPage({
 }) {
   const programmes = PROGRAMME_ORDER.flatMap((s) => roster.filter((e) => e.status === s));
   const negatives = roster.filter((e) => e.status === "not_starlink");
-  const perPlane = airlines
-    .filter((o) => trackingMethod(o.cfg) === "tail")
-    .map((o) => o.cfg.shortName);
   const byType = airlines
     .filter((o) => trackingMethod(o.cfg) === "type")
     .map((o) => o.cfg.shortName);
@@ -317,7 +320,7 @@ export function AirlinesIndexPage({
     <PageShell site={site} pageLinks={pageLinks} currentPath={currentPath}>
       <PageHeader
         title="Starlink Wi-Fi by airline"
-        dek={`From finished fleets to airlines that picked another system. ${perPlane.join(" and ")} ${perPlane.length === 1 ? "is" : "are"} counted plane by plane.`}
+        dek={`From finished fleets to airlines that picked another system. ${countingMethodSentences(airlines.map((o) => o.cfg))}`}
       />
       <Section title="Tracked here" wide>
         <div className="overflow-x-auto">
@@ -356,7 +359,7 @@ export function AirlinesIndexPage({
                     <StagePill info={trackedStage(o.cfg, o.stat)} />
                   </Td>
                   <Td optional className="text-secondary">
-                    {METHOD_LABEL[trackingMethod(o.cfg)]}
+                    {methodLabel(o.cfg)}
                   </Td>
                   <Td numeric className="whitespace-nowrap text-primary">
                     <EquippedCell o={o} />
@@ -516,9 +519,11 @@ export function AirlineDetailPage({
             </div>
           )}
           <p className="text-sm text-muted leading-relaxed mt-3">
-            {trackingMethod(cfg) === "tail"
+            {checkedPlaneByPlane(cfg)
               ? `Checked plane by plane against ${cfg.verifySite}.`
-              : `Status follows aircraft type, per ${cfg.shortName}'s announcements.`}
+              : partlyByType(cfg)
+                ? `Part of the fleet follows aircraft type, per ${cfg.shortName}'s announcements. The rest is checked one aircraft at a time against ${cfg.verifySite}.`
+                : `Status follows aircraft type, per ${cfg.shortName}'s announcements.`}
             {cfg.brand.pressReleaseUrl && (
               <>
                 {" "}
