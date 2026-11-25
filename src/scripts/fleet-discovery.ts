@@ -42,10 +42,10 @@ import {
 import type { FleetAircraft, StarlinkStatus } from "../types";
 import { icaoToIata } from "../utils/airport-tz";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
-import { pingIndexNow } from "../utils/indexnow";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { notifyNewStarlinkPlane } from "../utils/notify";
+import { pingIndexNow } from "./indexnow";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 import {

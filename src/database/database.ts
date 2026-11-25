@@ -1416,6 +1416,20 @@ export function getRecentInstalls(
     .all(...q.params, limit) as RecentInstall[];
 }
 
+/** Every equipped tail of one airline with its listed aircraft type, one row per tail. */
+export function getEquippedTails(
+  db: Database,
+  airline: string
+): Array<{ tail: string; aircraft: string | null }> {
+  return db
+    .query(
+      `SELECT TailNumber AS tail, MAX(aircraft) AS aircraft FROM starlink_planes
+       WHERE airline = ? AND ${equippedSql("starlink_planes")}
+       GROUP BY TailNumber ORDER BY TailNumber`
+    )
+    .all(airline) as Array<{ tail: string; aircraft: string | null }>;
+}
+
 /**
  * Organic installs bucketed by calendar DAY (bulk writers excluded via
  * INSTALL_FILTER). Day, not month, because INSTALL_FILTER only knows the bulk

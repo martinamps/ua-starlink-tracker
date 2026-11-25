@@ -233,6 +233,7 @@ import {
   requestClientTags,
   withSpan,
 } from "../observability";
+import { indexNowKeyFile, readIndexNowKey } from "../scripts/indexnow";
 import {
   carrierPrediction,
   carrierPredictionTelemetry,
@@ -5564,15 +5565,12 @@ export function createApp(
     "/sitemap.xml": { handler: sitemap },
   };
 
-  // IndexNow key file — the spec requires GET https://<host>/{key}.txt to echo
-  // the key on every host we ping for. Read once here: the route table is
-  // static, and an unset key simply means no route (feature off).
-  const indexNowKey = process.env.INDEXNOW_KEY;
-  if (indexNowKey) {
-    routes[`/${indexNowKey}.txt`] = {
-      handler: () => text(indexNowKey, "text/plain", { cache: CACHE.day }),
-    };
-  }
+  // IndexNow key file: GET https://<host>/{key}.txt must echo the key on every
+  // host we submit for. Read once here. Deliberately not a route-table entry:
+  // the table is the `route` metric tag, and the key must never be a tag
+  // value, so the file is answered where an unmatched path would 404 and is
+  // counted as `unmatched` with status 200.
+  const indexNowKey = readIndexNowKey(db);
 
   // The official MCP registry proves domain ownership by fetching this record;
   // only its private half (kept off the server) can sign a publish.
@@ -5783,7 +5781,12 @@ export function createApp(
         // crash invisible to the status_code:5* monitor on this metric.
         let status = 500;
         try {
-          const response = m ? await serve(m.entry, ctx) : await notFound(site);
+          const keyFile = m ? null : indexNowKeyFile(indexNowKey, url.pathname);
+          const response = m
+            ? await serve(m.entry, ctx)
+            : keyFile
+              ? text(keyFile, "text/plain", { cache: CACHE.day })
+              : await notFound(site);
           status = response.status;
           span.setTag("http.status_code", status);
           return response;

@@ -24,6 +24,7 @@ import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetProgressJob } from "./src/scripts/fleet-progress";
 import { startFleetProgressTailsJob } from "./src/scripts/fleet-progress-tails";
 import { startFleetSync } from "./src/scripts/fleet-sync";
+import { activateIndexNow, ensureIndexNowKey, indexNowOn } from "./src/scripts/indexnow";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
 import { startSecAnchorsJob } from "./src/scripts/sec-anchors";
 import { runSheetScrape } from "./src/scripts/sheet-scrape";
@@ -36,7 +37,6 @@ import {
   DEDUPE_KEY_SWEEP_INTERVAL_SEC,
   DEDUPE_WINDOW_SEC,
 } from "./src/server/passenger-report-fields";
-import { pingIndexNow } from "./src/utils/indexnow";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
 import { BUILD_COMMIT, PROCESS_STARTED } from "./src/utils/running-build";
@@ -54,6 +54,8 @@ const JOBS_ENABLED = process.env.DISABLE_JOBS !== "1";
 // One handle for the server and every in-process job; migrations run once, here.
 const db = openDatabase();
 migrate(db);
+// Before createApp: the app reads the key once, to serve its key file.
+const indexNowKey = indexNowOn() ? ensureIndexNowKey(db) : null;
 const app = createApp(db);
 
 info(
@@ -103,10 +105,7 @@ if (JOBS_ENABLED) {
       initialDelayMs: 0,
       run: async (ctx) => {
         info("Running scheduled update...");
-        const result = await updateStarlinkData(ctx);
-        // A successful scrape re-stamps lastUpdated and can settle wifi
-        // statuses — the pages whose lastmod just moved are / and /fleet.
-        if (result.outcome === "success") pingIndexNow("UA", ["/", "/fleet"]);
+        await updateStarlinkData(ctx);
       },
     })
   );
@@ -161,6 +160,22 @@ if (JOBS_ENABLED) {
       },
     })
   );
+
+  // IndexNow: every source that lists a tail (sheet, discovery, verifiers,
+  // fleet sync) writes the same table, so one look at it catches them all.
+  // The timer only reads the database; a submission happens when a tail has
+  // newly joined a list, and for the pages that changed with it.
+  if (indexNowKey) {
+    const indexNow = activateIndexNow({ db, key: indexNowKey, dispatch: app.dispatch });
+    track(
+      startJob({
+        name: "indexnow_new_tails",
+        intervalMs: 5 * 60 * 1000,
+        initialDelayMs: 60 * 1000,
+        run: () => indexNow.announceNewTails(),
+      })
+    );
+  }
 
   // Daily UA ship→tail sheet sync.
   track(
