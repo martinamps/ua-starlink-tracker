@@ -3799,18 +3799,15 @@ export function touchFleetVerifiedAt(db: Database, tail: string): void {
 }
 
 /**
- * Check if a plane needs verification from a specific source
- * Uses jittered thresholds to distribute checks over time:
- * - United: 48-96 hours (centered on 72)
- * - FR24: 18-30 hours (centered on 24)
- * - Spreadsheet: 0.5-1.5 hours (centered on 1)
+ * How long a check of `tailNumber` from `source` stays current, in hours: the
+ * source's base window (or `hoursThreshold`), spread ±33% by tail so checks
+ * do not bunch.
  */
-export function needsVerification(
-  db: Database,
+export function verificationWindowHours(
   tailNumber: string,
   source: VerificationSource,
   hoursThreshold?: number
-): boolean {
+): number {
   // Base thresholds by source (will be jittered ±33%)
   const baseThresholds: Record<VerificationSource, number> = {
     united: 72, // 3 days for United (to avoid spam)
@@ -3826,7 +3823,23 @@ export function needsVerification(
   // This distributes checks evenly across planes
   const jitter = (tailHash(tailNumber) % 1000) / 1000;
   const jitterRange = baseThreshold * 0.33; // ±33%
-  const threshold = baseThreshold - jitterRange + jitter * 2 * jitterRange;
+  return baseThreshold - jitterRange + jitter * 2 * jitterRange;
+}
+
+/**
+ * Check if a plane needs verification from a specific source
+ * Uses jittered thresholds to distribute checks over time:
+ * - United: 48-96 hours (centered on 72)
+ * - FR24: 18-30 hours (centered on 24)
+ * - Spreadsheet: 0.5-1.5 hours (centered on 1)
+ */
+export function needsVerification(
+  db: Database,
+  tailNumber: string,
+  source: VerificationSource,
+  hoursThreshold?: number
+): boolean {
+  const threshold = verificationWindowHours(tailNumber, source, hoursThreshold);
 
   const now = unixNow();
   const cutoff = now - threshold * 3600;
@@ -3847,6 +3860,64 @@ export function needsVerification(
     .get(tailNumber, source, cutoff) as { checked_at: number } | null;
 
   return !lastCheck;
+}
+
+/**
+ * The tail's newest check from `source` read Starlink cleanly: no error, and
+ * the page did not name another aircraft. An older positive behind a newer
+ * failure or negative does not count.
+ */
+export function lastCheckConfirmedStarlink(
+  db: Database,
+  tailNumber: string,
+  source: VerificationSource
+): boolean {
+  const last = db
+    .query(`
+    SELECT has_starlink, error, tail_confirmed FROM starlink_verification_log
+    WHERE tail_number = ? AND source = ?
+    ORDER BY checked_at DESC, id DESC
+    LIMIT 1
+  `)
+    .get(tailNumber, source) as {
+    has_starlink: number | null;
+    error: string | null;
+    tail_confirmed: number | null;
+  } | null;
+  return last?.has_starlink === 1 && last.error === null && last.tail_confirmed !== 0;
+}
+
+/**
+ * Each UA tail's newest check from `source` since `sinceSec` (unix seconds).
+ * A tail that is absent had none in that time. One query for a whole fleet's
+ * worth of needsVerification answers, and the order to take the due ones in.
+ */
+export function getLastCheckTimes(
+  db: Database,
+  source: VerificationSource,
+  sinceSec: number
+): Map<string, number> {
+  const rows = db
+    .query(
+      `SELECT tail_number, MAX(checked_at) AS last FROM starlink_verification_log
+       WHERE airline = 'UA' AND source = ? AND checked_at > ?
+       GROUP BY tail_number`
+    )
+    .all(source, sinceSec) as { tail_number: string; last: number }[];
+  return new Map(rows.map((r) => [r.tail_number, r.last]));
+}
+
+/** When each united.com check logged since `sinceSec` was made (unix seconds, oldest first). */
+export function getRecentUnitedCheckTimes(db: Database, sinceSec: number): number[] {
+  return (
+    db
+      .query(
+        `SELECT checked_at FROM starlink_verification_log
+         WHERE airline = 'UA' AND source = 'united' AND checked_at > ?
+         ORDER BY checked_at`
+      )
+      .all(sinceSec) as { checked_at: number }[]
+  ).map((r) => r.checked_at);
 }
 
 /**
@@ -5088,19 +5159,75 @@ export function upsertFleetAircraft(
 }
 
 /**
- * Get next planes to verify based on priority and scheduling
+ * SQL: the united_fleet row aliased `uf` is settled Starlink, on the roster
+ * and by the listing's consensus-gated verified_wifi. Looking at such a tail
+ * again re-confirms it; every other tail is one a check could still settle.
+ * Scheduling only: what counts as equipped is sql/equipped.ts.
+ */
+function settledStarlinkSql(uf: string): string {
+  return `(${uf}.starlink_status = 'confirmed' AND EXISTS (
+      SELECT 1 FROM starlink_planes _settled
+      WHERE _settled.TailNumber = ${uf}.tail_number AND _settled.airline = ${uf}.airline
+        AND _settled.verified_wifi = 'Starlink'
+    ))`;
+}
+
+/** The airline's settled-Starlink tails (settledStarlinkSql). */
+export function getSettledStarlinkTails(db: Database, airline: string): Set<string> {
+  const rows = db
+    .query(
+      `SELECT uf.tail_number FROM united_fleet uf WHERE uf.airline = ? AND ${settledStarlinkSql("uf")}`
+    )
+    .all(airline) as { tail_number: string }[];
+  return new Set(rows.map((r) => r.tail_number));
+}
+
+export function isSettledStarlink(db: Database, tailNumber: string, airline: string): boolean {
+  return (
+    db
+      .query(
+        `SELECT 1 FROM united_fleet uf
+         WHERE uf.tail_number = ? AND uf.airline = ? AND ${settledStarlinkSql("uf")}`
+      )
+      .get(tailNumber, airline) !== null
+  );
+}
+
+// How long discovery leaves a confirmed tail before looking again (±10%):
+// updateFleetVerificationResult's own figure for a clean confirmed check.
+const CONFIRMED_RECHECK_SECS = 7 * 24 * 3600;
+
+/**
+ * Put a confirmed tail's discovery re-check off by the interval a clean check
+ * would have set, without making one: somebody else's check already answered
+ * it. Only the due time moves; the row's verdict and stamps are untouched.
+ */
+export function deferConfirmedRecheck(db: Database, tailNumber: string): void {
+  const jitter = (Math.random() - 0.5) * 0.2 * CONFIRMED_RECHECK_SECS;
+  db.query("UPDATE united_fleet SET next_check_after = ? WHERE tail_number = ?").run(
+    unixNow() + CONFIRMED_RECHECK_SECS + jitter,
+    tailNumber
+  );
+}
+
+/**
+ * Get next planes to verify based on priority and scheduling.
+ * `unsettledOnly` leaves out settled-Starlink tails, for a tick where the
+ * check budget is closed to re-confirmations.
  */
 export function getNextPlanesToVerify(
   db: Database,
   limit: number,
-  airline: string
+  airline: string,
+  opts: { unsettledOnly?: boolean } = {}
 ): FleetAircraft[] {
   const now = unixNow();
+  const scope = opts.unsettledOnly ? `AND NOT ${settledStarlinkSql("united_fleet")}` : "";
 
   return db
     .query(`
     SELECT * FROM united_fleet
-    WHERE next_check_after <= ? AND airline = ?
+    WHERE next_check_after <= ? AND airline = ? ${scope}
     ORDER BY
       CASE starlink_status
         WHEN 'unknown' THEN 0

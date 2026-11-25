@@ -26,6 +26,8 @@
  *   reason:          breaker | bucket | queue — fr24 assignments status:shed only (3)
  *   caller:          page | extension | other — fr24 assignments status:shed only
  *                    (classifyLookupCaller)                            (3)
+ *   job, class:      united_check.held only: verifier | discovery, and
+ *                    settle | reconfirm (closed unions in united-check-budget.ts) (2, 2)
  *   bucket:          api | mcp | page — http.rate_limited only (the limiter's meter) (3)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
@@ -729,9 +731,18 @@ export const COUNTERS = {
   // accurate as the sheet.
   FLEET_SHEET_DISAGREEMENT: "fleet.sheet_disagreement",
 
-  // A discovery check was skipped (couldn't run the United.com scrape)
-  // tags: fleet, reason (no_flights), airline
+  // A discovery check was skipped: no_flights (couldn't run the United.com
+  // scrape) or verifier_fresh (a settled-Starlink tail the verifier confirmed
+  // inside its own re-check window, so discovery put its turn off unspent)
+  // tags: fleet, reason (no_flights|verifier_fresh), airline
   FLEET_CHECK_SKIPPED: "fleet.check_skipped",
+
+  // A job tick that had an aircraft due and sat out because the united.com
+  // check budget (scripts/united-check-budget.ts) was closed to it. `reconfirm`
+  // held with `settle` at zero is the ceiling doing its job; `settle` held
+  // means even new and unsettled tails are waiting.
+  // tags: job (verifier|discovery), class (settle|reconfirm), airline
+  UNITED_CHECK_HELD: "united_check.held",
 
   // User-facing flight lookup outcome — how often we actually answer the question.
   // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|type_yes|type_no|
@@ -825,6 +836,13 @@ export const GAUGES = {
 
   // Headline equipped count (equippedSql over the listings) — tags: airline
   FLEET_EQUIPPED: "fleet.equipped",
+
+  // united.com checks started in the last 24 hours, against the fixed ceiling
+  // (scripts/united-check-budget.ts), sampled on every verifier and discovery
+  // tick. `used` at `limit` with united_check.held rising is the ceiling
+  // holding. tags: airline
+  UNITED_CHECK_BUDGET_USED: "united_check.budget_used",
+  UNITED_CHECK_BUDGET_LIMIT: "united_check.budget_limit",
   // Tails with both a Starlink and a named other-provider clean read in the
   // last 7 days — upstream feed disagreement. tags: airline
   CONSENSUS_CONFLICTING_TAILS: "consensus.conflicting_tails",
