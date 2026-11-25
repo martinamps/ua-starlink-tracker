@@ -16,7 +16,7 @@
  */
 
 import { fmt } from "../components/ui/format";
-import type { AirlineChartCount } from "../database/roster";
+import type { AirlineChartCount, ProgrammeHeadline } from "../database/roster";
 import { aircraftName } from "./aircraft-families";
 import { AIRLINES, type AirlineConfig, heldBackCount, wifiPhaseFamilies } from "./registry";
 import {
@@ -138,6 +138,37 @@ export function leftOutByType(split: SplitTotal): string | null {
   if (split.byType.length === 0) return null;
   const one = split.byType.length === 1 && split.byType[0].sum === 1;
   return `${listed(split.byType.map((b) => `${b.cfg.shortName}'s ${fmt(b.sum)}`))} on our fleet list ${one ? "is" : "are"} ${BY_TYPE_METHOD}`;
+}
+
+/**
+ * A programme headline that spans a by-type partner, said as its parts: "6
+ * Alaska-operated aircraft counted on this site and 42 Hawaiian A321neo & A330
+ * counted by aircraft type, not checked plane by plane". The combined figure
+ * is the scope the airline stated its target over, but only the first part
+ * was counted, so a sentence that measures against it names both. Null when
+ * no by-type partner adds to the figure.
+ */
+export function programmePartsText(
+  cfg: AirlineConfig,
+  programme: ProgrammeHeadline
+): string | null {
+  const partners = cfg.programmePartners?.partners ?? [];
+  const slices = programme.partners.map((slice, i) => ({
+    ...slice,
+    byType:
+      Boolean(AIRLINES[partners[i]?.airline]) &&
+      trackingMethod(AIRLINES[partners[i].airline]) === "type",
+  }));
+  if (!slices.some((s) => s.byType && s.equipped > 0)) return null;
+  const own = programme.equipped - slices.reduce((sum, s) => sum + s.equipped, 0);
+  return listed([
+    `${fmt(own)} ${cfg.shortName}-operated aircraft counted on this site`,
+    ...slices
+      .filter((s) => s.equipped > 0)
+      .map(
+        (s) => `${fmt(s.equipped)} ${s.label} ${s.byType ? BY_TYPE_METHOD : "counted on this site"}`
+      ),
+  ]);
 }
 
 /** Beside a by-type airline's row count where a list holds both kinds of

@@ -54,6 +54,7 @@ import {
   leadCount,
   leftOutByType,
   ownCountAsOf,
+  programmePartsText,
   rosterDiffSentence,
   splitByMethod,
   statedCount,
@@ -2700,6 +2701,7 @@ function airlineInstallRate(
 ): AirlineInstallRate {
   const r = getReader(cfg.code);
   const programme = r.getProgrammeHeadline();
+  const programmeParts = programme && programmePartsText(cfg, programme);
   const own =
     tenantScope && programme
       ? { equipped: programme.equipped, total: programme.total }
@@ -2720,6 +2722,7 @@ function airlineInstallRate(
         ? programme.noun
         : `${cfg.shortName}-operated aircraft`
       : `${cfg.name} aircraft`,
+    headlineParts: tenantScope ? programmeParts : null,
     stats: computeInstallRate({
       daily: r.getDailyInstalls(),
       equipped: own.equipped,
@@ -2738,6 +2741,7 @@ function airlineInstallRate(
               equipped: programme.equipped,
               total: programme.total,
               label: tenantScope ? null : programme.noun,
+              parts: programmeParts,
             }
           : t.fractionSpans
             ? {
@@ -2799,6 +2803,9 @@ const installRatePage: Handler = (ctx) => {
   // and advertise a URL that 404s.
   if (!hasInstallRate(ctx)) return notFound(ctx.site);
   const airlines = installRateAirlines(ctx, Date.now());
+  // The hub's description names the airlines it gives a pace for, as the page
+  // does: an airline known by aircraft type has no section here.
+  const hub = cfg ? null : installRateSplit(ctx);
   const meta: PageMeta = cfg
     ? {
         siteTitle: `Will ${cfg.shortName} Hit Its Starlink Target? Install Pace`,
@@ -2809,16 +2816,15 @@ const installRatePage: Handler = (ctx) => {
       }
     : {
         siteTitle: "Airline Starlink Install Pace vs. Stated Targets",
-        siteDescription:
-          "Starlink installs per month for every tracked airline and the current pace, against each airline's stated targets, with sources.",
+        siteDescription: `Starlink installs per month for ${hub?.pacedNames || "each airline counted here"} and the current pace, against each airline's stated targets, with sources.`,
         keywords:
           "starlink install rate, airline starlink rollout pace, starlink rollout targets, which airline installs starlink fastest",
         ogTitle: "Airline Starlink Install Pace",
-        ogDescription: "Every tracked airline's Starlink install pace against its stated targets.",
+        ogDescription: `Starlink install pace for ${hub?.pacedNames || "each airline counted here"}, against the targets each has stated.`,
       };
   return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, {
     airlines,
-    ...(cfg ? {} : installRateSplit(ctx)),
+    ...hub,
     cite: citeStat(ctx),
   });
 };

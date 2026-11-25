@@ -1,4 +1,5 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { formatFactDate } from "../airlines/rollout-facts";
 import { FlightSearchForm } from "./flight-search-form";
 import type { Link } from "./layout";
 import { PageHeader, PageShell, Section, StatInline } from "./layout";
@@ -22,8 +23,9 @@ const ACCESS: Record<string, FreeAccess> = {
     answer:
       "Yes. United Starlink Wi-Fi is free for MileagePlus members, and joining MileagePlus is free.",
     program: "MileagePlus",
-    access:
-      "On board, connect to the Wi-Fi network and sign in with your MileagePlus number, or join on the spot. You don't need to buy anything or have status. Before it connects, you watch a short ad, sometimes two.",
+    // The ad step is not in United's own instructions, so it is said as what
+    // a named review saw on its date, never as a standing fact of ours.
+    access: `On board, connect to the Wi-Fi network and sign in with your MileagePlus number, or join on the spot. You don't need to buy anything or have status. A TechRadar review dated ${formatFactDate("2026-03-25")} reports two short ads before the connection starts.`,
     limits: "Voice and video calls aren't allowed on United flights.",
   },
 };

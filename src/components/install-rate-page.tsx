@@ -31,6 +31,9 @@ export interface AirlineInstallRate {
   /** What the count is of: "United Airlines aircraft", "Alaska and Hawaiian
    * Airbus aircraft", "Alaska-operated aircraft". */
   noun: string;
+  /** The tenant's own page, where the count spans a partner known by aircraft
+   * type: the count's two parts, each named for what it is. */
+  headlineParts?: string | null;
   stats: InstallRateStats;
 }
 
@@ -92,10 +95,14 @@ function TargetRow({
       </div>
       <p className="mt-1 text-sm text-secondary">{targetStatus(p, stats)}</p>
       {/* A target stated over two carriers is measured over those two, both
-          halves of the ratio, so the page names the roster. */}
+          halves of the ratio, so the page names the roster. Where one of the
+          two is known only by aircraft type, the sum is no count of aircraft
+          that have Starlink: each part is said for what it is. */}
       {p.scope.label && (
         <p className="mt-1 text-sm text-secondary">
-          {p.scope.label}: {fmt(p.scope.equipped)} of {fmt(p.scope.total)} have Starlink.
+          {p.scope.parts
+            ? `Measured over ${p.scope.label}, ${fmt(p.scope.total)} on our fleet list: ${p.scope.parts}.`
+            : `${p.scope.label}: ${fmt(p.scope.equipped)} of ${fmt(p.scope.total)} have Starlink.`}
         </p>
       )}
       {/* The count under a share-of-fleet target is our arithmetic, so it must
@@ -148,6 +155,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
         As of {a.asOfDate}, <StatInline n={stats.equipped} /> of <StatInline n={stats.total} />{" "}
         {a.noun}
         {stats.rosterDisagrees ? "" : ` (${pct(stats.equipped, stats.total)})`} have Starlink.
+        {a.headlineParts && ` That is ${a.headlineParts}.`}
         {/* With a target, the pace sits in the bullets below; say it once. */}
         {stats.paceMonthly !== null && !gap && (
           <>

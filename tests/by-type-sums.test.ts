@@ -303,6 +303,35 @@ describe("no by-type airline's site prints its fleet-list sum as a count of airc
     });
   }
 
+  // No by-type airline's fleet total is publishable as a ratio today, so the
+  // home sentence prints the sum alone. Were one ever marked publishable, the
+  // sentence may give "N of M on our fleet list" and still no share: a part of
+  // a list picked by a type rule is not a share of aircraft counted.
+  test("the home sentence gives no percentage, even where the fleet total may be printed", async () => {
+    let ratios = 0;
+    for (const cfg of BY_TYPE) {
+      const rollout = cfg.rollout as { rosterIsProgramScope: boolean };
+      const was = rollout.rosterIsProgramScope;
+      rollout.rosterIsProgramScope = true;
+      try {
+        const db = SEEDS[cfg.code]();
+        const home = (await bodyOf(createApp(db), "/", hostOf(cfg))).text;
+        db.close();
+        const stat = decode(
+          (home.match(/<p id="starlink-stat"[^>]*>([\s\S]*?)<\/p>/)?.[1] ?? "")
+            .replace(/<!--[\s\S]*?-->/g, "")
+            .replace(/<[^>]+>/g, "")
+        );
+        if (/ of [\d,]+ /.test(stat)) ratios++;
+        expect(stat, cfg.code).not.toContain("%");
+        expect(stat, cfg.code).not.toContain("have Starlink");
+      } finally {
+        rollout.rosterIsProgramScope = was;
+      }
+    }
+    expect(ratios).toBeGreaterThan(0);
+  });
+
   test("the picture caption is no longer than the longest the card already carried", () => {
     expect(BY_TYPE_CARD_CAPTION.length).toBeLessThanOrEqual("OF 61 AIRCRAFT HAVE STARLINK".length);
     expect(BY_TYPE_CARD_CAPTION).not.toMatch(/WITH STARLINK|HAVE STARLINK/);
@@ -618,6 +647,56 @@ describe("no hub total adds a by-type sum to aircraft counted on this site", () 
         expect(fleet).not.toContain('href="/install-rate"');
       }
     });
+  });
+
+  // Alaska states one target over its own fleet and Hawaiian's Airbus jets.
+  // That roster's count adds aircraft counted on this site to a partner's
+  // sum by type, and the page once printed it as "N of M have Starlink".
+  describe("a target measured over a by-type partner's aircraft", () => {
+    const AS = AIRLINES.AS;
+    const own = COUNTED_SEEDS.AS.equipped;
+    const PARTS = new RegExp(
+      `${own} ${AS.shortName}-operated aircraft counted on this site and \\d+ .+ ${BY_TYPE_METHOD}\\.$`
+    );
+
+    test("Alaska's programme spans a by-type airline, and this seed has both parts", () => {
+      const partners = AS.programmePartners?.partners ?? [];
+      expect(partners.some((p) => trackingMethod(AIRLINES[p.airline]) === "type")).toBe(true);
+      expect(own).toBeGreaterThan(0);
+      for (const p of partners) expect(sums[p.airline]).toBeGreaterThan(0);
+    });
+
+    test("the hub says the two parts apart, and no flat count over both", async () => {
+      const said = saidOn((await bodyOf(app, "/install-rate", HUB)).text);
+      expect(said.filter((p) => /: [\d,]+ of [\d,]+ have Starlink\.$/.test(p))).toEqual([]);
+      const lines = said.filter((p) => p.startsWith("Measured over "));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^Measured over .+, [\d,]+ on our fleet list: /);
+      expect(lines[0]).toMatch(PARTS);
+    });
+
+    test("Alaska's own page names the parts beside its combined figure", async () => {
+      const said = saidOn((await bodyOf(app, "/install-rate", hostOf(AS))).text);
+      const at = said.findIndex((p) => p.startsWith("As of ") && p.endsWith("have Starlink."));
+      expect(at).toBeGreaterThan(-1);
+      expect(said[at + 1]).toMatch(new RegExp(`^That is ${PARTS.source}`));
+    });
+
+    test("an airline with no by-type partner keeps its one sentence", async () => {
+      const page = (await bodyOf(app, "/install-rate", hostOf(AIRLINES.UA))).text;
+      expect(saidOn(page).filter((p) => /^(Measured over|That is) /.test(p))).toEqual([]);
+    });
+  });
+
+  test("the install pace page's search description names only the airlines it paces", async () => {
+    const page = (await bodyOf(app, "/install-rate", HUB)).text;
+    const names = hubCounted.map((a) => a.shortName).join(" and ");
+    for (const tag of ['name="description"', 'property="og:description"']) {
+      const said = decode(page.match(new RegExp(`<meta ${tag} content="([^"]*)"`))?.[1] ?? "");
+      expect(said, tag).toContain(names);
+      expect(said, tag).not.toMatch(/every tracked airline/i);
+      for (const cfg of hubByType) expect(said, tag).not.toContain(cfg.shortName);
+    }
   });
 
   test("the fleet page's heading counts only the counted airlines and names the rest", async () => {
