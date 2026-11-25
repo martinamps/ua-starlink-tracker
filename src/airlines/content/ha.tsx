@@ -1,6 +1,7 @@
 import { TypeBreakdownRow } from "../../components/atoms";
 import { Eyebrow, Panel, SECTION_WIDE, StatInline } from "../../components/layout";
 import { fmt } from "../../components/ui/format";
+import { callPolicy } from "../call-policy";
 import type { AirlineContent, HeroProps } from "./index";
 
 // Aircraft-type counts come from press-release figures (rollout is complete and
@@ -105,6 +106,10 @@ export const content: AirlineContent = {
               sign in or join on board; guests under 18 can connect with their reservation details.
             </p>
           ),
+        },
+        {
+          q: "Can I make voice or video calls on Hawaiian Airlines flights?",
+          a: () => <p>No. {callPolicy("HA")}</p>,
         },
       ],
     },
