@@ -25,7 +25,7 @@ all** rather than a guess:
 |---|---|
 | **Starlink** (blue) | Verified — the assigned aircraft was confirmed Starlink against the airline's own site |
 | **Starlink (installed)** (green) | The assigned aircraft is Starlink-equipped per fleet data, not yet re-verified |
-| **Starlink ~92%** (gray) | No aircraft assigned yet (airlines assign ~2 days out); the percentage is this flight number's historical rate (United) or the equipped share of the subfleet that flies it (Alaska). Shown only at ≥80% with non-low confidence |
+| **Starlink ~92%** (gray) | No aircraft assigned yet (airlines assign ~2 days out); the percentage is this flight number's historical rate (United), the equipped share of the subfleet that flies it (Alaska), or the fitted share of the scheduled aircraft type (a Qatar 777-300ER or 787-8). Shown only at ≥80% with non-low confidence |
 | *no badge* | Verified non-Starlink aircraft, a prediction below the bar or of low confidence, an answer that is type-determined with no aircraft assigned yet (see below), an untracked airline, or an API that couldn't answer — silence over invention |
 
 Hover a badge for the full explanation, including observation counts for
@@ -34,6 +34,14 @@ percentage that is the equipped share of a subfleet or of a scheduled aircraft
 type (Alaska; a Qatar type with some aircraft not confirmed fitted) says so in
 its tooltip, and makes no claim about that flight's history or about when an
 aircraft is assigned.
+
+The percentage is the whole number the tracker's site prints for the same
+answer. Qatar's numbers are rounded down, as the site's sentence rounds them
+(15 of 16 aircraft is 93.75%, and reads "Starlink ~93%"). United's odds and
+Alaska's shares are rounded to the nearest whole number, as the site's pages
+round them. "Starlink ~100%" appears only for a subfleet in which every
+aircraft is equipped: a share just under that reads ~99%, and United's odds
+never read 100%.
 
 ### "Starlink only"
 
@@ -61,7 +69,8 @@ depends on the airline:
   to has one equipped share, so predicted badges show at any date for the
   fully equipped subfleets (AS800-999 on Hawaiian A330/A321neo metal, and the
   regional E175s) and stay off for the mid-rollout mainline. Those badges read
-  "Starlink ~99%": a prediction is capped at 99%, never shown as 100%.
+  the subfleet's share: "Starlink ~100%" when every aircraft in it is
+  equipped, "Starlink ~99%" when nearly all are.
 - **Hawaiian** — Google Flights now lists Hawaiian-operated flights only under
   Alaska `AS` numbers, so they are answered as Alaska flights: the A330/A321neo
   routes (AS800-999, e.g. HNL → LAX) get badges at any date, and the
@@ -70,13 +79,17 @@ depends on the airline:
   `HA` number doesn't pin the aircraft type, so before the ~2-day assignment
   window it gets no badge rather than a blended guess.
 - **Qatar** — no tail-level data, but Qatar publishes the scheduled aircraft
-  type about a week ahead (selected routes only). Inside that window a 777,
-  A350 or 787-8 shows green "Starlink (installed)" — Qatar reports those fleets
-  fully fitted — while a 787-9 (installs under way), A380, A330 or narrowbody
-  shows no badge. Further out, a gray "Starlink ~NN%" appears only when the
-  flight number flew a fitted type on nearly all (~93%+) of its recent
-  operating days; the number is a conservative lower bound, and a flight that
-  often swaps aircraft gets no badge.
+  type about a week ahead (selected routes only). Inside that window an A350 or
+  777-200LR shows green "Starlink (installed)", because Qatar reports those
+  fleets fully fitted. A 777-300ER or 787-8 shows a gray "Starlink ~NN%"
+  instead: a few named aircraft of each type aren't confirmed fitted, Qatar
+  publishes the type and not the aircraft, so the badge gives the fitted share
+  of that type, rounded down (~84% and ~93% when this was written). A 787-9
+  (installs under way), A380, A330 or narrowbody shows no badge. Further out,
+  a gray "Starlink ~NN%" appears only when the flight number flew a fitted
+  type on nearly all (~93%+) of its recent operating days; the number is a
+  conservative lower bound, rounded down, and a flight that often swaps
+  aircraft gets no badge.
 
 ## How it works
 
