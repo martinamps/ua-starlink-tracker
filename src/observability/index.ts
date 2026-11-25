@@ -25,6 +25,8 @@ export {
   classifyUserAgent,
   classifyRequest,
   classifyVisitSource,
+  classifyLookupCaller,
+  normalizeLookupCaller,
   normalizeExtVersion,
   requestClientTags,
   mcpClientTags,
@@ -36,4 +38,4 @@ export {
   normalizeLegEffect,
   normalizeEquipmentCodeTag,
 } from "./metrics";
-export type { Tags } from "./metrics";
+export type { LookupCaller, Tags } from "./metrics";

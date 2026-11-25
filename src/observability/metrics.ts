@@ -24,6 +24,8 @@
  *                    exit_error | parse_error | spawn_error | partial |
  *                    aborted | scrape_error | noop | shed            (~13)
  *   reason:          breaker | bucket | queue — fr24 assignments status:shed only (3)
+ *   caller:          page | extension | other — fr24 assignments status:shed only
+ *                    (classifyLookupCaller)                            (3)
  *   bucket:          api | mcp | page — http.rate_limited only (the limiter's meter) (3)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
@@ -421,6 +423,28 @@ function visitSourceByRule(req: Request, url: URL, clientClass: string): VisitSo
   return fetchSite === "none" ? "direct" : "none";
 }
 
+const LOOKUP_CALLERS = ["page", "extension", "other"] as const;
+export type LookupCaller = (typeof LOOKUP_CALLERS)[number];
+const LOOKUP_CALLER_SET: ReadonlySet<string> = new Set(LOOKUP_CALLERS);
+
+export function normalizeLookupCaller(raw: string | null | undefined): LookupCaller {
+  return raw && LOOKUP_CALLER_SET.has(raw) ? (raw as LookupCaller) : "other";
+}
+
+/**
+ * Who a shed live lookup was for. `extension` is our own store build only
+ * (classifyRequest); `page` is a browser on one of our own pages, by the same
+ * rule that makes a visit `own`; everything else, a copycat extension, an
+ * outside tool, a script or an MCP call, is `other`. A script can forge the
+ * page's headers, so read `page` as "says it is our page".
+ */
+export function classifyLookupCaller(req: Request, url: URL): LookupCaller {
+  const clientClass = classifyRequest(req, url);
+  if (clientClass === "extension") return "extension";
+  if (clientClass !== "browser") return "other";
+  return classifyVisitSource(req, url, clientClass) === "own" ? "page" : "other";
+}
+
 /** `client_class` for /mcp tool calls, which carry no request of their own to classify. */
 export function mcpClientTags(): Tags {
   return { client_class: "mcp" };
@@ -624,7 +648,7 @@ export const COUNTERS = {
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
   // fr24/flightaware/adsb/indexnow status values: success | error | rate_limited
   // fr24 assignments adds status:shed (request-path guard refused), tagged
-  //   reason (breaker|bucket|queue) and airline
+  //   reason (breaker|bucket|queue), caller (page|extension|other) and airline
   // qatar status values: success | error | partial
   VENDOR_REQUEST: "vendor.request",
 

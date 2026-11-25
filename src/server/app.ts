@@ -213,6 +213,7 @@ import { contradictingWifi } from "../database/sql/equipped";
 import { unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
+  classifyLookupCaller,
   classifyRequest,
   classifyVisitSource,
   metrics,
@@ -1054,7 +1055,9 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
     flightNumber,
     date,
     withLeg(
-      isHub ? { lookupTail: null, aircraftType: aircraftTypeParam(url) } : undefined,
+      isHub
+        ? { lookupTail: null, aircraftType: aircraftTypeParam(url) }
+        : { caller: classifyLookupCaller(req, url) },
       parseLegQuery(url.searchParams.get("origin"), url.searchParams.get("destination"))
     )
   );
