@@ -6,7 +6,12 @@ import {
   MonthlyInstallsBars,
   PaceBullets,
 } from "./charts/cumulative-installs";
-import { nearestPaceGap, paceWindowSpan, paceWindowText } from "./charts/rollout-math";
+import {
+  measuredPaceText,
+  nearestPaceGap,
+  paceWindowSpan,
+  paceWindowText,
+} from "./charts/rollout-math";
 import { type CiteStat, CiteThis } from "./cite-this";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline } from "./layout";
@@ -44,19 +49,33 @@ const VERDICT_TONE: Record<TargetVerdict, { label: string; tone: Tone }> = {
   no_data: { label: "Too early to call", tone: "warn" },
 };
 
-function targetStatus(p: TargetProjection): string {
+/** A month of ours is never stated flat: it is the measured pace carried
+ * forward, so the pace and the months it was measured over sit beside it. */
+function targetStatus(p: TargetProjection, stats: InstallRateStats): string {
   const due = `Due ${formatFactDate(p.target.deadline)}`;
   // equipped is a live row count and total a separately scraped meta value;
   // mid-reconcile they can disagree, and nothing is projected from that.
   if (p.rosterDisagrees) return `${due} · no projection (fleet counts out of sync)`;
   if (p.verdict === "reached") return `${due} · reached`;
   const parts = [due, `${fmt(p.remaining)} to go`];
-  if (p.projectedMonth) parts.push(`at current pace: ${monthYear(p.projectedMonth)}`);
-  else if (p.verdict === "behind") parts.push("more than four years out at current pace");
+  const pace = measuredPaceText(stats);
+  if (p.projectedMonth && pace) {
+    parts.push(`reached in ${monthYear(p.projectedMonth)} if ${pace} holds`);
+  } else if (p.verdict === "behind" && pace) {
+    parts.push(`more than four years out at ${pace}`);
+  }
   return parts.join(" · ");
 }
 
-function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string }) {
+function TargetRow({
+  p,
+  shortName,
+  stats,
+}: {
+  p: TargetProjection;
+  shortName: string;
+  stats: InstallRateStats;
+}) {
   const verdict = VERDICT_TONE[p.verdict];
   return (
     <li className="border-b border-subtle py-3 last:border-0">
@@ -67,7 +86,7 @@ function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string })
         </span>
         <Pill tone={verdict.tone}>{verdict.label}</Pill>
       </div>
-      <p className="mt-1 text-sm text-secondary">{targetStatus(p)}</p>
+      <p className="mt-1 text-sm text-secondary">{targetStatus(p, stats)}</p>
       {/* A target stated over two carriers is measured over those two, both
           halves of the ratio, so the page names the roster. */}
       {p.scope.label && (
@@ -185,6 +204,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
                 key={`${p.target.label}-${p.target.deadline}`}
                 p={p}
                 shortName={a.shortName}
+                stats={stats}
               />
             ))}
           </ul>
@@ -232,7 +252,9 @@ export default function InstallRatePage({
 
       <section className={SECTION}>
         <p className="text-center text-xs text-muted">
-          Pace is the average of the last three full months; projections assume it holds.
+          Pace is the average of the last full months, named beside each figure. A month given for a
+          target is that pace carried forward unchanged, not a forecast: no finish date of ours has
+          been tested against past installs.
           {site.features.methodologyPage && (
             <>
               {" "}

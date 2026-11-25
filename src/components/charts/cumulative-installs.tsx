@@ -180,7 +180,7 @@ function PlotLegend({ model, accent }: { model: ChartModel; accent: string }) {
         <span className="block h-0.5 w-5 rounded-full" style={{ background: accent }} />
       </LegendItem>
       {model.projection && (
-        <LegendItem label="At the current pace">
+        <LegendItem label="The measured pace, carried forward">
           <span className="block w-5 border-t-2 border-dashed" style={{ borderColor: accent }} />
         </LegendItem>
       )}

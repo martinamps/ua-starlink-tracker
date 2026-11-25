@@ -74,6 +74,17 @@ export function paceWindowText(stats: InstallRateStats): string {
   return n === 1 ? `the last full month (${span})` : `the last ${word} full months (${span})`;
 }
 
+/** "the Aug–Oct 2026 pace of about 40 a month": the measured pace named with
+ * the months it was measured over. Any month this site derives from the pace
+ * is that pace carried forward, and has to say so: no finish date of ours has
+ * been checked against past installs (the outlook backtest never saw a type
+ * finish). Null when there is no pace. */
+export function measuredPaceText(stats: InstallRateStats): string | null {
+  if (stats.paceMonthly === null) return null;
+  const span = paceWindowSpan(stats);
+  return `the ${span ? `${span} ` : ""}pace of about ${fmt(stats.paceMonthly)} a month`;
+}
+
 export type Point = [ms: number, value: number];
 
 export interface Series {
@@ -142,6 +153,8 @@ export interface ChartTarget {
 export interface ChartModel {
   series: Series;
   pace: number | null;
+  /** The pace in words, with its window; null when no pace is drawn. */
+  paceText: string | null;
   targets: ChartTarget[];
   projection: Point[] | null;
   gridValues: number[];
@@ -202,6 +215,7 @@ export function chartModel(
   return {
     series,
     pace,
+    paceText: pace !== null ? measuredPaceText(stats) : null,
     targets,
     projection,
     gridValues,
@@ -215,9 +229,10 @@ export function chartModel(
   };
 }
 
-/** The chart's spoken summary: the line, any import, and each target at the current pace. */
+/** The chart's spoken summary: the line, any import, and each target with the
+ * month the measured pace would reach it, said as a condition. */
 export function chartDescription(model: ChartModel, airlineName: string): string {
-  const { series, pace, targets } = model;
+  const { series, paceText, targets } = model;
   const [nowMs, nowValue] = series.now;
   return [
     `${airlineName} aircraft with Starlink since ${monthYear(monthKey(series.start))}: ${fmt(nowValue)} as of ${monthYear(monthKey(nowMs))}.`,
@@ -225,13 +240,13 @@ export function chartDescription(model: ChartModel, airlineName: string): string
       (i) =>
         `${fmt(i.installs)} aircraft were added by a one-day data import on ${formatFactDate(new Date(i.ms).toISOString().slice(0, 10))}.`
     ),
-    pace !== null ? `At the current pace of about ${fmt(pace)} a month:` : "",
+    paceText !== null ? `If ${paceText} holds:` : "",
     ...targets.map(
       ({ p }) =>
         `${fmt(p.targetCount)} targeted by ${formatFactDate(p.target.deadline)}${
           p.verdict === "reached"
             ? ", reached"
-            : p.projectedMonth
+            : p.projectedMonth && paceText !== null
               ? `, reached around ${monthYear(p.projectedMonth)}`
               : ""
         }.`
