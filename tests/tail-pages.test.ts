@@ -411,10 +411,15 @@ describe("/fleet/{tail}", () => {
     expect((await get("/fleet/N1VER")).status).toBe(200);
   });
 
-  test("an unknown or malformed tail is the plain 404, and echoes nothing typed", async () => {
-    const plain = await page("/fleet/N9ZZZ");
+  test("an unknown or malformed tail is a static 404, and echoes nothing typed", async () => {
+    // A registration we don't track says so; anything else is the plain page.
+    const untracked = await page("/fleet/N9ZZZ");
+    expect(untracked).toContain("Aircraft not found");
+    const plain = await page("/fleet/NOPE");
+    expect(plain).toContain("Page not found");
     for (const path of [
       "/fleet/N9ZZZ",
+      "/fleet/n8yyy/",
       "/fleet/NOPE",
       "/fleet/N1VER/extra",
       "/fleet/N1VERTOOLONG",
@@ -426,17 +431,24 @@ describe("/fleet/{tail}", () => {
       const res = await get(path);
       expect(res.status, path).toBe(404);
       const body = await res.text();
-      expect(body, path).toContain("Page not found");
-      expect(body, path).not.toMatch(/alert\(1\)|<img src=x|OR 1=1|TOOLONG|N9ZZZ|NOPE/);
-      expect(body.length, path).toBe(plain.length);
+      expect(body, path).not.toMatch(/alert\(1\)|<img src=x|OR 1=1|TOOLONG|N9ZZZ|N8YYY|NOPE/i);
+      expect([untracked.length, plain.length], path).toContain(body.length);
     }
   });
 
   test("another airline's tail has no page here, and the family is United's only", async () => {
     expect((await get("/fleet/N7AS")).status).toBe(404);
-    expect((await get("/fleet/N7AS", SITES.alaska.canonicalHost)).status).toBe(404);
     expect((await get("/fleet/N1VER", SITES.alaska.canonicalHost)).status).toBe(404);
-    expect((await get("/fleet/N1VER", SITES.airline.canonicalHost)).status).toBe(404);
+    // A host without tail pages answers for a tail with its row on /fleet;
+    // the hub hands United's to United's page. Neither serves a tail page.
+    const alaska = await get("/fleet/N7AS", SITES.alaska.canonicalHost);
+    expect(alaska.status).toBe(302);
+    expect(alaska.headers.get("location")).toBe(
+      `https://${SITES.alaska.canonicalHost}/fleet#t-N7AS`
+    );
+    const hub = await get("/fleet/N1VER", SITES.airline.canonicalHost);
+    expect(hub.status).toBe(302);
+    expect(hub.headers.get("location")).toBe(`https://${UA}/fleet/N1VER`);
   });
 
   test("the tail is never a metric tag: the family rides the /fleet entry", () => {

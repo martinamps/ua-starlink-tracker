@@ -93,8 +93,19 @@ export interface FlightFacts {
  * trusted — React escapes it at render. */
 export interface InvalidFlightQuery {
   query: string | null;
-  reason: "not-a-flight-number" | "other-carrier";
+  /** "tail": a registration, and not one of this site's aircraft. */
+  reason: "not-a-flight-number" | "other-carrier" | "tail";
   airportHint: boolean;
+  /** Another airline's flight: the page of ours that answers it or lists who we track. */
+  elsewhere?: FlightElsewhere;
+}
+
+/** A link off a single-airline site, built by the server from the registry
+ * alone. "sister" names a live tracker of ours; "hub" and "airlines" name none. */
+export interface FlightElsewhere {
+  kind: "sister" | "hub" | "airlines";
+  href: string;
+  label: string;
 }
 
 /** The dated permalink's answer: the /api/check-flight body the server built

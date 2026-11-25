@@ -104,18 +104,50 @@ function InvalidQueryNotice({
   example,
   shortName,
   showRoutePlanner,
+  showFleet,
 }: {
   invalid: InvalidFlightQuery;
   example: string;
   shortName: string;
   showRoutePlanner: boolean;
+  showFleet: boolean;
 }) {
   const quoted = invalid.query ? `“${invalid.query}”` : "That";
+  const { elsewhere } = invalid;
   return (
     <div className="mb-4 rounded border border-subtle bg-surface-elevated p-4 text-sm">
       {invalid.reason === "other-carrier" ? (
+        <>
+          <p className="text-primary">
+            {`${quoted} isn't ${article(shortName)} ${shortName} flight number. This site checks ${shortName} flights only.`}
+          </p>
+          {elsewhere && (
+            // A deliberate cross-site mention, marked like the footer's.
+            <p data-cross-site-links className="mt-2 text-secondary">
+              {elsewhere.kind === "hub" && "Our "}
+              {elsewhere.kind === "airlines" && "We don't track every airline. "}
+              <a href={elsewhere.href} className={LINK}>
+                {elsewhere.label}
+              </a>
+              {elsewhere.kind === "hub" ? " checks flights of the other airlines we track." : "."}
+            </p>
+          )}
+        </>
+      ) : invalid.reason === "tail" ? (
         <p className="text-primary">
-          {`${quoted} isn't ${article(shortName)} ${shortName} flight number.`}
+          {`${quoted} looks like an aircraft tail number, not a flight number, and it isn't one of the ${shortName} aircraft we track. Enter a flight number like `}
+          <span className="font-mono">{example}</span>
+          {showFleet ? (
+            <>
+              , or{" "}
+              <a href="/fleet" className={LINK}>
+                {`see every ${shortName} aircraft`}
+              </a>
+              .
+            </>
+          ) : (
+            "."
+          )}
         </p>
       ) : (
         <p className="text-secondary">
@@ -184,7 +216,9 @@ export default function CheckFlightPage({
   const title = invalid
     ? invalid.reason === "other-carrier"
       ? `Not ${article(shortName)} ${shortName} flight`
-      : `${invalid.query ? `“${invalid.query}”` : "That"} isn't a flight number`
+      : invalid.reason === "tail"
+        ? `Not ${article(shortName)} ${shortName} aircraft we track`
+        : `${invalid.query ? `“${invalid.query}”` : "That"} isn't a flight number`
     : fn
       ? `Does ${fn} have Starlink Wi-Fi?`
       : `Does my ${shortName} flight have Starlink?`;
@@ -272,6 +306,7 @@ export default function CheckFlightPage({
               example={flightExample}
               shortName={shortName}
               showRoutePlanner={site.features.routePlannerPage}
+              showFleet={site.features.fleetPage}
             />
           )}
           <FlightSearchForm
