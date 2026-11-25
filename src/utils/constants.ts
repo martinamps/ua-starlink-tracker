@@ -113,7 +113,7 @@ export const SECURITY_HEADERS = {
     ...BASE_RESPONSE_HEADERS,
     ...API_CORS_HEADERS,
     "Content-Type": "application/json",
-    "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*;`,
+    "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https://*;`,
     "Cache-Control": "no-store, max-age=0",
   },
   html: {
@@ -122,7 +122,7 @@ export const SECURITY_HEADERS = {
     // Rendered HTML varies by client IP (passenger banner/probe) — never let
     // an edge cache serve one visitor's render to another.
     "Cache-Control": "private, no-store",
-    "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
+    "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:;`,
   },
   // A full React page served as a 404 (invalid /check-flight segment, which
   // runs the lookup script). Brand-static, so shared caches may hold it:
@@ -132,7 +132,7 @@ export const SECURITY_HEADERS = {
     ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
     "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
-    "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
+    "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:;`,
   },
   // The plain not-found shell: same caching, but it runs no script at all, so
   // its CSP allows none and connects nowhere.
@@ -141,7 +141,7 @@ export const SECURITY_HEADERS = {
     "Content-Type": "text/html",
     "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
     "Content-Security-Policy":
-      "default-src 'self'; script-src 'none'; connect-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
+      "default-src 'self'; script-src 'none'; connect-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:;",
   },
 };
 
@@ -154,4 +154,5 @@ export const CONTENT_TYPES: Record<string, string> = {
   svg: "image/svg+xml",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
+  woff2: "font/woff2",
 };

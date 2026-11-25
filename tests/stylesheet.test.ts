@@ -173,6 +173,29 @@ describe("stylesheet delivery", () => {
     expect((await app.dispatch(req(stale as string, HOST))).status).toBe(404);
   });
 
+  test("web fonts are self-hosted, content-hashed and immutable", async () => {
+    for (const path of ["/", "/definitely-not-a-page"]) {
+      const res = await app.dispatch(req(path, HOST));
+      const csp = res.headers.get("Content-Security-Policy") ?? "";
+      expect(csp).toContain("font-src 'self';");
+      const html = await res.text();
+      expect(html).not.toMatch(/fonts\.(googleapis|gstatic)\.com/);
+
+      const urls = new Set([...html.matchAll(/\/static\/fonts\/[\w.-]+\.woff2/g)].map((m) => m[0]));
+      expect({ path, faces: urls.size }).toEqual({ path, faces: 2 });
+      for (const url of urls) {
+        const font = await app.dispatch(req(url, HOST));
+        expect(font.status).toBe(200);
+        expect(font.headers.get("Content-Type")).toBe("font/woff2");
+        expect(font.headers.get("Cache-Control")).toContain("immutable");
+        // The name's hash must match the bytes, or "immutable" would pin a stale file.
+        const bytes = new Uint8Array(await font.arrayBuffer());
+        const sha = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+        expect(url).toContain(`.${sha.slice(0, 8)}.woff2`);
+      }
+    }
+  });
+
   // `bun run dev` compiles the CSS in a different process from the `bun --watch`
   // server, and nothing sequences them: the server restarts on the source edit
   // while the compile is still debounced, so it routinely boots on the previous
