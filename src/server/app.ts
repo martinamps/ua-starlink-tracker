@@ -5466,6 +5466,9 @@ function clientIp(req: Request): string {
   );
 }
 
+/** Any character RFC 3986 allows in neither a host nor a port. */
+const NOT_A_HOST = /[^A-Za-z0-9\-._~!$&'()*+,;=%:[\]]/;
+
 export function createApp(
   db: Database,
   opts: { crawlerDns?: CrawlerDns; sharePictures?: Partial<SharePictureLimits> } = {}
@@ -5611,7 +5614,14 @@ export function createApp(
     // the Host is not a host ("a/b", "x.com:abc", empty), so this parse is the
     // one place a stranger's Host can throw. Outside the try it left as a raw
     // 500. A Host that parses but names no site of ours stays a 421 below.
-    const url = URL.canParse(req.url) ? new URL(req.url) : null;
+    // Which Hosts Bun refuses differs by version: 1.3 builds a URL out of
+    // "a/b" or "u@x.com" (the name then being "a" or "x.com") where 1.4 hands
+    // over the bare path. So the header's own characters are judged here too,
+    // by RFC 3986's host and port, and the answer is the same on both.
+    const url =
+      URL.canParse(req.url) && !NOT_A_HOST.test(req.headers.get("host") ?? "")
+        ? new URL(req.url)
+        : null;
     if (!url) {
       metrics.increment(COUNTERS.HTTP_BAD_HOST, { method: req.method, airline: "unknown" });
       return finalizeResponse(
