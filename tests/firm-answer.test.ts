@@ -8,7 +8,9 @@
 import { describe, expect, test } from "bun:test";
 import { setAssignmentFetcher } from "../src/api/flight-verdict";
 import { Fr24UnavailableError } from "../src/api/flightradar24-api";
-import { createApp } from "../src/server/app";
+import { firmDescription } from "../src/components/check-flight/firm-lead";
+import type { AssignedDeparture, FlightFacts } from "../src/components/check-flight/types";
+import { clampMetaDescription, createApp } from "../src/server/app";
 import { airportLocalDate } from "../src/utils/airport-tz";
 import { addFleet, addFlight, addPlane, makeSyntheticDb, req } from "./helpers";
 
@@ -37,7 +39,19 @@ async function page(db: Db, path = `/check-flight/${FN}`) {
   const paragraphs = [...header.matchAll(/<p[^>]*>(.*?)<\/p>/gs)].map((m) =>
     m[1].replace(/<[^>]+>/g, "")
   );
-  return { status: res.status, html, opening: paragraphs[0] ?? "", rest: paragraphs.slice(1) };
+  const meta = (name: string) =>
+    (html.match(new RegExp(`<meta (?:name|property)="${name}" content="([^"]*)"`))?.[1] ?? "")
+      .replace(/&#x27;/g, "'")
+      .replace(/&amp;/g, "&");
+  return {
+    status: res.status,
+    html,
+    opening: paragraphs[0] ?? "",
+    rest: paragraphs.slice(1),
+    description: meta("description"),
+    ogDescription: meta("og:description"),
+    keywords: meta("keywords"),
+  };
 }
 
 const localYear = (airport: string, sec: number) =>
@@ -165,6 +179,111 @@ describe("flight page opening", () => {
     const { html, opening } = await page(db, `/check-flight/${FN}/${airportLocalDate("DEN", T)}`);
     expect(html).toContain('id="flight-answer"');
     expect(opening).toBe("");
+    db.close();
+  });
+});
+
+// The search description is what a searcher reads before the page. Where the
+// page opens with a firm answer it says that answer, in the opening's own
+// words for the answer, the tail and the aircraft; where the page opens with
+// odds it keeps them.
+describe("flight page search description", () => {
+  /** "is assigned N601UX, an E175 with Starlink Wi-Fi." */
+  const assignedClause = (sentence: string) => sentence.match(/is assigned .*?\.(?= |$)/)?.[0];
+  const answerWord = (sentence: string) => sentence.match(/^(Yes|No|Likely yes): /)?.[1];
+
+  const cases: Array<[string, (db: Db) => void, string]> = [
+    ["yes", (db) => verifiedTail(db, "N601UX"), "N601UX"],
+    ["no", (db) => settledNoTail(db, "N602UX", "Panasonic"), "N602UX"],
+    ["likely yes", (db) => addPlane(db, "N603UX", null, { aircraft: "ERJ-175" }), "N603UX"],
+  ];
+
+  test.each(cases)(
+    "a firm %s opening is the description's answer too",
+    async (_name, seed, tail) => {
+      const db = makeSyntheticDb();
+      seed(db);
+      addFlight(db, tail, FN, "DEN", T, { arrivalAirport: "EWR", lastUpdated: SEEN });
+      const { opening, description, ogDescription } = await page(db);
+      expect(answerWord(opening)).toBeDefined();
+      for (const said of [description, ogDescription]) {
+        expect(answerWord(said)).toBe(answerWord(opening) as string);
+        expect(assignedClause(said)).toBe(assignedClause(opening) as string);
+        expect(said).toContain(` ${FN} DEN–EWR on `);
+        expect(said).toMatch(/: as of [A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2} UTC, /);
+        expect(said).toContain(localYear("DEN", T));
+        expect(said).not.toMatch(/odds|%/);
+        expect(said).not.toContain("…");
+      }
+      db.close();
+    }
+  );
+
+  test("with nothing assigned the description keeps the odds the page opens with", async () => {
+    const db = makeSyntheticDb();
+    verifiedTail(db, "N601UX");
+    addFlight(db, "N601UX", FN, "DEN", NOW + 96 * 3600, { arrivalAirport: "EWR" });
+    const { opening, description } = await page(db);
+    expect(opening).not.toMatch(/^(Yes|No|Likely yes): as of/);
+    expect(description).toStartWith(`Does United Airlines ${FN}`);
+    expect(description).not.toContain("is assigned");
+    db.close();
+  });
+
+  test("a firm description stays inside the length odds descriptions are cut to, and adds no keyword", async () => {
+    const firmDb = makeSyntheticDb();
+    verifiedTail(firmDb, "N601UX");
+    addFlight(firmDb, "N601UX", FN, "DEN", T, { arrivalAirport: "EWR", lastUpdated: SEEN });
+    const firm = await page(firmDb);
+    firmDb.close();
+    const oddsDb = makeSyntheticDb();
+    verifiedTail(oddsDb, "N601UX");
+    addFlight(oddsDb, "N601UX", FN, "DEN", NOW + 96 * 3600, { arrivalAirport: "EWR" });
+    const odds = await page(oddsDb);
+    oddsDb.close();
+    // An odds description with a figure in it runs past 158 and is cut there.
+    expect(firm.description.length).toBeLessThanOrEqual(158);
+    expect(firm.keywords).toBe(odds.keywords);
+    expect(firm.html.match(/<title>[^<]*<\/title>/)?.[0]).toBe(
+      odds.html.match(/<title>[^<]*<\/title>/)?.[0] as string
+    );
+  });
+
+  test("the longest wording still ends on its own full stop inside the limit", () => {
+    const MAX = 158;
+    const flight = { flightNumber: "UA5763", airlineName: "United Airlines" } as FlightFacts;
+    const a: AssignedDeparture = {
+      hasStarlink: true,
+      verified: false,
+      tail: "N37560",
+      aircraft: "Boeing 737 MAX 10",
+      wifi: null,
+      origin: "DEN",
+      destination: "EWR",
+      departure: T,
+      departureZone: "America/Denver",
+      seenAt: SEEN,
+    };
+    const said = firmDescription(flight, a, MAX);
+    expect(said.length).toBeLessThanOrEqual(MAX);
+    expect(clampMetaDescription(said)).toBe(said);
+    expect(said).toEndWith("that we have not verified yet.");
+    expect(said).toMatch(/^Likely yes: as of [A-Z][a-z]{2} \d{1,2}, /);
+    const short = firmDescription(flight, { ...a, verified: true, aircraft: "ERJ-175" }, MAX);
+    expect(short).toEndWith("Aircraft can be swapped before departure.");
+    expect(short.length).toBeLessThanOrEqual(MAX);
+  });
+
+  test("a dated page's description is unchanged: its canonical is the undated page", async () => {
+    const db = makeSyntheticDb();
+    verifiedTail(db, "N601UX");
+    addFlight(db, "N601UX", FN, "DEN", T, { arrivalAirport: "EWR", lastUpdated: SEEN });
+    const { html, description } = await page(
+      db,
+      `/check-flight/${FN}/${airportLocalDate("DEN", T)}`
+    );
+    expect(html).toContain(`rel="canonical" href="https://${UA_HOST}/check-flight/${FN}"`);
+    expect(description).toStartWith(`Does United Airlines ${FN}`);
     db.close();
   });
 });

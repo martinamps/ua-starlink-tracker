@@ -154,6 +154,7 @@ import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
+import { firmDescription } from "../components/check-flight/firm-lead";
 import ChromePage, {
   CHROME_OG_IMAGE_ALT,
   CHROME_OG_IMAGE_URL,
@@ -3410,6 +3411,14 @@ function flightPageMeta(
   const route = facts.routes[0] ?? null;
   const routeLabel = route ? ` (${route.departure_airport} → ${route.arrival_airport})` : "";
   const answer = flightMetaAnswer(reader, cfg, flightNumber, facts);
+  // The undated page opens with the assigned aircraft's answer when it has
+  // one (check-flight-page.tsx), and the description then says that, not odds
+  // the page no longer leads with. A dated URL canonicalizes to the undated
+  // page, so its own description is not what a search engine keeps.
+  const firm =
+    !dated && facts.nextAssigned
+      ? firmDescription(facts, facts.nextAssigned, META_DESCRIPTION_MAX)
+      : null;
 
   const pageJsonLd = route
     ? jsonLdBlock({
@@ -3429,10 +3438,14 @@ function flightPageMeta(
   // once the brand suffix is gone (Google appends the site name itself).
   return {
     siteTitle: `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`,
-    siteDescription: `Does ${cfg.name} ${flightNumber}${routeLabel} have free Starlink Wi-Fi?${answer} Pick a date for a firm answer once aircraft assignments publish.`,
+    siteDescription:
+      firm ??
+      `Does ${cfg.name} ${flightNumber}${routeLabel} have free Starlink Wi-Fi?${answer} Pick a date for a firm answer once aircraft assignments publish.`,
     keywords: `${flightNumber} starlink, does ${flightNumber} have wifi, ${flightNumber} wifi, ${cfg.name} ${flightNumber} starlink`,
     ogTitle: `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`,
-    ogDescription: `${cfg.name} ${flightNumber}${routeLabel}.${answer || " Check it for Starlink Wi-Fi by date."}`,
+    ogDescription:
+      firm ??
+      `${cfg.name} ${flightNumber}${routeLabel}.${answer || " Check it for Starlink Wi-Fi by date."}`,
     pageJsonLd,
     ...sharePictureMeta(ctx, flightSharePicture(ctx.site, facts, dated)),
   };

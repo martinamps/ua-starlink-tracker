@@ -177,6 +177,14 @@ export function zonedLongDate(sec: number, zone: string): string {
   }).format(new Date(sec * 1000));
 }
 
+/** "Nov 26, 2026" at `zone`: the same day as zonedLongDate, for copy with a
+ * length budget (a search description). */
+export function zonedShortDate(sec: number, zone: string): string {
+  return formatter(zone, { month: "short", day: "numeric", year: "numeric" }).format(
+    new Date(sec * 1000)
+  );
+}
+
 /** "8:15 AM" at `zone`, no zone name: for lists whose header names the zone
  * once, so a row never carries a daylight label from the wrong season. */
 export function zonedClock(sec: number, zone: string | null | undefined): string {
@@ -215,6 +223,11 @@ export function zonedIsoDate(sec: number, zone: string): string {
 /** "Sep 21, 2026, 14:05 UTC": a data timestamp, never request time. */
 export const utcDateTime = (input: DateInput) =>
   `${utc(input, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })} UTC`;
+
+/** "Sep 21, 14:05 UTC": utcDateTime without the year, for a sentence whose
+ * next date carries it. */
+export const utcDayTime = (input: DateInput) =>
+  `${utc(input, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })} UTC`;
 
 /** "2h 5m", "45m", "3h"; null for a missing or non-positive duration. Minutes
  * are rounded before splitting, so 2h59m30s reads "3h", never "2h 60m". */
