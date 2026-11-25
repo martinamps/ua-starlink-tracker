@@ -30,6 +30,7 @@ import {
   tenantCopy,
   typeFactsFor,
 } from "../airlines/aircraft-pages";
+import { CALL_POLICY } from "../airlines/call-policy";
 import { type HubHomeLinks, allFaqEntries, getContent } from "../airlines/content";
 import {
   CANONICAL_FLIGHT_PERMALINK,
@@ -2154,13 +2155,6 @@ ${entry.lastmod ? `    <lastmod>${entry.lastmod}</lastmod>\n` : ""}    <changefr
 
 const markdownResponse = (body: string) =>
   text(body, "text/markdown; charset=utf-8", { cache: CACHE.day });
-
-// Onboard call rules, stated only where the airline's own published policy
-// says so. An airline missing here gets no claim either way: agents relayed
-// "works for video calls" to United flyers, whom United bars from calling.
-const CALL_POLICY: Record<string, string> = {
-  UA: "United does not allow voice or video calls on board, Starlink or not.",
-};
 
 // Key-facts section shared by the hub and airline llms.txt variants — only
 // the subject lead, the rollout bullet(s) and the call rules differ per tenant.
