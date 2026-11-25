@@ -606,11 +606,39 @@ export function airportDistanceMiles(a: string, b: string): number | null {
   const ca = AIRPORT_COORDS[a];
   const cb = AIRPORT_COORDS[b];
   if (!ca || !cb) return null;
-  const dLat = rad(cb[0] - ca[0]);
-  const dLon = rad(cb[1] - ca[1]);
+  return milesBetween(ca[0], ca[1], cb[0], cb[1]);
+}
+
+function milesBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
+  const dLat = rad(bLat - aLat);
+  const dLon = rad(bLon - aLon);
   const h =
-    Math.sin(dLat / 2) ** 2 + Math.cos(rad(ca[0])) * Math.cos(rad(cb[0])) * Math.sin(dLon / 2) ** 2;
+    Math.sin(dLat / 2) ** 2 + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLon / 2) ** 2;
   return 2 * EARTH_RADIUS_MI * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * The airport whose reference point is nearest a position, when that is
+ * within `withinMiles`; null otherwise. The table holds the route network
+ * only, so a position at a field outside it (a maintenance base) names none.
+ * Separate fields in it are at least 2.8 miles apart (SAN and NZY).
+ */
+export function nearestAirport(lat: number, lon: number, withinMiles: number): string | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  let best: string | null = null;
+  let bestMiles = withinMiles;
+  for (const code in AIRPORT_COORDS) {
+    const [aLat, aLon] = AIRPORT_COORDS[code];
+    // A degree of latitude is ~69 miles: skips the trigonometry for all but a few rows.
+    if (Math.abs(aLat - lat) * 69 > bestMiles) continue;
+    const miles = milesBetween(lat, lon, aLat, aLon);
+    // Strictly nearer: two codes for one field (BSL and MLH, DJT and PBI)
+    // answer with the first in the table, the same one every time.
+    if (miles > withinMiles || (best !== null && miles >= bestMiles)) continue;
+    best = code;
+    bestMiles = miles;
+  }
+  return best;
 }
 
 // "On the way" = within 1.5x the direct great-circle (+250 mi for short hops).

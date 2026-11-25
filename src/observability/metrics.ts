@@ -830,6 +830,11 @@ export const GAUGES = {
   ADSB_SHADOW_ACCURACY: "adsb_shadow.accuracy",
   ADSB_SHADOW_BLIND_SHARE: "adsb_shadow.blind_share",
 
+  // Flight draws that began 6-30 hours ago, by which ends an aircraft-on-the-
+  // ground report put on an airport. tags: ends (both|origin_only|
+  // destination_only|neither), airline
+  ADSB_DRAWS_PLACED: "adsb_draws.placed",
+
   // Share of tails at the upcoming_flights row cap whose first row is more than
   // an hour after their refresh — the signature of a cap keeping the furthest
   // flights instead of the nearest. tags: airline

@@ -671,6 +671,9 @@ export function setupTables(db: Database) {
   }
   addColumn(db, "adsb_sweeps", "non_revenue", "INTEGER NOT NULL DEFAULT 0");
   addColumn(db, "adsb_sweeps", "low_speed", "INTEGER NOT NULL DEFAULT 0");
+  // The route-network airport an aircraft was reported on the ground at; what
+  // puts a flight draw on its airport pair (adsb-flight-draws.ts).
+  addColumn(db, "adsb_observations", "ground_airport", "TEXT");
   ensureAdsbFlightDrawsTable(db);
 
   // Starlink RFC 8805 geofeed prefixes — backs isStarlinkIp().
@@ -6023,8 +6026,8 @@ export function recordAdsbSweep(
       db.query(`
         INSERT INTO adsb_observations
           (observed_at, tail_number, callsign, hex, airborne, ground_speed, lat, lon,
-           aircraft_type, provider, shadow_result, assigned_flight)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           aircraft_type, provider, shadow_result, assigned_flight, ground_airport)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         o.observed_at,
         o.tail_number,
@@ -6037,7 +6040,8 @@ export function recordAdsbSweep(
         o.aircraft_type,
         o.provider,
         o.shadow_result,
-        o.assigned_flight
+        o.assigned_flight,
+        o.ground_airport ?? null
       );
     }
     db.query("DELETE FROM adsb_observations WHERE observed_at < ?").run(obsCutoff);
