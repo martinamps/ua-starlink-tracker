@@ -358,6 +358,33 @@ describe("hub home page", () => {
   });
 });
 
+describe("Qatar's own figure on the hub home page", () => {
+  // Pinned on purpose, against the shapes-not-values habit: this figure comes
+  // from a source file, not the data snapshot, and a newer one must be a
+  // deliberate edit here too.
+  test("the row and the most-planes answer print 170, dated and sourced", async () => {
+    const qr = enabledAirlines().find((cfg) => cfg.code === "QR");
+    if (!qr) throw new Error("Qatar is not an enabled airline: nothing is tested");
+    const own = airlineOwnCount("QR");
+    expect(own).toMatchObject({ count: 170, asOf: "2026-11-16", sourceLabel: "The Peninsula" });
+
+    const { text } = await bodyOf("/");
+    const at = text.indexOf(`>${qr.name}</a>`);
+    expect(at).toBeGreaterThan(-1);
+    const row = text.slice(at, text.indexOf("</li>", at)).replace(/<!-- -->/g, "");
+    expect(row.replace(/<[^>]+>/g, "")).toContain(
+      "170 aircraft with Starlink, per Qatar Airways as of Nov 16, 2026"
+    );
+    expect(row).toContain(`href="${own?.url}"`);
+
+    const answer =
+      text.match(
+        /"name":"Which airline has the most Starlink planes\?","acceptedAnswer":\{"@type":"Answer","text":"([^"]*)"/
+      )?.[1] ?? "";
+    expect(answer).toMatch(/Qatar Airways(, with | \()170, its own figure as of Nov 16, 2026/);
+  });
+});
+
 describe("hub /airlines", () => {
   test("a by-type row's figure is the airline's own, dated, or absent", async () => {
     const { text } = await bodyOf("/airlines");
