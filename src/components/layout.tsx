@@ -46,6 +46,15 @@ function brandName(site: SiteConfig): string {
   return `${AIRLINES[site.scope]?.shortName ?? site.brand.title} Starlink Tracker`;
 }
 
+/** Who runs the site, on every page: an airline's own tracker can carry
+ * nearly the same name, and a visitor should never take one for the other.
+ * The hub names no airline; a tenant names only its own. */
+export function independenceLine(site: SiteConfig): string {
+  const airline =
+    site.scope === "ALL" ? "any airline" : (AIRLINES[site.scope]?.name ?? "the airline");
+  return `Independent, community-run and open source. Not affiliated with ${airline} or SpaceX.`;
+}
+
 function SiteBar({ site, currentPath }: { site: SiteConfig; currentPath?: string }) {
   const links = primaryNavLinks(site);
   const isCurrent = (href: string) =>
@@ -509,6 +518,12 @@ export function PageShell({
       </a>
       {before}
       <SiteBar site={site} currentPath={currentPath} />
+      <p
+        data-independence
+        className="relative mx-auto w-full max-w-6xl pt-2 text-xs text-muted text-balance"
+      >
+        {independenceLine(site)}
+      </p>
       {/* A column like its parent, so each page's header and sections lay out
           exactly as they did as the shell's own children. */}
       <main id="main" tabIndex={-1} className="flex w-full flex-1 flex-col outline-none">

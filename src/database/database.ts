@@ -5859,29 +5859,32 @@ export function addDiscoveredStarlinkPlane(
  */
 // Community-list confirmations carry no verified stamp; "verified_starlink"
 // must not count them.
-const COMMUNITY_UNVERIFIED = (() => {
-  const codes = Object.values(AIRLINES)
+const COMMUNITY_UNVERIFIED_AIRLINES = new Set<string>(
+  Object.values(AIRLINES)
     .filter((a) => a.communitySource)
-    .map((a) => `'${a.code}'`);
-  return codes.length ? `(airline IN (${codes.join(",")}) AND verified_wifi IS NULL)` : "0";
-})();
+    .map((a) => a.code)
+);
 
-export function getFleetDiscoveryStats(db: Database, airline?: AirlineFilter): FleetDiscoveryStats {
-  const q1 = withAirline(
-    `SELECT
-       COUNT(*) as total_fleet,
-       SUM(CASE WHEN starlink_status = 'confirmed' AND NOT ${COMMUNITY_UNVERIFIED}
-           THEN 1 ELSE 0 END) as verified_starlink,
-       SUM(CASE WHEN starlink_status = 'negative' THEN 1 ELSE 0 END) as verified_non_starlink,
-       SUM(CASE WHEN starlink_status = 'unknown' THEN 1 ELSE 0 END) as pending_verification
-     FROM united_fleet WHERE 1=1`,
-    airline
-  );
-  const stats = db.query(q1.sql).get(...q1.params) as {
-    total_fleet: number;
-    verified_starlink: number;
-    verified_non_starlink: number;
-    pending_verification: number;
+/**
+ * The checker's progress over the programme roster, so its total is the one
+ * every page prints. Tails the roster carries outside the programme are still
+ * checked; they are counted apart rather than folded into the total.
+ */
+export function getFleetDiscoveryStats(db: Database, airline: AirlineFilter): FleetDiscoveryStats {
+  const roster = fleetRoster(db, airline);
+  const programme = roster.filter((t) => !isOutsideProgramme(t.airline, t.family));
+  const withStatus = (status: string) =>
+    programme.filter((t) => t.starlink_status === status).length;
+  const stats = {
+    total_fleet: programme.length,
+    outside_programme: roster.length - programme.length,
+    verified_starlink: programme.filter(
+      (t) =>
+        t.starlink_status === "confirmed" &&
+        !(COMMUNITY_UNVERIFIED_AIRLINES.has(t.airline) && t.verified_wifi === null)
+    ).length,
+    verified_non_starlink: withStatus("negative"),
+    pending_verification: withStatus("unknown"),
   };
 
   const q2 = withAirline(
@@ -5912,10 +5915,7 @@ export function getFleetDiscoveryStats(db: Database, airline?: AirlineFilter): F
   }>;
 
   return {
-    total_fleet: stats.total_fleet || 0,
-    verified_starlink: stats.verified_starlink || 0,
-    verified_non_starlink: stats.verified_non_starlink || 0,
-    pending_verification: stats.pending_verification || 0,
+    ...stats,
     discovered_not_in_spreadsheet: discovered.count || 0,
     recent_discoveries: recentDiscoveries,
   };

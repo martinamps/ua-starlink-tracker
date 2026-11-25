@@ -1648,6 +1648,7 @@ const apiFleetDiscovery: Handler = ({ reader }) => {
     },
     verification: {
       total_fleet: stats.total_fleet,
+      outside_programme: stats.outside_programme,
       verified_starlink: stats.verified_starlink,
       verified_non_starlink: stats.verified_non_starlink,
       pending_total: stats.pending_verification,
@@ -4413,7 +4414,12 @@ const methodologyPage: Handler = (ctx) => {
       ogType: "article",
       pageJsonLd: datasetJsonLd,
     },
-    { lastUpdated: ctx.reader.getLastUpdated() }
+    {
+      lastUpdated: ctx.reader.getLastUpdated(),
+      // The site's gate with the address test taken as passed: the page tells
+      // every visitor, not only the ones the check would run for.
+      onboardCheck: isPassengerVerifyAudience(true, ctx.site.scope),
+    }
   );
 };
 

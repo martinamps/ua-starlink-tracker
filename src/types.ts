@@ -421,7 +421,10 @@ export type AirportDepartures = {
 };
 
 export interface FleetDiscoveryStats {
+  /** Programme roster: the same denominator the pages print. */
   total_fleet: number;
+  /** Roster tails outside the programme: checked, never part of the total. */
+  outside_programme: number;
   verified_starlink: number;
   verified_non_starlink: number;
   pending_verification: number;

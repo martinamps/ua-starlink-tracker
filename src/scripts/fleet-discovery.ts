@@ -669,6 +669,7 @@ export function startFleetDiscovery(
             info("Heartbeat: fleet-discovery scheduler healthy", {
               runs: runCount,
               fleet: fleetStats.total_fleet,
+              outsideProgramme: fleetStats.outside_programme,
               starlink: fleetStats.verified_starlink,
               nonStarlink: fleetStats.verified_non_starlink,
               pending: fleetStats.pending_verification,
