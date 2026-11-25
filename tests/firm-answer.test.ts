@@ -73,6 +73,20 @@ describe("flight page opening", () => {
     db.close();
   });
 
+  test("the caveat links the assigned departure's calendar offer, on the date its airport reads", async () => {
+    const db = makeSyntheticDb();
+    verifiedTail(db, "N601UX");
+    addFlight(db, "N601UX", FN, "DEN", T, { arrivalAirport: "EWR", lastUpdated: SEEN });
+    const app = createApp(db);
+    const { html, rest } = await page(db);
+    const href = `/check-flight/${FN}/${airportLocalDate("DEN", T)}#flight-calendar`;
+    expect(html).toContain(`href="${href}"`);
+    expect(rest.join(" ")).toContain("Add this departure to your calendar");
+    const target = await (await app.dispatch(req(href.split("#")[0], UA_HOST))).text();
+    expect(target).toContain('id="flight-calendar"');
+    db.close();
+  });
+
   test("an assigned aircraft settled on another provider opens with a no that names it", async () => {
     const db = makeSyntheticDb();
     settledNoTail(db, "N602UX", "Panasonic");

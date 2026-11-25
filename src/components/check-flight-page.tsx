@@ -1,13 +1,15 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import {
   type AnswerContext,
+  CALENDAR_OFFER_ID,
   type FlightAnswer,
+  calendarOffered,
   datePassed,
   renderFlightAnswer,
 } from "../client/flight-answer";
 import type { PopularFlight } from "../database/database";
 import { SEATBACK_LIVE_TV_COPY } from "../utils/aircraft-specs";
-import { AIRPORT_TZ, airportTimezone } from "../utils/airport-tz";
+import { AIRPORT_TZ, airportTimezone, flightDateWindow } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
 import { PopularFlightsLinks } from "./atoms";
@@ -27,6 +29,7 @@ import {
   Section,
   SectionTitle,
 } from "./layout";
+import { zonedIsoDate } from "./ui/format";
 
 export type {
   AssignedDeparture,
@@ -198,6 +201,23 @@ export default function CheckFlightPage({
           : fn
             ? `Pick your travel date to check ${fn}.`
             : "Enter your flight number and date to see whether your aircraft has Starlink.";
+  // The assigned departure's dated page carries the calendar links; null where
+  // no feed serves it (the hub, Qatar, a date already over at the airport).
+  const assignedDate = assigned ? zonedIsoDate(assigned.departure, assigned.departureZone) : null;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const calendarHref =
+    fn &&
+    assigned &&
+    assignedDate &&
+    calendarOffered({
+      watchEnabled: watchFeedEnabled(site),
+      date: assignedDate,
+      daysOut: flightDateWindow(assignedDate, nowSec)?.daysOut ?? 0,
+      nowSec,
+      originZone: assigned.departureZone,
+    })
+      ? `/check-flight/${fn}/${assignedDate}#${CALENDAR_OFFER_ID}`
+      : null;
   const otherDates =
     flight && assigned && !typeSettled(flight) && hasUsualFigure(flight)
       ? `On other dates: ${lowerFirst(usualSummary(flight))}`
@@ -219,6 +239,15 @@ export default function CheckFlightPage({
           <p id="assignment-caveat" className="mx-auto max-w-2xl text-sm text-muted text-pretty">
             {SWAP_CAVEAT}
             {otherDates ? ` ${otherDates}` : ""}
+            {calendarHref && (
+              <>
+                {" "}
+                <a href={calendarHref} rel="nofollow" className={LINK}>
+                  Add this departure to your calendar
+                </a>
+                : the event changes if we see a different aircraft on the flight.
+              </>
+            )}
           </p>
         )}
       </PageHeader>
