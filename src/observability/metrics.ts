@@ -658,8 +658,9 @@ export const COUNTERS = {
   // tags: source (FleetSource), reason (invalid_registration|non_airliner), airline
   FLEET_ROW_REJECTED: "fleet.row_rejected",
   // An airline's own chart failed its bounds (database/chart-bounds.ts), so
-  // it was not stored (parse) or cannot stand in a headline (sync, read) —
-  // tags: stage (parse|sync|read), reason (normalizeChartRejectReason), airline
+  // it was not stored (parse), cannot stand in a headline (sync, read), or
+  // had a complete type's tails left unsettled (settle) —
+  // tags: stage (parse|sync|settle|read), reason (normalizeChartRejectReason), airline
   CHART_REJECTED: "fleet_progress.chart_rejected",
   // Sheet tab list drifted from the gids we know (utils.ts reconcileSheetTabs) —
   // tags: state (vanished_empty|vanished_listed|new), airline

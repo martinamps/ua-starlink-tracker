@@ -156,10 +156,12 @@ const lastReported = new Map<string, number>();
 /**
  * Count and log a chart that failed its bounds. The read path runs on every
  * page view, so one failure reports once an hour there, not once a request.
+ * "settle" is the daily job declining to name a complete type's tails from a
+ * chart refused at "sync": it counts when that chart called any type complete.
  */
 export function reportChartRejected(
   airline: string,
-  stage: "parse" | "sync" | "read",
+  stage: "parse" | "sync" | "settle" | "read",
   problem: ChartProblem,
   now = Date.now()
 ): void {
