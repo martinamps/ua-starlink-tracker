@@ -1698,22 +1698,76 @@
     ]
   },
   "unitedstarlinktracker.com watch UA1010 2026-09-14": {
-    "status": 404,
+    "status": 200,
     "headers": {
-      "content-type": "text/plain; charset=utf-8",
-      "cache-control": "public, max-age=300",
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=86400",
+      "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "Not found"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1010",
+      "REFRESH-INTERVAL;VALUE=DURATION:P7D",
+      "X-PUBLISHED-TTL:P7D",
+      "BEGIN:VEVENT",
+      "UID:UA1010-2026-09-14@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART;VALUE=DATE:20260914",
+      "DTEND;VALUE=DATE:20260915",
+      "LAST-MODIFIED:20260916T000000Z",
+      "SEQUENCE:1000",
+      "SUMMARY:Date passed: UA1010 · no aircraft record",
+      "DESCRIPTION:This flight's date has passed.\\nWe hold no record of the aircra",
+      " ft that flew it\\, so we can't say whether it had Starlink.\\n\\nThis calenda",
+      " r is final and no longer changes\\; the subscription can be removed.\\nhttps",
+      " ://unitedstarlinktracker.com/check-flight/UA1010?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1010?utm_source=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1003 2026-09-14": {
-    "status": 404,
+    "status": 200,
     "headers": {
-      "content-type": "text/plain; charset=utf-8",
-      "cache-control": "public, max-age=300",
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=86400",
+      "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "Not found"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1003",
+      "REFRESH-INTERVAL;VALUE=DURATION:P7D",
+      "X-PUBLISHED-TTL:P7D",
+      "BEGIN:VEVENT",
+      "UID:UA1003-2026-09-14@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART;VALUE=DATE:20260914",
+      "DTEND;VALUE=DATE:20260915",
+      "LAST-MODIFIED:20260916T000000Z",
+      "SEQUENCE:1000",
+      "SUMMARY:Date passed: UA1003 · no aircraft record",
+      "DESCRIPTION:This flight's date has passed.\\nWe hold no record of the aircra",
+      " ft that flew it\\, so we can't say whether it had Starlink.\\n\\nThis calenda",
+      " r is final and no longer changes\\; the subscription can be removed.\\nhttps",
+      " ://unitedstarlinktracker.com/check-flight/UA1003?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1003?utm_source=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "alaskastarlinktracker.com watch AS100 2026-09-20": {
     "status": 200,

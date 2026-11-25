@@ -23,6 +23,7 @@ const DEPENDENT_TABLES: Array<{ table: string; column: string }> = [
   { table: "departure_log", column: "tail_number" },
   { table: "first_flights", column: "tail_number" },
   { table: "flight_assignment_log", column: "tail_number" },
+  { table: "flown_assignments", column: "tail_number" },
 ];
 
 export interface PruneCandidate {

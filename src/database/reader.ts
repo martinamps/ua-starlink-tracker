@@ -48,7 +48,9 @@ import {
   type SameDayAlternative,
   type SameDayAlternativesQuery,
   getAssignmentHistory,
+  getFlownAssignmentHistory,
   getSameDayStarlinkAlternatives,
+  isKnownFlightNumber,
   logResolvedAssignments,
 } from "./assignment-log";
 import {
@@ -388,6 +390,10 @@ export interface ScopedReader {
   ): QatarScheduleRow[];
   /** Every tail the updater has seen on the flight's local date (Starlink Watch). */
   getAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
+  /** The same rows for a past date, read from the year-long flown record too. */
+  getFlownAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
+  /** A route, a scheduled leg or a logged assignment exists under one of the spellings. */
+  isKnownFlightNumber(variants: readonly string[]): boolean;
   getSameDayStarlinkAlternatives(q: SameDayAlternativesQuery): SameDayAlternative[];
   logResolvedAssignments(flightNumber: string, legs: readonly ResolvedLeg[], now: number): void;
 
@@ -620,6 +626,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getQatarFetchCoverage: (p, d) => getQatarFetchCoverage(db, p, d),
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
+    getFlownAssignmentHistory: (v, d) => getFlownAssignmentHistory(db, airlines, v, d),
+    isKnownFlightNumber: (v) => isKnownFlightNumber(db, airlines, v),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
     logResolvedAssignments: (fn, legs, now) => logResolvedAssignments(db, airlines, fn, legs, now),
 

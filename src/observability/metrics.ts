@@ -57,7 +57,8 @@
  *   outcome:         verified_yes | verified_no | type_yes | type_no |
  *                    predicted | no_data | error                     (7)
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
- *   state:           watch.feed_fetch: prediction | yes | no | swap | none  (5)
+ *   state:           watch.feed_fetch: prediction | yes | no | swap | none |
+ *                    flown | flown_unknown                           (7)
  *   surface:         watch.cta_shown: check_flight                   (1)
  *   source:          source.* metrics only: SourceId in database/source-health.ts (15).
  *                    (scraper.sync and others carry their own `source` values)
