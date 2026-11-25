@@ -261,6 +261,14 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
       <>
         {fmt(published.count)}
         <span className="block text-xs text-muted">{ownCountAsOf(published)}</span>
+        {published.reportedBy && (
+          // Two short lines: the cell does not wrap, and one long line
+          // widened the table past a phone's screen.
+          <span className="block text-xs text-muted">
+            as reported by
+            <span className="block">{published.reportedBy}</span>
+          </span>
+        )}
       </>
     );
   }

@@ -45,7 +45,16 @@ interface RolloutFactBase {
    * bare fetch). A reader who hits that wall still has something to open,
    * which is the entire promise of this file — a citation nobody can read is
    * not a receipt. Only ever a snapshot confirmed to exist and return 200. */
-  source: { label: string; url: string; mirror?: string };
+  source: {
+    label: string;
+    url: string;
+    mirror?: string;
+    /** The page is another publisher's report of what the airline said (a
+     * newspaper covering an announcement), not the airline's own page. A
+     * figure taken from it is still the airline's, and its credit names both:
+     * the airline's figure, as `label` reported it. */
+    secondHand?: true;
+  };
   /** Type-page slugs (/fleet/{slug}) this fact is shown on; "*" = every type
    * page of the airline. Absent = the fact stays on the airline pages only. */
   aircraftPages?: readonly string[];
@@ -376,6 +385,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "The Peninsula",
           url: "https://thepeninsulaqatar.com/article/17/11/2026/qatar-airways-starlink-benefits-over-31-million-passengers",
+          secondHand: true,
         },
         officialFleetCount: 170,
       },
@@ -1633,6 +1643,9 @@ export interface AirlineOwnCount {
   asOf: string;
   sourceLabel: string;
   url: string;
+  /** The publisher that reported the airline's figure, when `url` is that
+   * publisher's page and not the airline's own. Named in every credit. */
+  reportedBy?: string;
 }
 
 /** The airline's own newest fleet-wide count, from the current dated fact that
@@ -1648,6 +1661,7 @@ export function airlineOwnCount(code: string): AirlineOwnCount | null {
     asOf: fact.asOf,
     sourceLabel: fact.source.label,
     url: fact.source.url,
+    ...(fact.source.secondHand ? { reportedBy: fact.source.label } : {}),
   };
 }
 

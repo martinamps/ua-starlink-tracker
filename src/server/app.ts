@@ -46,6 +46,9 @@ import {
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
+  byTypeBadgeValue,
+  byTypeSumBasis,
+  byTypeSumSentence,
   countingMethodSentences,
   leadCount,
   ownCountAsOf,
@@ -153,6 +156,7 @@ import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
+import { firmDescription } from "../components/check-flight/firm-lead";
 import ChromePage, {
   CHROME_OG_IMAGE_ALT,
   CHROME_OG_IMAGE_URL,
@@ -1862,7 +1866,7 @@ const SITE_PAGES: SitePage[] = [
     indexable: false,
     navLabel: "Embed a badge",
     llmsLine: (h) =>
-      `- [Embed badge](https://${h}/embed) — auto-updating SVG badge with the live equipped count (https://${h}/badge.svg)`,
+      `- [Embed badge](https://${h}/embed) — auto-updating SVG badge with ${badgeFigureWords(h)} (https://${h}/badge.svg)`,
   },
   {
     path: "/methodology",
@@ -2336,9 +2340,19 @@ ${bestLink}`;
   const twoCounts = chart
     ? ` The element gives two figures. ${cfg.shortName}'s own count, from its by-type chart, is ${fmt(chart.connected)} of ${fmt(chart.total)} ${ownCountAsOf(chart)}: cite it as ${cfg.shortName}'s, with that date. The other, ${fmt(programme.equipped)} of ${fmt(programme.total)}, is the aircraft this site can name by tail: cite it as this site's, with the page's date. ${[unnamedSentence(cfg, chart), rosterDiffSentence(cfg, chart)].filter(Boolean).join(" ")}`
     : "";
-  const citeSection = `## Citing the headline number
+  const verify = features.methodologyPage
+    ? ` How those numbers are gathered and verified: https://${host}/methodology`
+    : "";
+  // An airline known by aircraft type has a fleet-list sum there, and the
+  // sentence to copy must not turn it into a count of installs.
+  const citeSection =
+    trackingMethod(cfg) === "type"
+      ? `## Citing the headline number
 
-The homepage element with HTML id \`starlink-stat\` gives the count: how many ${counted} have Starlink, out of how many, and the share. The page's "Data last updated" line dates it, and the homepage FAQPage JSON-LD states the same figures as one dated sentence. Cite ${chart ? "this site's count" : "them"} as "As of {date}, {n} of {total} ${counted} ({percent}%) have Starlink." Both are regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${twoCounts}${features.methodologyPage ? ` How those numbers are gathered and verified: https://${host}/methodology` : ""}`;
+The homepage element with HTML id \`starlink-stat\` gives a sum by aircraft type, not a count of installs: how many ${counted} on this site's fleet list are of ${byTypeSumBasis(cfg.code)}. The page's "Data last updated" line dates it. Cite it as "As of {date}, {n} ${counted} on the tracker's fleet list are of ${byTypeSumBasis(cfg.code)}, counted by aircraft type", never as "{n} aircraft have Starlink". It is regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${verify}`
+      : `## Citing the headline number
+
+The homepage element with HTML id \`starlink-stat\` gives the count: how many ${counted} have Starlink, out of how many, and the share. The page's "Data last updated" line dates it, and the homepage FAQPage JSON-LD states the same figures as one dated sentence. Cite ${chart ? "this site's count" : "them"} as "As of {date}, {n} of {total} ${counted} ({percent}%) have Starlink." Both are regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${twoCounts}${verify}`;
 
   // A week out, so agents copying the example never query a date in the past.
   const exampleDay = new Date(Date.now() + 7 * 86400_000);
@@ -2460,20 +2474,34 @@ const LOG_PAGE_LIMIT = 250;
 // <updated>, and Atom requires one: the epoch showed in readers as a
 // 55-year-old item, and a raw "2026-13-45T12:00:00Z" is not a timestamp at
 // all. Same rule as getDailyInstalls' SQL date() check.
-const installIso = (dateFound: string | null): string | null => {
+// A day after today (UTC, the clock DateFound is written on) is no day
+// anything was found: "2099-01-01" became the feed's own <updated> and sat
+// first in every reader. It is left out the way an undated row is.
+const installIso = (dateFound: string | null, today: string): string | null => {
   const day = (dateFound ?? "").slice(0, 10);
-  return isRealIsoDate(day) ? `${day}T12:00:00Z` : null;
+  return isRealIsoDate(day) && day <= today ? `${day}T12:00:00Z` : null;
 };
 
 /** The rows the feed can date. The rest stay on /newly-equipped and in every
  * count; they are only left out of the syndicated document. */
 function datedForFeed<T extends { DateFound: string | null }>(
-  rows: T[]
+  rows: T[],
+  nowMs = Date.now()
 ): Array<T & { DateFound: string; updated: string }> {
+  const today = new Date(nowMs).toISOString().slice(0, 10);
   return rows.flatMap((r) => {
-    const updated = installIso(r.DateFound);
+    const updated = installIso(r.DateFound, today);
     return updated && r.DateFound ? [{ ...r, DateFound: r.DateFound, updated }] : [];
   });
+}
+
+/** <updated> for a feed with no entry to take it from. Atom requires one: the
+ * data's own last-updated stamp while it is a real past instant, else the
+ * start of the current UTC day, which holds still for a day of polling. */
+function emptyFeedUpdated(stamp: string | null, nowMs = Date.now()): string {
+  const t = stamp ? Date.parse(stamp) : Number.NaN;
+  const ms = Number.isFinite(t) && t <= nowMs ? t : nowMs - (nowMs % 86_400_000);
+  return `${new Date(ms).toISOString().slice(0, 19)}Z`;
 }
 
 /**
@@ -2509,26 +2537,28 @@ function reportedInstallsFor({ site, reader }: RequestContext): ReportedInstall[
 
 const feedXml: Handler = (ctx) => {
   const { site, reader } = ctx;
-  // An Atom document with zero entries is a broken subscription, not an empty
-  // one — readers keep polling it forever and it advertises a rollout that
-  // never moves. Same gate as the page it syndicates.
+  // Same gate as the page it syndicates, and as every link to it: with no
+  // install log nothing points here, and an Atom document for an airline that
+  // has no log would advertise a rollout that never moves.
   if (!hasInstallLog(ctx)) return notFound(site);
   const host = site.canonicalHost;
   const installs = datedForFeed(
     reader.getRecentInstalls(FEED_LIMIT, recentInstallCap(site.scope, FEED_LIMIT))
   );
   const reported = datedForFeed(reportedInstallsFor(ctx));
-  // Same broken-subscription rule once the undatable rows are gone.
-  if (installs.length + reported.length === 0) return notFound(site);
+  // A log whose rows the feed can't date is still linked from the home page,
+  // /newly-equipped and /embed, so it answers with a valid feed of no entries:
+  // a 404 there was a dead link and a subscription error.
   const firstFlights = firstFlightsFor(reader, installs);
   const airlineNames = new Map(publicAirlines().map((a) => [a.code, a.name]));
 
   // Honest <updated>: the newest entry's date, never the request clock (same
   // discipline as the sitemap's lastmod). Both lists arrive newest first.
-  const updated = [installs[0], reported[0]]
-    .flatMap((r) => (r ? [r.updated] : []))
-    .sort()
-    .at(-1) as string;
+  const updated =
+    [installs[0], reported[0]]
+      .flatMap((r) => (r ? [r.updated] : []))
+      .sort()
+      .at(-1) ?? emptyFeedUpdated(reader.getLastUpdatedRaw());
 
   const confirmedEntries = installs.map((i) => {
     const name = airlineNames.get(i.airline) ?? i.airline;
@@ -2597,8 +2627,7 @@ const feedXml: Handler = (ctx) => {
   <link href="https://${host}/newly-equipped"/>
   <id>https://${host}/feed.xml</id>
   <updated>${updated}</updated>
-  <author><name>${escapeXml(site.brand.title)}</name></author>
-${entries}
+  <author><name>${escapeXml(site.brand.title)}</name></author>${entries ? `\n${entries}` : ""}
 </feed>`;
   return text(body, "application/atom+xml; charset=utf-8", { cache: CACHE.fifteenMinutes });
 };
@@ -2785,14 +2814,22 @@ const BADGE_CHAR_W = 6.3;
 const BADGE_ACCENT_FALLBACK = "#0ea5e9";
 const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
 
-export function badgeSvgMarkup(label: string, value: string, accent: string): string {
+/** `spoken` replaces "label: value" in the name a screen reader and a hover
+ * give the picture, where a longer sentence costs no width. */
+export function badgeSvgMarkup(
+  label: string,
+  value: string,
+  accent: string,
+  spoken?: string
+): string {
   const lw = Math.round(label.length * BADGE_CHAR_W) + 20;
   const vw = Math.round(value.length * BADGE_CHAR_W) + 20;
   const l = escapeXml(label);
   const v = escapeXml(value);
+  const name = spoken ? escapeXml(spoken) : `${l}: ${v}`;
   const a = HEX_COLOR.test(accent) ? accent : BADGE_ACCENT_FALLBACK;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${lw + vw}" height="20" role="img" aria-label="${l}: ${v}">
-  <title>${l}: ${v}</title>
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${lw + vw}" height="20" role="img" aria-label="${name}">
+  <title>${name}</title>
   <rect width="${lw}" height="20" rx="3" fill="#1a2332"/>
   <rect x="${lw}" width="${vw}" height="20" rx="3" fill="${a}"/>
   <rect x="${lw}" width="3" height="20" fill="${a}"/>
@@ -2826,9 +2863,19 @@ const badgeSvg: Handler = ({ site, reader, tenant }) => {
   const equipped = programme?.equipped ?? reader.countStarlinkPlanes();
   const total = programme?.total ?? reader.getTotalCount();
   const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
-  const value = badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
+  // Known by aircraft type: the figure is a sum of fleet-list rows, so the
+  // badge says so in the words it has room for and in full in its name.
+  const byType = cfg && trackingMethod(cfg) === "type" ? cfg : null;
+  const value = byType
+    ? byTypeBadgeValue(equipped)
+    : badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
   return text(
-    badgeSvgMarkup(label, value, site.brand.accentColor),
+    badgeSvgMarkup(
+      label,
+      value,
+      site.brand.accentColor,
+      byType ? `${byTypeSumSentence(byType, equipped)}.` : undefined
+    ),
     "image/svg+xml; charset=utf-8",
     {
       // An hour of edge/browser caching keeps embeds cheap while the count
@@ -2840,10 +2887,19 @@ const badgeSvg: Handler = ({ site, reader, tenant }) => {
   );
 };
 
+/** What the badge's figure is, for the lines that describe the badge. */
+function badgeFigureWords(host: string): string {
+  const cfg = Object.values(AIRLINES).find((a) => siteForAirline(a.code)?.canonicalHost === host);
+  return cfg && trackingMethod(cfg) === "type"
+    ? "this site's sum by aircraft type, not a count of installs"
+    : "the live equipped count";
+}
+
 const embedPage: Handler = (ctx) => {
   const cfg = tenantConfig(ctx.tenant);
   const short = cfg?.shortName ?? "Airline";
   const subject = cfg?.name ?? "tracked airlines";
+  const byType = cfg ? trackingMethod(cfg) === "type" : false;
   // apiFleetSummary iterates publicAirlines(); a tenant with publicInHub false
   // (QR) is absent from its own host's payload, so don't send readers there.
   const inFleetSummary = !cfg || publicAirlines().some((a) => a.code === cfg.code);
@@ -2857,10 +2913,14 @@ const embedPage: Handler = (ctx) => {
     "/embed",
     {
       siteTitle: `Add a Live ${short} Starlink Badge to Your Site — Embed`,
-      siteDescription: `An auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink Wi-Fi. One image tag, no script.`,
+      siteDescription: byType
+        ? `An auto-updating SVG badge with this site's sum of ${subject} aircraft of Starlink types, counted by aircraft type. One image tag, no script.`
+        : `An auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink Wi-Fi. One image tag, no script.`,
       keywords: `${short.toLowerCase()} starlink badge, starlink rollout badge, embed starlink stats, ${short.toLowerCase()} starlink widget`,
       ogTitle: `Live ${short} Starlink Badge`,
-      ogDescription: `An auto-updating badge with the live count of ${subject} aircraft that have Starlink. One image tag.`,
+      ogDescription: byType
+        ? `An auto-updating badge with this site's sum of ${subject} aircraft of Starlink types, counted by aircraft type. One image tag.`
+        : `An auto-updating badge with the live count of ${subject} aircraft that have Starlink. One image tag.`,
       // follow, not nofollow: the page is a dead end for a searcher but a live
       // internal link hub for a crawler already here. Same call the sitemap
       // makes via SitePage.indexable — see the /embed entry there.
@@ -3385,6 +3445,14 @@ function flightPageMeta(
   const route = facts.routes[0] ?? null;
   const routeLabel = route ? ` (${route.departure_airport} → ${route.arrival_airport})` : "";
   const answer = flightMetaAnswer(reader, cfg, flightNumber, facts);
+  // The undated page opens with the assigned aircraft's answer when it has
+  // one (check-flight-page.tsx), and the description then says that, not odds
+  // the page no longer leads with. A dated URL canonicalizes to the undated
+  // page, so its own description is not what a search engine keeps.
+  const firm =
+    !dated && facts.nextAssigned
+      ? firmDescription(facts, facts.nextAssigned, META_DESCRIPTION_MAX)
+      : null;
 
   const pageJsonLd = route
     ? jsonLdBlock({
@@ -3404,10 +3472,14 @@ function flightPageMeta(
   // once the brand suffix is gone (Google appends the site name itself).
   return {
     siteTitle: `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`,
-    siteDescription: `Does ${cfg.name} ${flightNumber}${routeLabel} have free Starlink Wi-Fi?${answer} Pick a date for a firm answer once aircraft assignments publish.`,
+    siteDescription:
+      firm ??
+      `Does ${cfg.name} ${flightNumber}${routeLabel} have free Starlink Wi-Fi?${answer} Pick a date for a firm answer once aircraft assignments publish.`,
     keywords: `${flightNumber} starlink, does ${flightNumber} have wifi, ${flightNumber} wifi, ${cfg.name} ${flightNumber} starlink`,
     ogTitle: `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`,
-    ogDescription: `${cfg.name} ${flightNumber}${routeLabel}.${answer || " Check it for Starlink Wi-Fi by date."}`,
+    ogDescription:
+      firm ??
+      `${cfg.name} ${flightNumber}${routeLabel}.${answer || " Check it for Starlink Wi-Fi by date."}`,
     pageJsonLd,
     ...sharePictureMeta(ctx, flightSharePicture(ctx.site, facts, dated)),
   };

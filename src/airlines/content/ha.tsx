@@ -27,7 +27,8 @@ const HAHero = ({ stats, statSentence }: HeroProps) => {
         <div className="font-display text-lg text-primary">Airbus fleet complete</div>
         <div className="text-xs text-muted mt-1">September 2024</div>
         <div className="mt-3 text-sm text-secondary">
-          <StatInline n={starlinkCount} /> Airbus aircraft equipped
+          <StatInline n={starlinkCount} /> Airbus aircraft on our fleet list, counted by aircraft
+          type
         </div>
       </Panel>
       <Panel pad="none" className="md:col-span-2 overflow-hidden">
@@ -69,9 +70,9 @@ export const content: AirlineContent = {
           q: "Which Hawaiian Airlines planes have Starlink?",
           a: ({ starlinkCount }) => (
             <p>
-              All {fmt(starlinkCount)} of Hawaiian's Airbus aircraft, every A330-200 and every
-              A321neo, have Starlink. The rollout finished in September 2024. If your flight is on
-              an Airbus, it has Starlink.
+              Every Hawaiian Airbus aircraft, each A330-200 and each A321neo, has Starlink. The
+              rollout finished in September 2024. If your flight is on an Airbus, it has Starlink.
+              Our fleet list has {fmt(starlinkCount)} of them, counted by aircraft type.
             </p>
           ),
         },

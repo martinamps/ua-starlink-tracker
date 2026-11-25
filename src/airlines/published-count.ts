@@ -18,7 +18,7 @@
 import { fmt } from "../components/ui/format";
 import type { AirlineChartCount } from "../database/roster";
 import { aircraftName } from "./aircraft-families";
-import { type AirlineConfig, wifiPhaseFamilies } from "./registry";
+import { type AirlineConfig, heldBackCount, wifiPhaseFamilies } from "./registry";
 import {
   type AirlineOwnCount,
   type AirlineOwnTypeSum,
@@ -55,6 +55,41 @@ export function publishedCount(cfg: AirlineConfig, tracked: number): PublishedCo
   const sum = airlineOwnTypeSum(cfg.code);
   return sum ? { basis: "type-sum", ...sum } : { basis: "type" };
 }
+
+/** What a by-type airline's fleet-list sum is a sum of. A sentence that
+ * prints the sum says this in place of "have Starlink": the aircraft were
+ * never counted one by one, and the airline's own figure differs. */
+export function byTypeSumBasis(code: string): string {
+  const held = heldBackCount(code);
+  return held > 0
+    ? `types the airline reports finished, leaving out ${fmt(held)} that aren't confirmed`
+    : "fully equipped types";
+}
+
+/** How a by-type sum was reached, for any sentence that prints one. */
+export const BY_TYPE_METHOD = "counted by aircraft type, not checked plane by plane";
+
+/** The sum in one sentence, for places with room for it: "149 Qatar Airways
+ * aircraft on our fleet list are of types the airline reports finished,
+ * leaving out 11 that aren't confirmed, counted by aircraft type, not checked
+ * plane by plane". */
+export function byTypeSumSentence(cfg: AirlineConfig, sum: number): string {
+  return `${fmt(sum)} ${cfg.name} aircraft on our fleet list are of ${byTypeSumBasis(cfg.code)}, ${BY_TYPE_METHOD}`;
+}
+
+/** The heading over a by-type sum, or over the aircraft it adds up. */
+export const BY_TYPE_SUM_LABEL = "On our fleet list, by aircraft type";
+
+/** The badge's value for a by-type airline. Exactly as long as the
+ * "N aircraft equipped" it replaces, so a badge already on someone's page
+ * keeps its width. */
+export function byTypeBadgeValue(sum: number): string {
+  return `${fmt(sum)}, by aircraft type`;
+}
+
+/** The caption under a by-type sum on the share pictures (set in capitals,
+ * no longer than the longest caption the card already carries). */
+export const BY_TYPE_CARD_CAPTION = "ON OUR LIST, COUNTED BY TYPE";
 
 /** Every aircraft is checked on its own: no aircraft-type rule and no
  * community list settles any of them. Alaska is not this: its type rule marks
@@ -134,8 +169,20 @@ export function ownFigureNote(code: string): OwnFigureNote | null {
   return fact ? { kind: "fact", fact } : null;
 }
 
+/** "as of Nov 16, 2026, as reported by The Peninsula": the date, and the
+ * publisher too when the figure reached us through one. */
+export function ownCountSourced(own: AirlineOwnCount): string {
+  return `${ownCountAsOf(own)}${own.reportedBy ? `, as reported by ${own.reportedBy}` : ""}`;
+}
+
+/** The words before the source link. From the airline's own page: "per Qatar
+ * Airways as of Aug 21, 2026", the link following in brackets. Through
+ * another publisher: "the airline's own figure as of Nov 16, 2026, as
+ * reported by", and the link is that publisher's name. */
 export function ownCountCredit(cfg: AirlineConfig, own: AirlineOwnCount): string {
-  return `per ${cfg.name} ${ownCountAsOf(own)}`;
+  return own.reportedBy
+    ? `the airline's own figure ${ownCountAsOf(own)}, as reported by`
+    : `per ${cfg.name} ${ownCountAsOf(own)}`;
 }
 
 const listed = (parts: string[]) =>

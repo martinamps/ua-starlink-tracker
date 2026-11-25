@@ -255,7 +255,7 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                     {published.basis === "airline"
                       ? `, ${ownCountCredit(cfg, published)}`
                       : `: ${typeSumParts(published)}, ${typeSumCredit(published)}`}{" "}
-                    (
+                    {!published.reportedBy && "("}
                     <a
                       href={published.url}
                       target="_blank"
@@ -264,7 +264,7 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                     >
                       {published.sourceLabel}
                     </a>
-                    )
+                    {!published.reportedBy && ")"}
                   </>
                 )}
                 .{published.basis === "type-sum" && " The total is our sum of those counts."}{" "}
