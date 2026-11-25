@@ -129,7 +129,10 @@ function StatSentence({ site, stats }: { site: SiteConfig; stats: ContentStats }
         <>
           {" "}
           of {fmt(stats.totalCount)} {noun}
-          {byType && " on our fleet list"} ({pct(stats.starlinkCount, stats.totalCount)}) {claim}
+          {/* No share for a by-type sum: a part of a list picked by a type
+              rule is not a share of aircraft counted (/fleet says the same). */}
+          {byType ? " on our fleet list" : ` (${pct(stats.starlinkCount, stats.totalCount)})`}{" "}
+          {claim}
         </>
       ) : (
         <>

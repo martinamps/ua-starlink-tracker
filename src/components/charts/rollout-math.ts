@@ -231,11 +231,18 @@ export function chartModel(
 
 /** The chart's spoken summary: the line, any import, and each target with the
  * month the measured pace would reach it, said as a condition. */
-export function chartDescription(model: ChartModel, airlineName: string): string {
+export function chartDescription(
+  model: ChartModel,
+  airlineName: string,
+  /** Where the now-figure adds a by-type partner's aircraft to the airline's
+   * own: what it counts, and its two parts (programmePartsText). */
+  combined?: { noun: string; parts: string } | null
+): string {
   const { series, paceText, targets } = model;
   const [nowMs, nowValue] = series.now;
   return [
-    `${airlineName} aircraft with Starlink since ${monthYear(monthKey(series.start))}: ${fmt(nowValue)} as of ${monthYear(monthKey(nowMs))}.`,
+    `${combined ? combined.noun : `${airlineName} aircraft`} with Starlink since ${monthYear(monthKey(series.start))}: ${fmt(nowValue)} as of ${monthYear(monthKey(nowMs))}.`,
+    combined ? `That is ${combined.parts}.` : "",
     ...series.imports.map(
       (i) =>
         `${fmt(i.installs)} aircraft were added by a one-day data import on ${formatFactDate(new Date(i.ms).toISOString().slice(0, 10))}.`

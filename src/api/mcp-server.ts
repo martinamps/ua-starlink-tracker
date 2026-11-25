@@ -29,7 +29,15 @@ import {
   marketingFlightNumber,
   normalizeAirlineFlightNumber,
 } from "../airlines/flight-number";
-import { byTypeSumBasis, trackingMethod } from "../airlines/published-count";
+import {
+  BY_TYPE_METHOD,
+  byTypeSumBasis,
+  countedNames,
+  listed,
+  programmePartsText,
+  splitByMethod,
+  trackingMethod,
+} from "../airlines/published-count";
 import {
   AIRLINES,
   type AirlineCode,
@@ -2030,9 +2038,17 @@ function toolGetFleetStats(reader: ScopedReader): ToolResult {
         : `${floor(a) ? "at least " : ""}${aircraftShare(a.starlink, a.total, inScope(a))}`;
       return `**${a.name}**: ${count}${a.phaseNote ? ` — ${a.phaseNote}` : ""}`;
     });
+    // The total adds up only airlines counted on this site: one known by
+    // aircraft type has a fleet-list sum, which is no count of installs.
+    const split = splitByMethod(per);
+    const leftOut = split.byType.map((b) => b.cfg.name);
+    const total =
+      leftOut.length > 0
+        ? `**${listed(per.filter((a) => !byType(a)).map((a) => a.name))}, counted on this site**: ${per.some(floor) ? "at least " : ""}${aircraftShare(split.counted.starlink, split.counted.total, split.counted.rosterIsProgramScope)} have Starlink WiFi. Not in this total: ${listed(leftOut)}, ${BY_TYPE_METHOD} (below).`
+        : `**All tracked airlines**: ${per.some(floor) ? "at least " : ""}${aircraftShare(agg.starlink, agg.total, per.every(inScope))} have Starlink WiFi`;
     const text = `Starlink Installation Progress (as of ${lastUpdated}):
 
-**All tracked airlines**: ${per.some(floor) ? "at least " : ""}${aircraftShare(agg.starlink, agg.total, per.every(inScope))} have Starlink WiFi
+${total}
 
 ${lines.join("\n")}`;
     return textResult(text);
@@ -2061,6 +2077,9 @@ ${lines.join("\n")}`;
   // site with the wider count; both figures appear, each named, so an agent
   // quoting this never contradicts the site it points to.
   const programme = reader.getProgrammeHeadline();
+  // Over a by-type partner's aircraft the headline is two kinds of count, so
+  // it is said as its parts, with no share of the whole.
+  const headlineParts = programme && programmePartsText(cfg, programme);
   const ownLine = `${aircraftShare(starlinkPlanes.length, totalCount, inScope)} have Starlink WiFi`;
   const own = trackingMethod(cfg) === "type" ? airlineOwnCount(cfg.code) : null;
   const sum = trackingMethod(cfg) === "type" && !own ? airlineOwnTypeSum(cfg.code) : null;
@@ -2069,7 +2088,11 @@ ${lines.join("\n")}`;
     trackingMethod(cfg) === "type"
       ? `**Combined Fleet**: ${byTypeCount(starlinkPlanes.length, heldBackCount(cfg.code))}.${own ? `\n**The airline's own figure**: ${ownFigure(own)}` : sum ? `\n**Per-type counts on file**: ${typeSumLine(sum)}` : ""}`
       : programme
-        ? `**${programme.noun} (the site's headline)**: ${aircraftShare(programme.equipped, programme.total, inScope)} have Starlink WiFi\n**${cfg.shortName}-operated only**: ${ownLine}`
+        ? `**${programme.noun} (the site's headline)**: ${
+            headlineParts
+              ? `${programme.equipped} of ${programme.total} on the fleet list, in two parts: ${headlineParts}`
+              : `${aircraftShare(programme.equipped, programme.total, inScope)} have Starlink WiFi`
+          }\n**${cfg.shortName}-operated only**: ${ownLine}`
         : `**Combined Fleet**: ${ownLine}`,
     subfleetLines.join("\n"),
     familyLines.length > 0 ? `**By Aircraft Type**:\n${familyLines.join("\n")}` : null,
@@ -2098,6 +2121,21 @@ function toolListStarlinkAircraft(
 
   const total = planes.length;
   const shown = planes.slice(0, limit);
+  // Every airline at once: aircraft of an airline known by aircraft type are
+  // on the list, but never inside the count of Starlink-equipped aircraft.
+  const airlineOfTail = reader.scope === "ALL" ? reader.getAirlineByTail() : {};
+  const perAirline = new Map<string, number>();
+  for (const p of planes) {
+    const code = airlineOfTail[p.TailNumber];
+    if (code) perAirline.set(code, (perAirline.get(code) ?? 0) + 1);
+  }
+  const split = splitByMethod(
+    [...perAirline].map(([code, starlink]) => ({ code, starlink, total: 0 }))
+  );
+  const leftOut =
+    split.byType.length > 0
+      ? `plus ${listed(split.byType.map((b) => `${b.sum} ${b.cfg.shortName}`))} aircraft on the fleet list, ${BY_TYPE_METHOD}`
+      : null;
 
   // Type-settled rows carry DateFound NULL by design — omit the clause rather
   // than render "first seen null".
@@ -2115,9 +2153,11 @@ function toolListStarlinkAircraft(
     scopeCfg && trackingMethod(scopeCfg) === "type"
       ? `aircraft of ${byTypeSumBasis(scopeCfg.code)} (counted by aircraft type, not checked plane by plane)`
       : "Starlink-equipped aircraft";
-  const header = fleet
-    ? `${total} ${noun} in the ${carrier} ${fleet} fleet`
-    : `${total} ${noun} (${carrier})`;
+  const header = leftOut
+    ? `${split.counted.starlink} ${noun} ${fleet ? `in the ${countedNames(split)} ${fleet} fleet` : `(${countedNames(split)})`}, ${leftOut}`
+    : fleet
+      ? `${total} ${noun} in the ${carrier} ${fleet} fleet`
+      : `${total} ${noun} (${carrier})`;
 
   return textResult(`${header} (showing ${shown.length}):\n\n${lines.join("\n")}`);
 }

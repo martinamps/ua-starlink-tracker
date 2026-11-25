@@ -6,6 +6,7 @@
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
 import { ensureAirlinePrefix } from "../../airlines/flight-number";
+import { BY_TYPE_TAB_NOTE, trackingMethod } from "../../airlines/published-count";
 import { AIRLINES, type AirlineConfig } from "../../airlines/registry";
 import { FILTER_ACTIVE, FILTER_BUTTON, FILTER_INACTIVE } from "../../client/aircraft-list";
 import type { Aircraft, Flight } from "../../types";
@@ -199,6 +200,14 @@ export function AircraftList({
   const capped = aircraft.length > shown.length;
   const subfleetCount = (key: string) =>
     shown.filter((p) => p.fleet === key || airlineOf(p) === key).length;
+  // A list over several airlines may hold one known by aircraft type: its tab
+  // says so, and no figure adds its rows to the aircraft counted one by one.
+  const byTypeKeys = new Set(
+    content.subfleetFilters
+      .map((f) => f.key)
+      .filter((key) => AIRLINES[key] && trackingMethod(AIRLINES[key]) === "type")
+  );
+  const mixed = byTypeKeys.size > 0 && byTypeKeys.size < content.subfleetFilters.length;
 
   return (
     <Panel pad="none" className={`${SECTION_WIDE} overflow-hidden`}>
@@ -268,7 +277,7 @@ export function AircraftList({
               data-filter="all"
               data-count={shown.length}
             >
-              ALL <span className="hidden sm:inline">({fmt(shown.length)})</span>
+              ALL{mixed ? null : <span className="hidden sm:inline"> ({fmt(shown.length)})</span>}
             </button>
             {content.subfleetFilters.length > 1 &&
               content.subfleetFilters.map((card) => (
@@ -280,7 +289,10 @@ export function AircraftList({
                   data-filter={card.key}
                 >
                   {card.label.toUpperCase()}{" "}
-                  <span className="hidden sm:inline">({fmt(subfleetCount(card.key))})</span>
+                  <span className="hidden sm:inline">
+                    ({fmt(subfleetCount(card.key))}
+                    {byTypeKeys.has(card.key) ? ` ${BY_TYPE_TAB_NOTE}` : ""})
+                  </span>
                 </button>
               ))}
           </div>

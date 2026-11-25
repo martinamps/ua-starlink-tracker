@@ -35,6 +35,10 @@ export interface TargetScope {
   /** Names the roster when it is wider than the serving tenant ("Alaska and
    * Hawaiian"); null when the target is measured against this tenant alone. */
   label: string | null;
+  /** Set when the roster adds a partner known only by aircraft type to
+   * aircraft counted on this site: the two parts, each named for what it is
+   * (programmePartsText). The page prints these in place of one flat count. */
+  parts?: string | null;
 }
 
 export interface TargetProjection {

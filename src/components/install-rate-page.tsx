@@ -31,12 +31,19 @@ export interface AirlineInstallRate {
   /** What the count is of: "United Airlines aircraft", "Alaska and Hawaiian
    * Airbus aircraft", "Alaska-operated aircraft". */
   noun: string;
+  /** The tenant's own page, where the count spans a partner known by aircraft
+   * type: the count's two parts, each named for what it is. */
+  headlineParts?: string | null;
   stats: InstallRateStats;
 }
 
 interface InstallRatePageProps {
   site: SiteConfig;
   airlines: AirlineInstallRate[];
+  /** Hub: the airlines the sections cover, "United and Alaska". */
+  pacedNames?: string;
+  /** Hub: the by-type airlines that get no section, and why, as one sentence. */
+  leftOut?: string | null;
   pageLinks?: Link[];
   currentPath?: string;
   cite?: CiteStat | null;
@@ -88,10 +95,14 @@ function TargetRow({
       </div>
       <p className="mt-1 text-sm text-secondary">{targetStatus(p, stats)}</p>
       {/* A target stated over two carriers is measured over those two, both
-          halves of the ratio, so the page names the roster. */}
+          halves of the ratio, so the page names the roster. Where one of the
+          two is known only by aircraft type, the sum is no count of aircraft
+          that have Starlink: each part is said for what it is. */}
       {p.scope.label && (
         <p className="mt-1 text-sm text-secondary">
-          {p.scope.label}: {fmt(p.scope.equipped)} of {fmt(p.scope.total)} have Starlink.
+          {p.scope.parts
+            ? `Measured over ${p.scope.label}, ${fmt(p.scope.total)} on our fleet list: ${p.scope.parts}.`
+            : `${p.scope.label}: ${fmt(p.scope.equipped)} of ${fmt(p.scope.total)} have Starlink.`}
         </p>
       )}
       {/* The count under a share-of-fleet target is our arithmetic, so it must
@@ -143,7 +154,10 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
       <p id={statId} className="mb-4 text-sm text-secondary">
         As of {a.asOfDate}, <StatInline n={stats.equipped} /> of <StatInline n={stats.total} />{" "}
         {a.noun}
-        {stats.rosterDisagrees ? "" : ` (${pct(stats.equipped, stats.total)})`} have Starlink.
+        {/* No share over a count that adds a by-type partner's aircraft. */}
+        {stats.rosterDisagrees || a.headlineParts ? "" : ` (${pct(stats.equipped, stats.total)})`}{" "}
+        have Starlink.
+        {a.headlineParts && ` That is ${a.headlineParts}.`}
         {/* With a target, the pace sits in the bullets below; say it once. */}
         {stats.paceMonthly !== null && !gap && (
           <>
@@ -166,6 +180,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
             stats={stats}
             accent={a.accentColor}
             airlineName={a.name}
+            combined={a.headlineParts ? { noun: a.noun, parts: a.headlineParts } : null}
             milestones={rolloutTimeline(a.code)?.milestones}
           />
           {gap && (
@@ -228,6 +243,8 @@ function singleDek(a: AirlineInstallRate): string {
 export default function InstallRatePage({
   site,
   airlines,
+  pacedNames,
+  leftOut,
   pageLinks,
   currentPath,
   cite,
@@ -240,7 +257,7 @@ export default function InstallRatePage({
         dek={
           single
             ? singleDek(single)
-            : "Installs per month for each tracked airline, against the targets each has stated."
+            : `Installs per month for ${pacedNames || "each tracked airline"}, against the targets each has stated.`
         }
       />
 
@@ -248,6 +265,7 @@ export default function InstallRatePage({
         {airlines.map((a) => (
           <AirlineSection key={a.code} a={a} />
         ))}
+        {leftOut && <p className="text-sm text-secondary">{leftOut}</p>}
       </section>
 
       <section className={SECTION}>

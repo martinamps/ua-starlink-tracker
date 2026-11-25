@@ -4,9 +4,11 @@
  */
 import type { ContentStats } from "../../airlines/content";
 import {
+  BY_TYPE_TAB_NOTE,
   leadCount,
   ownCountAsOf,
   rosterDiffSentence,
+  statsParts,
   unnamedSentence,
 } from "../../airlines/published-count";
 import type { AirlineConfig } from "../../airlines/registry";
@@ -21,6 +23,8 @@ interface RolloutSegment {
   label: string;
   n: number;
   total: number;
+  /** A partner's aircraft known by aircraft type: no share, and said so. */
+  byType?: boolean;
 }
 
 const DAY_MS = 86_400_000;
@@ -55,7 +59,9 @@ export function weeklyInstalls(
 const SEGMENT_FILL = ["bg-[var(--color-accent)]", "bg-accent/50", "bg-accent/30"];
 
 function StackedBar({ segments, total }: { segments: RolloutSegment[]; total: number }) {
-  const label = segments.map((s) => `${s.label} ${fmt(s.n)}`).join(", ");
+  const label = segments
+    .map((s) => `${s.label} ${fmt(s.n)}${s.byType ? ` ${BY_TYPE_TAB_NOTE}` : ""}`)
+    .join(", ");
   return (
     <Meter
       size="lg"
@@ -108,6 +114,9 @@ export function RolloutPanel({
   // here. Each is labelled with whose it is; neither is added to the other.
   const chart = airline ? (stats.airlineCount ?? null) : null;
   const lead = leadCount({ ...stats, airlineCount: chart });
+  // A headline that adds a partner's by-type aircraft to the airline's own
+  // says its two parts apart, and gives no share of the whole.
+  const parts = airline ? statsParts(airline, stats) : null;
   const chartLink = chart && airline && (
     <a href={chart.url} className={LINK} rel="noopener">
       {airline.shortName}'s own count
@@ -135,12 +144,25 @@ export function RolloutPanel({
             </p>
           ) : (
             <p className="mt-1 text-sm text-secondary">
-              <StatInline>{pct(n, total)}</StatInline> have Starlink{added}
+              {!parts && (
+                <>
+                  <StatInline>{pct(n, total)}</StatInline>{" "}
+                </>
+              )}
+              have Starlink{added}
             </p>
+          )}
+          {parts && !lead.own && (
+            <p className="mt-1 text-sm text-secondary text-pretty">That is {parts.text}.</p>
           )}
           {chart && airline && (
             <p className="mt-1 text-sm text-secondary text-pretty">
-              {lead.own ? (
+              {lead.own && parts ? (
+                <>
+                  We count <StatInline n={n} /> of them, out of {fmt(total)} on our fleet list
+                  {added}: {parts.text}.
+                </>
+              ) : lead.own ? (
                 <>
                   We can name <StatInline n={n} /> of them by tail, out of {fmt(total)} on our fleet
                   list{added}.
@@ -162,7 +184,8 @@ export function RolloutPanel({
       <div className="mt-5">
         {chart && (
           <p className="mb-2 text-xs text-muted">
-            Named by tail: {fmt(n)} of {fmt(total)} on our fleet list
+            {parts ? "On our fleet list" : "Named by tail"}: {fmt(n)} of {fmt(total)}
+            {parts ? "" : " on our fleet list"}
           </p>
         )}
         <StackedBar segments={segments} total={total} />
@@ -173,7 +196,8 @@ export function RolloutPanel({
                 className={`inline-block h-2.5 w-2.5 rounded-sm ${SEGMENT_FILL[i % SEGMENT_FILL.length]}`}
                 aria-hidden="true"
               />
-              {s.label}: <StatInline n={s.n} /> of {fmt(s.total)} ({pct(s.n, s.total)})
+              {s.label}: <StatInline n={s.n} /> of {fmt(s.total)}
+              {s.byType ? `, ${BY_TYPE_TAB_NOTE}` : ` (${pct(s.n, s.total)})`}
             </li>
           ))}
           <li className="flex items-center gap-2 text-muted">
