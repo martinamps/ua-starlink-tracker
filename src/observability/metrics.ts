@@ -639,7 +639,7 @@ export function normalizeSettleRule(raw: string | null | undefined): string {
  */
 export const COUNTERS = {
   // Scraper events
-  SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error|noop)
+  SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error|noop|timeout)
   PLANES_DISCOVERED: "planes.discovered", // tags: source, airline
   // A fleet write refused at the membership gate (fleet-admission.ts) —
   // tags: source (FleetSource), reason (invalid_registration|non_airliner), airline
