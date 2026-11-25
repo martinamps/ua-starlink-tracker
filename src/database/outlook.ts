@@ -81,14 +81,18 @@ export function airlineOutlook(db: Database, airline: string, now: number): Airl
 }
 
 /**
- * Whether a flight draw can be put on the airport pair it flew. It can't: a
- * draw is a flight number and a tail, and flight_routes learns a pair only
- * from a tracked (Starlink) tail or a lookup. United reuses a number on other
- * pairs on other days; when untracked aircraft fly those, the number still
- * looks single-pair and their departures are counted here, so the share reads
- * low and the count high by an amount nothing stored can bound. Pages show no
- * route share until draws carry their airports; routeOutlookFor stays for the
- * backtest script, which is how the shares get checked against production.
+ * Whether the route reader places a flight draw on the airport pair it flew.
+ * It doesn't yet. routeOutlookFor below takes every draw of the flight numbers
+ * that flight_routes shows on one pair only, and flight_routes learns a pair
+ * only from a tracked (Starlink) tail or a lookup. United reuses a number on
+ * other pairs on other days; when untracked aircraft fly those, the number
+ * still looks single-pair and their departures are counted here, so the share
+ * reads low and the count high by an amount nothing stored can bound.
+ *
+ * Draws written since the sweep began recording ground sightings carry their
+ * own origin and destination (adsb-flight-draws.ts); older rows have neither.
+ * Pages show no route share until a reader counts by those columns and enough
+ * placed days are in; routeOutlookFor stays for the backtest script.
  */
 export const ROUTE_DEPARTURES_PLACED_BY_PAIR: boolean = false;
 

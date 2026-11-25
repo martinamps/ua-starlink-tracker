@@ -351,6 +351,9 @@ export interface AdsbObservationRecord {
   /** match | mismatch | no_assignment | no_callsign | non_revenue | low_speed; null on-ground. */
   shadow_result: string | null;
   assigned_flight: string | null;
+  /** Airport the aircraft was reported on the ground at; absent or null when
+   * airborne, unplaced, or written before the column existed. */
+  ground_airport?: string | null;
 }
 
 /** One tracked tail's slice of the FAA Releasable Aircraft Registry. */
