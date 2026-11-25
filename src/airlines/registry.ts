@@ -635,8 +635,11 @@ const AIRLINE_DEFS = {
     rollout: {
       status: "phase_done",
       statusLabel: "Mostly done (widebodies)",
-      phaseNote:
-        "777, A350 and 787-8 fleets done; 787-9 installs due by the end of 2026. The A380, A330, narrowbodies and freighters are not in the announced programme.",
+      // A getter, read at request time: the sentence is built from the phase
+      // table and the held-back list below, which this literal precedes.
+      get phaseNote() {
+        return qatarPhaseNote();
+      },
       // Roster counts ~277 including narrowbodies and freighters the programme
       // excludes; the in-scope widebody fleet is roughly half that.
       rosterIsProgramScope: false,
@@ -892,6 +895,71 @@ export function qatarHeldBackTail(tailNumber: string | null | undefined): HeldBa
 
 export function qatarHeldBackTails(): ReadonlyArray<readonly [string, HeldBackTail]> {
   return Object.entries(QATAR_HELD_BACK_TAILS);
+}
+
+/** What Qatar's copy may say about each passenger type, read off the phase
+ * table and the held-back list: the two things the by-type table is built from. */
+export interface QatarProgrammeState {
+  /** Finished types with no aircraft held back, as copy names them: "A350". */
+  done: string[];
+  /** Finished types with aircraft held back, and how many of each. */
+  doneExcept: Array<{ name: string; held: number }>;
+  /** Types mid-install. */
+  installing: string[];
+  held: number;
+  /** What sets the held-back aircraft apart: "second-hand or leased". */
+  heldGroups: string;
+}
+
+export function qatarProgrammeState(
+  phases: Readonly<Record<string, WifiPhase>> = QATAR_PHASE_BY_FAMILY,
+  heldBack: ReadonlyArray<HeldBackTail> = Object.values(QATAR_HELD_BACK_TAILS)
+): QatarProgrammeState {
+  const name = (family: string) => family.replace(/^B(?=7)/, "");
+  const familyOf = (h: HeldBackTail) => QATAR_EQUIPMENT[h.equipment]?.family;
+  // A held-back tail of a type that isn't "done" changes no sentence.
+  const counted = heldBack.filter((h) => phases[familyOf(h) ?? ""] === "confirmed");
+  const heldByFamily = new Map<string, number>();
+  for (const h of counted) {
+    const family = familyOf(h) as string;
+    heldByFamily.set(family, (heldByFamily.get(family) ?? 0) + 1);
+  }
+  const confirmed = Object.keys(phases).filter((f) => phases[f] === "confirmed");
+  return {
+    done: confirmed.filter((f) => !heldByFamily.has(f)).map(name),
+    doneExcept: confirmed
+      .filter((f) => heldByFamily.has(f))
+      .map((f) => ({ name: name(f), held: heldByFamily.get(f) as number })),
+    installing: Object.keys(phases)
+      .filter((f) => phases[f] === "rolling")
+      .map(name),
+    held: counted.length,
+    heldGroups: [...new Set(counted.map((h) => h.group))].join(" or "),
+  };
+}
+
+export const listedTypes = (names: readonly string[]) =>
+  names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : (names[0] ?? "");
+
+/** Qatar's rollout in one line, for the hub, llms.txt, MCP and descriptions.
+ * A type is called done only while none of its aircraft is held back. */
+export function qatarPhaseNote(state: QatarProgrammeState = qatarProgrammeState()): string {
+  const fleets = (names: string[]) => `${listedTypes(names)} fleet${names.length === 1 ? "" : "s"}`;
+  const parts = [
+    state.done.length > 0 ? `${fleets(state.done)} done` : null,
+    state.doneExcept.length > 0
+      ? `${fleets(state.doneExcept.map((t) => t.name))} done except ${state.held} ${state.heldGroups} aircraft that aren't confirmed`
+      : null,
+    state.installing.length > 0
+      ? `${listedTypes(state.installing)} installs due by the end of 2026`
+      : null,
+  ].filter((p) => p !== null);
+  return `${parts.join("; ")}. The A380, A330, narrowbodies and freighters are not in the announced programme.`;
+}
+
+/** Aircraft of an airline's finished types that its type rule doesn't settle. */
+export function heldBackCount(code: AirlineCode): number {
+  return code === "QR" ? qatarProgrammeState().held : 0;
 }
 
 // Collapse normalizeAircraftType's granular families to QR program families:
