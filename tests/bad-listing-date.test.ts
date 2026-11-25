@@ -41,6 +41,11 @@ beforeAll(() => {
     list(`N${100 + i}GD`, new Date(Date.now() - (5 + i * 10) * DAY_MS).toISOString().slice(0, 10));
   }
   NOT_DAYS.forEach((found, i) => list(`N${200 + i}BD`, found));
+  // A sheet listing our check contradicts (the feed's "reported" kind), undated.
+  db.query(
+    `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, verified_at, airline)
+     VALUES ('Boeing 737 MAX 9', 'Starlink', '4', '', 'unknown', 'N300RP', 'United Airlines', 'mainline', 'Viasat', ?, 'UA')`
+  ).run(Math.floor(Date.now() / 1000) - 3600);
   app = createApp(db);
 });
 
@@ -69,6 +74,51 @@ describe("a listing dated with something that is not a day", () => {
     expect(text).not.toContain("NaN");
     if (path === "/install-rate") expect(text).toContain('id="install-rate-stat-ua"');
     if (path === "/timeline") expect(text).toMatch(/<h1[\s>]/);
+  });
+
+  // Feed readers showed the epoch as a 55-year-old item, or sorted it first;
+  // "2026-13-45" went out raw as an <updated> no reader can parse.
+  test.each([UA, HUB])(
+    "%s/feed.xml dates every entry with a real day, and itself",
+    async (host) => {
+      const { status, text } = await bodyOf(app, "/feed.xml", host);
+      expect(status).toBe(200);
+      expect(text).not.toContain("1970");
+      for (let i = 0; i < NOT_DAYS.length; i++) expect(text).not.toContain(`N${200 + i}BD`);
+      expect(text).not.toContain("N300RP");
+      const stamps = [...text.matchAll(/<updated>([^<]*)<\/updated>/g)].map((m) => m[1]);
+      const entries = text.split("<entry>").length - 1;
+      expect(entries).toBeGreaterThan(0);
+      // One per entry plus the feed's own: Atom requires each.
+      expect(stamps.length).toBe(entries + 1);
+      for (const stamp of stamps) {
+        expect(stamp).toMatch(/^\d{4}-\d{2}-\d{2}T12:00:00Z$/);
+        expect(new Date(stamp).toISOString()).toBe(stamp.replace("Z", ".000Z"));
+      }
+      // The feed's own stamp is its newest entry's.
+      expect(stamps[0]).toBe([...stamps].sort().at(-1) as string);
+    }
+  );
+
+  test("the undated listings stay on the log page the feed links to", async () => {
+    const { text } = await bodyOf(app, "/newly-equipped", UA);
+    expect(text).toContain("N200BD");
+  });
+
+  test("a feed with nothing it can date is a 404, not an empty or 1970 document", async () => {
+    const bare = makeFreshDb();
+    bare
+      .query(
+        `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, verified_at, airline)
+         VALUES ('Boeing 737 MAX 9', 'Starlink', '4', '', 'unknown', 'N400BD', 'United Airlines', 'mainline', 'Starlink', 1, 'UA')`
+      )
+      .run();
+    addFleet(bare, "N400BD", "confirmed", { verifiedWifi: "Starlink" });
+    const only = createApp(bare);
+    expect((await bodyOf(only, "/newly-equipped", UA)).status).toBe(200);
+    const feed = await bodyOf(only, "/feed.xml", UA);
+    expect(feed.status).toBe(404);
+    expect(feed.text).not.toContain("1970");
   });
 
   test("the pace math skips such a day whoever hands it one", () => {
