@@ -6,12 +6,14 @@ import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import { closeFR24Transport } from "./src/api/fr24-browser-transport";
 import {
   archivePastDepartures,
+  expirePassengerDedupeKeys,
   migrate,
   openDatabase,
   pruneCrashRows,
   recordFirstFlights,
   warmAircraftTypePages,
 } from "./src/database/database";
+import { startSourceHealthJob } from "./src/database/source-health";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
 import { startAlaskaTrackerJob } from "./src/scripts/alaska-tracker";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
@@ -30,9 +32,14 @@ import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import { createApp } from "./src/server/app";
 import { passengerVerifyEnabled } from "./src/server/passenger-detect";
+import {
+  DEDUPE_KEY_SWEEP_INTERVAL_SEC,
+  DEDUPE_WINDOW_SEC,
+} from "./src/server/passenger-report-fields";
 import { pingIndexNow } from "./src/utils/indexnow";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
+import { BUILD_COMMIT, PROCESS_STARTED } from "./src/utils/running-build";
 import { sleep } from "./src/utils/sleep";
 
 process.on("unhandledRejection", (reason) => {
@@ -49,7 +56,9 @@ const db = openDatabase();
 migrate(db);
 const app = createApp(db);
 
-info(`Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`);
+info(
+  `Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}. Commit: ${BUILD_COMMIT}, started ${PROCESS_STARTED}`
+);
 
 Bun.serve({
   port: PORT,
@@ -122,6 +131,11 @@ if (JOBS_ENABLED) {
   // ran-at heartbeat — catches "loop alive but writes nothing" silent failures.
   track(startFreshnessEmitter(db));
 
+  // Per-source last success/failure, kept in meta: gauges every 5 minutes and
+  // one Slack notice when a source passes its quiet threshold, one when it
+  // returns (the freshness gauges above have no memory and no voice).
+  track(startSourceHealthJob(db));
+
   track(
     startJob({
       name: "archive_departures",
@@ -181,6 +195,20 @@ if (JOBS_ENABLED) {
 
   // Starlink RFC 8805 geofeed → backs the passenger-verify dark-launch probe.
   if (passengerVerifyEnabled) track(startGeofeedJob(db));
+
+  // Blanks report dedupe keys past their window when no new report has done
+  // it; the banner tells visitors the key is gone within a day. Not gated on
+  // PASSENGER_VERIFY: switching the probe off must not strand the last keys.
+  track(
+    startJob({
+      name: "expire_passenger_dedupe_keys",
+      intervalMs: DEDUPE_KEY_SWEEP_INTERVAL_SEC * 1000,
+      initialDelayMs: 5 * 60 * 1000,
+      run: () => {
+        expirePassengerDedupeKeys(db, DEDUPE_WINDOW_SEC);
+      },
+    })
+  );
 
   // Daily prune of subprocess-crash log rows (no observation, just noise).
   track(

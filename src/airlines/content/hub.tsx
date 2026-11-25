@@ -1,9 +1,4 @@
-import {
-  AirlineProgressList,
-  RecentInstallsFeed,
-  completeScope,
-  trackingMethod,
-} from "../../components/atoms";
+import { AirlineProgressList, RecentInstallsFeed, completeScope } from "../../components/atoms";
 import { FlightSearchForm } from "../../components/flight-search-form";
 import {
   Chip,
@@ -20,6 +15,7 @@ import {
 import type { Link } from "../../components/layout";
 import { TrackerLinks } from "../../components/tracker-links";
 import { fmt } from "../../components/ui/format";
+import { byPublishedCount, ownCountAsOf, publishedCount } from "../published-count";
 import { AIRLINES, SITES, airlineHomeUrl, publicAirlines } from "../registry";
 import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
@@ -40,11 +36,6 @@ function list(names: string[]): string {
   if (names.length <= 1) return names.join("");
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
-
-const byType = (code: string) => {
-  const cfg = AIRLINES[code];
-  return cfg ? trackingMethod(cfg) === "type" : false;
-};
 
 // Matches the progress row's label: the airline's own site counts partner fleets too.
 const operatedBy = (code: string) => {
@@ -254,12 +245,28 @@ export const content: AirlineContent = {
     {
       q: "Which airline has the most Starlink planes?",
       a: ({ perAirline = [] }) => {
-        const [top, ...rest] = [...perAirline].sort((a, b) => b.starlink - a.starlink);
+        const rows = byPublishedCount(
+          perAirline.flatMap((r) => {
+            const cfg = AIRLINES[r.code];
+            return cfg ? [{ ...r, published: publishedCount(cfg, r.starlink) }] : [];
+          })
+        );
+        // Only a count ranks: plane by plane, or the airline's own dated figure.
+        const figure = (r: (typeof rows)[number]) =>
+          r.published.basis === "tracked"
+            ? `${fmt(r.published.count)}${operatedBy(r.code)}`
+            : r.published.basis === "airline"
+              ? `${fmt(r.published.count)}, its own figure ${ownCountAsOf(r.published)}`
+              : null;
+        const [top, ...rest] = rows.filter((r) => r.published.basis !== "type");
         if (!top) return <p>See the full list for each airline's count.</p>;
-        const typeCounted = [top, ...rest].filter((r) => byType(r.code)).map((r) => r.name);
+        const names = (basis: "airline" | "type") =>
+          rows.filter((r) => r.published.basis === basis).map((r) => r.name);
+        const ownFigure = names("airline");
+        const unranked = names("type");
         return (
           <p>
-            {top.name}, with <StatInline n={top.starlink} />
+            {top.name}, with <StatInline>{figure(top)}</StatInline>
             {top.code === "UA" ? (
               <>
                 {" "}
@@ -270,17 +277,18 @@ export const content: AirlineContent = {
                 )
               </>
             ) : null}
-            .{" "}
-            {rest.length > 0 && (
+            . {rest.length > 0 && <>Next: {list(rest.map((r) => `${r.name} (${figure(r)})`))}. </>}
+            {ownFigure.length > 0 && (
               <>
-                Next: {list(rest.map((r) => `${r.name} (${fmt(r.starlink)}${operatedBy(r.code)})`))}
-                .{" "}
+                {list(ownFigure)} {ownFigure.length === 1 ? "is" : "are"} counted by aircraft type
+                here, so {ownFigure.length === 1 ? "that figure is" : "those figures are"} the
+                airline's own.{" "}
               </>
             )}
-            {typeCounted.length > 0 && (
+            {unranked.length > 0 && (
               <>
-                {list(typeCounted)} {typeCounted.length === 1 ? "is" : "are"} counted by aircraft
-                type.
+                {list(unranked)} {unranked.length === 1 ? "is" : "are"} counted by aircraft type and{" "}
+                {unranked.length === 1 ? "has" : "have"} no figure to rank.
               </>
             )}
           </p>
@@ -291,8 +299,9 @@ export const content: AirlineContent = {
       q: "Is Starlink Wi-Fi free on every airline?",
       a: () => (
         <p>
-          It varies. United's is free for MileagePlus members, Alaska's for Atmos Rewards members,
-          and Hawaiian's and Qatar's for every passenger. Each airline's page on the{" "}
+          It varies. United's is free for MileagePlus members, and Alaska's and Hawaiian's for Atmos
+          Rewards members. Qatar gives everyone 45 minutes, and the whole flight with a Privilege
+          Club login. All three programmes are free to join. Each airline's page on the{" "}
           <a href="/airlines" className={LINK}>
             full list
           </a>{" "}

@@ -75,13 +75,13 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 | `starlink.planes.starlink_detected` | `fleet`, `aircraft_type`, `airline` | Trusted positive Starlink verification — fires on every positive re-check, not just new installs. For installs use `starlink.fleet.status_change{to:confirmed}` |
 | `starlink.verification.check` | `result:success\|error` | Verification attempt |
 | `starlink.verification.mismatch` | - | Spreadsheet/United.com WiFi mismatch |
-| `starlink.vendor.request` | `vendor:flightaware\|fr24\|united`, `type:flights\|fleet\|verification`, `status:success\|rate_limited\|error` | External API call |
-| `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class`, `ext_version` (extension only) | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
+| `starlink.vendor.request` | `vendor:flightaware\|fr24\|united`, `type:flights\|fleet\|verification`, `status:success\|rate_limited\|error` | External API call. A live aircraft lookup refused by the request-path guard is `vendor:fr24 type:assignments status:shed`, with `reason:breaker\|bucket\|queue` and `caller:page\|extension\|other` (our own pages, our own extension, anything else: outside tools, scripts, MCP). Requests that joined a lookup already under way are not counted, so `caller` names who asked for the refused slot |
+| `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class`, `ext_version` (extension only), `visit_source` | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
 | `starlink.http.rate_limited` | `route`, `tenant`, `airline`, `bucket:api\|ext\|mcp\|page`, `client_class`, `ext_version` (extension only) | Per-IP limiter returned a 429 (also counted in `http.request` as `status_code:429`). `/api/*` calls classified `client_class:extension` use the `ext` bucket (`EXTENSION_RATE_LIMIT`, 300/min); every other bucket allows `API_RATE_LIMIT` (100/min) |
 | `starlink.http.rate_limit_exempt` | the `http.rate_limited` tags plus `crawler:googlebot\|bingbot` | Over the `page` limit but served: the UA claims Googlebot/Bingbot and the IP's reverse DNS (forward-confirmed) is in the engine's domain. Cached per IP |
 | `starlink.route_flights.view` | `airline`, `surface:api\|page`, `outcome:nonstop\|no_nonstop`, `dated:true\|false` | "Every flight on this route" board served (`/api/route-flights`, route pages) |
 | `starlink.consensus.settle_transition` | `direction:to_starlink\|from_starlink`, `reason` (settle rule), `path:reconcile\|verifier`, `airline` | A listing's settled wifi crossed the equipped line. Normal is ~0–1 `from_starlink` a day; a burst means upstream feed noise |
-| `starlink.mcp.tool_call` | `tool`, `airline`, `outcome:success\|error\|unknown_tool`, `client_class` (MCP enum below) | MCP tool dispatched; `starlink.mcp.tool_duration_ms` carries the same tags |
+| `starlink.mcp.tool_call` | `tool`, `airline`, `outcome:success\|error\|unknown_tool`, `reason:none\|missing_argument\|invalid_argument\|unknown_airport\|same_airport\|not_tracked\|config\|exception`, `client_class` (MCP enum below) | MCP tool dispatched; `starlink.mcp.tool_duration_ms` carries the same tags. `reason` says why an `outcome:error` call failed: only `config` and `exception` are the server's fault, the rest are correct refusals of a bad call (registry crawlers call every tool with no arguments daily, which is `missing_argument`). Read a tool's health as `outcome:error AND reason:(config OR exception)` |
 
 ### Client tags
 
@@ -90,6 +90,46 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 - **HTTP metrics** (`classifyRequest`): `extension`, `other-extension`, the named crawlers (`claude`, `googlebot`, `bingbot`, …), `bot`, `browser`, `unknown`.
 - **MCP tool metrics** (`classifyMcpClient`): `claude`, `chatgpt` (includes Codex), `cursor`, `vscode`, `bot`, `other`, `unknown`. MCP here is stateless, so tool calls carry no `clientInfo`; the user agent is the only signal.
 - **`ext_version`** rides along only with `client_class:extension`, from the extension's `client=ext-<version>` param: `1.x`, `2.0`, `2.1`, `2.x` (2.2+), `other`, `none` (pre-2.0.1 builds, which sent no param). Graph adoption with `sum:starlink.http.request{client_class:extension} by {ext_version}`.
+
+### Visit source (`http.request` only)
+
+`visit_source` says where a request came from, as one of nine fixed words
+(`classifyVisitSource` in `src/observability/metrics.ts`). The first rule that
+fires wins:
+
+| Value | Rule |
+|---|---|
+| `extension` | `client_class` is `extension` or `other-extension`: the extension's own marks (its version param or its origin) and nothing else |
+| `search` | Referer (else Origin) host is a search engine's results host, on any path but `/api/*`: `google.com` and Google's country hosts (bare or `www.`), Bing, DuckDuckGo, `search.yahoo.com` and its country hosts, Yandex, Baidu, Ecosia, Brave Search, Kagi, Startpage, Qwant, `search.naver.com`, `search.aol.com`, or the Google app on Android. Exact hosts: a portal's mail, news, finance, blog and forum hosts are `other` |
+| `assistant` | Referer host or `utm_source` names an assistant: ChatGPT, Claude, Perplexity, Gemini, Copilot, Grok, Meta AI, Mistral, DeepSeek, Poe, You, Phind |
+| `social` | Referer host or `utm_source` names a social site or forum: Facebook, Instagram, Threads, X/Twitter, Reddit, LinkedIn, YouTube, TikTok, Bluesky, Pinterest, Hacker News, FlyerTalk |
+| `calendar` | `utm_source=cal`, the link this site writes into its own calendar events |
+| `own` | Referer/Origin is one of our hosts, or `Sec-Fetch-Site` is `same-origin`/`same-site`. Our pages send `Referrer-Policy: no-referrer`, so the fetch-metadata header is what marks in-site clicks, assets and our own scripts' API calls |
+| `other` | Any other referrer, origin or `utm_source`, or `Sec-Fetch-Site: cross-site` with nothing named. Also a search engine's page as referrer/origin of an `/api/*` call: some script on that page, which is neither a search visit nor our extension (the extension sends no referrer) |
+| `direct` | `Sec-Fetch-Site: none`: typed, bookmarked, or opened from an app outside the browser |
+| `none` | No signal at all: most robots and scripts, and browsers too old to send fetch metadata |
+
+**Budget: 9 values, closed.** An unknown host or `utm_source` is `other`, never a
+new value; to recognise a new site, add its host to one of the lists. The lists
+a visitor's value is looked up in are `Map`s and `Set`s, and
+`classifyVisitSource` turns anything outside the nine into `other` before it
+returns.
+Only the word is emitted: the referrer's host, path and query are read inside
+`classifyVisitSource` and go to no metric, span or log.
+
+A user agent alone never makes a request `assistant`. An assistant's fetcher is
+already `client_class:claude|gptbot|perplexity`; `visit_source:assistant` is a
+person who followed a link out of an assistant. Robots can send any referrer,
+so read the tag with `client_class:browser`, and leave out `visit_source:own`
+(a page view's own assets and API calls) to count arrivals. The query keeps
+pages only: GETs, without the API, static files, feeds, robots and sitemap
+files, the badge, the CSV, calendar files and the embed route. `/mcp` stays in
+as a page, since `method:get` leaves its POSTed tool calls out. A new route
+that isn't a page needs its own `NOT route:` here.
+
+```
+sum:starlink.http.request{client_class:browser AND method:get AND status_code:200 AND NOT route:unmatched AND NOT route:/api* AND NOT route:/static AND NOT route:/feed.xml AND NOT route:/robots.txt AND NOT route:/sitemap.xml AND NOT route:/llms.txt AND NOT route:/badge.svg AND NOT route:/data/starlink-tails.csv AND NOT route:/cal AND NOT route:/embed AND NOT route:/.well-known/mcp-registry-auth AND NOT visit_source:own} by {visit_source,tenant}.as_count().rollup(sum, 604800)
+```
 
 ### Rate-limit log
 
@@ -120,6 +160,17 @@ surfaces (`/newly-equipped`, `/feed.xml`, `/badge.svg`, `/embed`,
 and was already exceeded by the routes it did not list. 40 leaves room for a new URL family without a
 re-audit while staying well inside a sane per-metric tag budget.
 
+The share pictures (`/static/share/{flight|tail|airport}/….png`, the og:image
+of a flight, tail or airport page) are drawn per request but ride the
+`/static` family and its tag, for that reason. Tell them apart with
+`share_picture.request` (tags: `airline`, `kind`, `outcome`): `drawn` and
+`cached` are pictures, `moved` a dated flight address answered by the undated
+picture, `site_card` an address with no picture (redirected to the site's
+card), `shed` a request over the process-wide drawing budget
+(`SHARE_PICTURE_LIMITS` in `src/server/app.ts`), and `error` a drawing that
+threw (logged; the request still gets the site's card). A rising `shed` count
+means something is enumerating picture addresses.
+
 To add a route, add it to `routes` (or `prefixRoutes`) in
 `src/server/app.ts` — the metric tag follows automatically. If a change would
 push the table past the budget, group the new URLs behind a prefix family
@@ -143,6 +194,28 @@ rather than raising the number. Pure redirects (the www aliases, `/extension`
 | `starlink.community_guide.tails` | Roster tails by what answers may still say under the aging policy; tags `airline`, `state` (`starlink_listed`, `not_starlink_current`, `not_starlink_expired`, `not_in_guide`) |
 
 The Alaska tracker ingest also counts `starlink.scraper.sync{source:alaska_tracker}` with `status:success|error`; `error` means the page failed to fetch or its table no longer parses, and the last good chart keeps serving.
+
+### Source health
+
+Every outside source a job reads on a schedule keeps a record in `meta` (`<scope>:source_health.<source>`): its last good read, its last failure and that failure's kind. A good read means usable data came back. A page that loads and parses to nothing is a failure of kind `empty` or `refused`. The record lives in the database, so a restart does not reset it. The ADS-B sweep is the one exception: its last good read is taken from its own `adsb_sweeps` table (the newest sweep that observed any aircraft). Code: `src/database/source-health.ts`.
+
+| Metric | Description |
+|--------|-------------|
+| `starlink.source.hours_since_success` | Gauge, 5-min sweep. Tags `source`, `airline` (`all` for a source every airline shares). Hours since that source last gave usable data; for a source that has never succeeded, hours since it was first watched |
+| `starlink.source.quiet` | Gauge, same sweep and tags. `1` while the source is past its own threshold, else `0` |
+| `starlink.source.failure` | Count. Tags `source`, `airline`, `kind:error\|timeout\|blocked\|empty\|refused\|partial`. One per failed read. `source:flight_schedule,kind:empty` includes parked tails that have no schedule, so read that pair as a rate, not as errors |
+
+Thresholds, in hours: `sheet_scrape` 6, `united_site` 6, `flight_schedule` 3, `adsb` 3, `qatar_schedule` 6, `alaska_site` 72 (its good reads come in bursts with ordinary gaps of about two days), `bts` 1488 (62 days; the file is monthly), and 72 for the daily jobs (`fleet_roster`, `alaska_tracker`, `fleet_progress`, `fleet_progress_tails`, `ship_numbers`, `faa_registry`, `sec_filings`, `starlink_geofeed`).
+
+When a source passes its threshold the server posts one notice to `SLACK_WEBHOOK_URL`, and one more when the source returns. Without the webhook nothing is posted; the outage is still logged once at error level (`source-health: … Data source quiet …`) and shows in the gauges. A Datadog monitor that does not depend on Slack:
+
+```
+max(last_15m):max:starlink.source.quiet{*} by {source,airline} >= 1
+```
+
+Set it to notify on missing data after 30 minutes: the sweep emits every 5, so silence means the server or its jobs are down.
+
+While a source behind an airline's pages is quiet (`sheet_scrape`, `united_site`, `flight_schedule`, `fleet_roster`, `alaska_site`, `alaska_tracker`, `qatar_schedule`), that airline's "last updated" date is held at the source's last good read.
 
 ## Tracing
 

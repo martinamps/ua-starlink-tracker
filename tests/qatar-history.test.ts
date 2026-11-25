@@ -200,16 +200,16 @@ describe("qatar_equipment_history persistence", () => {
 });
 
 describe("QR verdict: published schedule window", () => {
-  test("classifies at read time: a 788 stored as Rolling answers yes", async () => {
+  test("classifies at read time: a 788 stored as Rolling answers as a fitted type", async () => {
     const db = makeSyntheticDb();
     scheduleRow(db, "QR1", at(3), "788", { wifi: "Rolling" });
     const v = await verdict(db, "QR1", at(3));
     expect(v.kind).toBe("qatar");
     if (v.kind === "qatar") {
-      expect(v.hasStarlink).toBe(true);
-      expect(v.qclass).toBe("yes");
-      expect(v.reason).toContain("Qatar reports");
-      expect(v.reason).toContain("787-8 fleet");
+      // Fitted, but two leased 787-8s are held back by name: odds, never "rolling".
+      expect(v.hasStarlink).toBeNull();
+      expect(v.qclass).toBe("partly");
+      expect(v.reason).toContain("787-8s count as fitted");
     }
   });
 
@@ -269,7 +269,7 @@ describe("QR verdict: published schedule window", () => {
 
   test("a row only in history is answered through the union", async () => {
     const db = makeSyntheticDb();
-    historyLeg(db, "QR15", at(1), "77W");
+    historyLeg(db, "QR15", at(1), "359");
     const v = await verdict(db, "QR15", at(1));
     expect(v.kind).toBe("qatar");
     if (v.kind === "qatar") expect(v.hasStarlink).toBe(true);
@@ -318,7 +318,7 @@ describe("QR verdict: published schedule window", () => {
 
   test("REST/MCP telemetry keeps type answers apart from verified ones", async () => {
     const db = makeSyntheticDb();
-    scheduleRow(db, "QR1", at(1), "77W");
+    scheduleRow(db, "QR1", at(1), "359");
     scheduleRow(db, "QR3", at(1), "388");
     const yes = verdictTelemetry(await verdict(db, "QR1", at(1)));
     const no = verdictTelemetry(await verdict(db, "QR3", at(1)));
@@ -498,7 +498,7 @@ describe("QR verdict: observed-type history beyond the window", () => {
     expect(v.mix.reduce((n, m) => n + m.count, 0)).toBe(v.nDays);
   });
 
-  test("next season with few in-season days borrows all history, one grade down", async () => {
+  test("a date in the next season borrows all history and is graded low", async () => {
     const now = utc("2026-10-20T08:00:00Z");
     const db = makeSyntheticDb();
     for (let i = -28; i <= 6; i++) historyLeg(db, "QR51", addDaysISO("2026-10-20", i), "77W");
@@ -506,8 +506,33 @@ describe("QR verdict: observed-type history beyond the window", () => {
     if (v.kind !== "qatar_history") throw new Error(v.kind);
     expect(v.season.query).toBe("W26");
     expect(v.season.shifted).toBe(true);
-    expect(v.grade).toBe("medium");
+    expect(v.nDays).toBeGreaterThanOrEqual(14);
+    expect(v.probability).toBeGreaterThan(0.8);
+    expect(v.grade).toBe("low");
     expect(qatarHistoryReason(v)).toContain("2026-10-25");
+  });
+
+  // 35 all-fitted days in W26 once answered a September 2027 date "medium",
+  // which the extension badges; the same history still grades a date inside
+  // W26 "high".
+  test("the grade drops at the season boundary, not by distance", async () => {
+    const now = utc("2026-11-23T08:00:00Z");
+    const db = makeSyntheticDb();
+    for (let i = -28; i <= 6; i++) historyLeg(db, "QR7", addDaysISO("2026-11-23", i), "77W");
+    const grade = async (date: string) => {
+      const v = await verdict(db, "QR7", date, now);
+      if (v.kind !== "qatar_history") throw new Error(v.kind);
+      return { grade: v.grade, probability: v.probability, shifted: v.season.shifted };
+    };
+    const lastOfWinter = await grade("2027-03-27");
+    expect(lastOfWinter.shifted).toBe(false);
+    expect(lastOfWinter.grade).toBe("high");
+    for (const date of ["2027-03-28", "2027-07-15", "2027-09-15"]) {
+      const next = await grade(date);
+      expect(next.shifted).toBe(true);
+      expect(next.grade).toBe("low");
+      expect(next.probability).toBe(lastOfWinter.probability);
+    }
   });
 
   test("just after a season change, borrowing the last season costs a grade", async () => {
@@ -591,8 +616,9 @@ describe("QR verdict: swap risk inside the window", () => {
     }
     scheduleRow(db, "QR500", at(3), "788");
     const v = await verdict(db, "QR500", at(3));
+    // Answered from the schedule, not as swap-risk history.
     expect(v.kind).toBe("qatar");
-    if (v.kind === "qatar") expect(v.hasStarlink).toBe(true);
+    if (v.kind === "qatar") expect(v.qclass).toBe("partly");
   });
 
   test("not-yet-flown days and late first sightings don't count as swaps", async () => {
@@ -613,7 +639,7 @@ describe("QR verdict: swap risk inside the window", () => {
   test("+1 keeps the firm scheduled-type yes", async () => {
     const v = await verdict(swappy(), "QR7", at(1));
     expect(v.kind).toBe("qatar");
-    if (v.kind === "qatar") expect(v.hasStarlink).toBe(true);
+    if (v.kind === "qatar") expect(v.qclass).toBe("partly");
   });
 });
 

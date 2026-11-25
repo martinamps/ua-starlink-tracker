@@ -70,6 +70,7 @@ import type {
   InstallPaceWeek,
   PipelineEventRow,
   RecentInstall,
+  ReportedInstall,
   RouteSchedule,
   RouteScheduleRow,
   SecFilingRow,
@@ -110,6 +111,12 @@ import {
   tailHash,
   withAirline,
 } from "./sql/fragments";
+import {
+  UNITED_STARLINK_READ_WHERE,
+  independentListingSql,
+  listedNotCountedSql,
+  uncountedReason,
+} from "./sql/listed-not-counted";
 import {
   DAY_SEC,
   DEPARTURE_WINDOW_HOURS,
@@ -679,8 +686,11 @@ export function setupTables(db: Database) {
     `);
   }
 
-  // Passenger-verify dark-launch probe results. Everything except ip / in_geofeed
-  // is client-asserted; trust filtering happens at read time.
+  // Passenger-verify dark-launch probe results. Everything except in_geofeed is
+  // client-asserted; trust filtering happens at read time. ip, router_id and
+  // ua_hash are no longer written (rows before that change still carry them),
+  // and ip_prefix now holds a keyed hash that is blanked after the dedupe
+  // window: src/server/passenger-report-fields.ts says what each column holds.
   if (!tableExists(db, "passenger_reports")) {
     db.exec(`
       CREATE TABLE passenger_reports (
@@ -1127,12 +1137,23 @@ export function updateDatabase(
       WHERE TailNumber = ? AND sheet_gid = 'discovery' AND airline = ?
     `);
 
+    // The sheet can carry one tail on two rows (N89349 sat on two E175 rows,
+    // typed "ERJ-175" and "E175SC"). One listing per tail, first row wins:
+    // a second row made every count over starlink_planes one higher than the
+    // roster's count of the same aircraft.
+    const written = new Set<string>();
+
     for (const aircraft of starlinkAircraft) {
       const tailNumber = aircraft.TailNumber || "";
       if (!looksLikeValidTailNumber(tailNumber)) {
         warn(`skipping invalid tail '${tailNumber}' from sheet ${aircraft.sheet_gid}`);
         continue;
       }
+      if (written.has(tailNumber)) {
+        warn(`skipping second sheet row for tail '${tailNumber}' (sheet ${aircraft.sheet_gid})`);
+        continue;
+      }
+      written.add(tailNumber);
 
       // Sheet value wins if present; otherwise preserve what we had; otherwise
       // fall back to united_fleet (FR24-sourced). Prevents blank sheet cells
@@ -1378,6 +1399,11 @@ export function getRecentInstalls(
  * predicate and would chart as a real install spike. Only a per-day series can
  * see that shape, so the Install Rate Index detects it downstream
  * (excludeMassWriteDays) before it rolls up to months.
+ *
+ * A DateFound that is not a real calendar day is left out of the series (the
+ * tail stays counted): one such row once took down every page that charts or
+ * paces installs, and an empty one most of the site, since it sorts first and
+ * becomes the series' opening month.
  */
 export function getDailyInstalls(
   db: Database,
@@ -1387,7 +1413,8 @@ export function getDailyInstalls(
     `SELECT substr(DateFound, 1, 10) AS day, COUNT(*) AS installs
      FROM starlink_planes
      WHERE ${equippedSql("starlink_planes")}
-       AND ${INSTALL_FILTER}`,
+       AND ${INSTALL_FILTER}
+       AND substr(DateFound, 1, 10) = date(substr(DateFound, 1, 10))`,
     airline
   );
   return db.query(`${q.sql} GROUP BY day ORDER BY day`).all(...q.params) as {
@@ -3871,13 +3898,9 @@ function isUnitedNoneObservation(o: {
 }
 
 function hasPriorUnitedStarlink(db: Database, tailNumber: string, airline: AirlineFilter): boolean {
-  const q = withAirline(
-    `tail_number = ? AND tail_confirmed = 1 AND has_starlink = 1 AND source = 'united'
-     AND error IS NULL`,
-    airline,
-    "",
-    [tailNumber]
-  );
+  const q = withAirline(`tail_number = ? AND ${UNITED_STARLINK_READ_WHERE}`, airline, "", [
+    tailNumber,
+  ]);
   return (
     db.query(`SELECT 1 FROM starlink_verification_log WHERE ${q.sql} LIMIT 1`).get(...q.params) !=
     null
@@ -4053,9 +4076,7 @@ function starlinkHistorySql(
   };
 }
 
-/** A Starlink listing we didn't derive ourselves: not discovery, not a type rule. */
-const INDEPENDENT_LISTING_WHERE = `COALESCE(sheet_gid, '') NOT IN ('discovery', 'type_deterministic')
-  AND ${sheetSaysStarlink("wifi")}`;
+const INDEPENDENT_LISTING_WHERE = independentListingSql();
 
 function starlinkHistory(
   db: Database,
@@ -4292,10 +4313,26 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
     const update = db.query(
       "UPDATE united_fleet SET starlink_status = ? WHERE tail_number = ? AND airline = ?"
     );
+    // A tail the rule names as an exception ("unknown") must not stay listed:
+    // a listing is what every count reads as equipped. Whatever wrote the
+    // listing, the named exception outranks it; nothing observes these tails.
+    const unsettle = db.query(
+      "UPDATE united_fleet SET starlink_status = 'unknown', verified_wifi = NULL, verified_at = NULL WHERE tail_number = ? AND airline = ?"
+    );
+    const unlist = db.query("DELETE FROM starlink_planes WHERE TailNumber = ? AND airline = ?");
     let changed = 0;
     const apply = db.transaction(
       (pending: Array<(typeof rows)[number] & { next: StarlinkStatus }>) => {
         for (const r of pending) {
+          if (r.next === "unknown") {
+            const unlisted = unlist.run(r.tail_number, a.code).changes;
+            if (r.starlink_status !== "unknown") {
+              unsettle.run(r.tail_number, a.code);
+              emitFleetStatusChange(r, "unknown");
+            }
+            if (unlisted > 0 || r.starlink_status !== "unknown") changed++;
+            continue;
+          }
           update.run(r.next, r.tail_number, a.code);
           emitFleetStatusChange(r, r.next);
           if (r.next === "confirmed") {
@@ -4314,8 +4351,11 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
       }
     );
     apply(
-      rows.flatMap((r) => {
-        const next = a.typeDeterministicWifi?.(r.aircraft_type) ?? null;
+      rows.flatMap((r): Array<(typeof rows)[number] & { next: StarlinkStatus }> => {
+        const next = a.typeDeterministicWifi?.(r.aircraft_type, r.tail_number) ?? null;
+        // A held-back tail is always passed on: its status may already read
+        // "unknown" while a listing from before the exception still stands.
+        if (next === "unknown") return [{ ...r, next }];
         return next === null || next === r.starlink_status ? [] : [{ ...r, next }];
       })
     );
@@ -4690,6 +4730,116 @@ const WIFI_MISMATCH_PREDICATE = `verified_wifi IS NOT NULL
          OR
          (NOT ${sheetSaysStarlink("wifi")} AND verified_wifi = 'Starlink')
        )`;
+
+/** A reported listing drops off the log after this long without our check
+ * agreeing: a sheet row that never confirms is more likely a wrong listing
+ * than a slow one (N77426 sat at 31 of 31 Viasat reads before the sheet
+ * withdrew it), and a parked plane we cannot check is not news for months. */
+export const REPORTED_MAX_AGE_DAYS = 30;
+
+type ListedNotCountedRow = Omit<ReportedInstall, "reason" | "observed_wifi" | "observed_at"> & {
+  listing_wifi: string | null;
+  listing_at: number | null;
+  settled_wifi: string | null;
+  settled_at: number | null;
+  ever_starlink: number;
+  dated: number;
+};
+
+/**
+ * Every tail the community sheet lists as Starlink and no count includes, with
+ * the reason (sql/listed-not-counted.ts). One row per tail. Never equipped, so
+ * a tail is here or in the equipped set, never both. Independent listings
+ * only: a row our own discovery wrote is not a sheet listing, and it outlives
+ * a contrary check until the next good scrape purges it, which in November
+ * 2026 was three weeks away. Sheet-fed airlines only: United today.
+ *
+ * `scope` narrows it. "log" is what the dated install log shows: organically
+ * dated rows inside REPORTED_MAX_AGE_DAYS. "tail" is what a tail's own page
+ * calls reported: the log's rows, plus any listing still awaiting our check,
+ * since nothing we read has contradicted it however old it is.
+ */
+export function getListedNotCounted(
+  db: Database,
+  airline: AirlineFilter,
+  opts: { scope?: "log" | "tail"; limit?: number; now?: number } = {}
+): ReportedInstall[] {
+  const sp = "starlink_planes";
+  const ofTail = `tail_number = ${sp}.TailNumber AND airline = ${sp}.airline`;
+  const settled = (column: string) =>
+    `(SELECT uf.${column} FROM united_fleet uf
+      WHERE uf.tail_number = ${sp}.TailNumber AND uf.airline = ${sp}.airline
+        AND uf.starlink_status = 'negative')`;
+  const q = withAirline(
+    `SELECT airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound,
+            verified_wifi AS listing_wifi, verified_at AS listing_at,
+            ${settled("verified_wifi")} AS settled_wifi,
+            ${settled("verified_at")} AS settled_at,
+            EXISTS (SELECT 1 FROM starlink_verification_log
+                    WHERE ${ofTail} AND ${UNITED_STARLINK_READ_WHERE}) AS ever_starlink,
+            (SELECT COUNT(*) FROM starlink_verification_log
+             WHERE ${ofTail} AND tail_confirmed = 1 AND ${CLEAN_OBSERVATION_WHERE}
+               AND checked_at >= COALESCE(
+                 CAST(strftime('%s', substr(${sp}.DateFound, 1, 10)) AS INTEGER), 0)
+            ) AS checks_since_listed,
+            (${INSTALL_FILTER}) AS dated
+     FROM ${sp}
+     WHERE ${listedNotCountedSql(sp)}`,
+    // Only a sheet-fed airline has a sheet to disagree with.
+    airlineCodes(airline).filter((code) => AIRLINES[code]?.lastUpdatedOwner === "sheet-scrape")
+  );
+  // A tail listed twice speaks through the row that carries a verdict.
+  const rows = db
+    .query(`${q.sql} ORDER BY airline, TailNumber, verified_wifi IS NULL, id`)
+    .all(...q.params) as ListedNotCountedRow[];
+  const cutoff = new Date(((opts.now ?? unixNow()) - REPORTED_MAX_AGE_DAYS * DAY_SEC) * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const seen = new Set<string>();
+  const out: ReportedInstall[] = [];
+  for (const r of rows) {
+    const key = `${r.airline}:${r.TailNumber}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const why = uncountedReason({
+      listingWifi: r.listing_wifi,
+      settledWifi: r.settled_wifi,
+      everReadStarlink: r.ever_starlink === 1,
+    });
+    if (!why) continue;
+    const inLog = r.dated === 1 && (r.DateFound ?? "").slice(0, 10) >= cutoff;
+    if (opts.scope === "log" && !inLog) continue;
+    if (opts.scope === "tail" && !inLog && why.reason !== "awaiting_check") continue;
+    const fromListing = why.observedWifi !== null && why.observedWifi === r.listing_wifi;
+    out.push({
+      airline: r.airline,
+      TailNumber: r.TailNumber,
+      Aircraft: r.Aircraft,
+      OperatedBy: r.OperatedBy,
+      DateFound: r.DateFound,
+      reason: why.reason,
+      observed_wifi: why.observedWifi,
+      observed_at: why.observedWifi === null ? null : fromListing ? r.listing_at : r.settled_at,
+      checks_since_listed: r.checks_since_listed,
+    });
+  }
+  out.sort(
+    (a, b) =>
+      (b.DateFound ?? "").localeCompare(a.DateFound ?? "") ||
+      a.TailNumber.localeCompare(b.TailNumber)
+  );
+  return opts.limit === undefined ? out : out.slice(0, opts.limit);
+}
+
+/** The install log's second list: getListedNotCounted, narrowed to the log. */
+export function getReportedInstalls(
+  db: Database,
+  airline: AirlineFilter,
+  limit = 25,
+  now = unixNow()
+): ReportedInstall[] {
+  return getListedNotCounted(db, airline, { scope: "log", limit, now });
+}
 
 export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMismatch[] {
   const q = withAirline(
@@ -5631,39 +5781,53 @@ export function getStarlinkPrefixes(
 }
 
 export interface PassengerReportInsert {
-  ip: string;
-  ip_prefix: string;
+  dedupe_key: string;
   in_geofeed: boolean;
   source: string;
   outcome: string;
   claimed_flight: string | null;
   claimed_tail: string | null;
   claimed_date: string | null;
-  router_id: string | null;
-  ua_hash: string | null;
   airborne_match: boolean;
 }
 
+/** `ip` is NOT NULL from the original schema, so it gets "" rather than the
+ * address; router_id and ua_hash are left NULL. */
 export function recordPassengerReport(db: Database, r: PassengerReportInsert): void {
   db.query(`
     INSERT INTO passenger_reports
       (reported_at, ip, ip_prefix, in_geofeed, source, outcome,
-       claimed_flight, claimed_tail, claimed_date, router_id, ua_hash, airborne_match)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       claimed_flight, claimed_tail, claimed_date, airborne_match)
+    VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     unixNow(),
-    r.ip,
-    r.ip_prefix,
+    r.dedupe_key,
     r.in_geofeed ? 1 : 0,
     r.source,
     r.outcome,
     r.claimed_flight,
     r.claimed_tail,
     r.claimed_date,
-    r.router_id,
-    r.ua_hash,
     r.airborne_match ? 1 : 0
   );
+}
+
+/**
+ * Blanks dedupe keys that have outlived the window they exist for. The range
+ * matches only the keyed hashes ("h:…"), so rows written before hashing, whose
+ * ip_prefix is a readable "v4:…"/"v6:…" prefix, are left exactly as they are.
+ */
+export function expirePassengerDedupeKeys(
+  db: Database,
+  windowSec: number,
+  nowSec = unixNow()
+): number {
+  return db
+    .query(
+      `UPDATE passenger_reports SET ip_prefix = ''
+       WHERE ip_prefix >= 'h:' AND ip_prefix < 'h;' AND reported_at <= ?`
+    )
+    .run(nowSec - windowSec).changes;
 }
 
 export function isFlightAirborne(
@@ -5689,7 +5853,7 @@ export function isFlightAirborne(
  * submission from the same client. */
 export function passengerReportSeenRecently(
   db: Database,
-  ipPrefix: string,
+  dedupeKey: string,
   source: string,
   tail: string | null,
   windowSec: number
@@ -5701,7 +5865,7 @@ export function passengerReportSeenRecently(
        WHERE ip_prefix = ? AND reported_at > ? AND source = ? AND claimed_tail IS ?
        LIMIT 1`
     )
-    .get(ipPrefix, since, source, tail);
+    .get(dedupeKey, since, source, tail);
   return row !== null;
 }
 
@@ -6009,6 +6173,8 @@ export interface DepartureSlotQuery {
   /** Restrict to one airport pair (route pages). */
   origin?: string;
   destination?: string;
+  /** Restrict to one aircraft (tail pages). */
+  tail?: string;
 }
 
 /** departureSlotsSql bound to a scope, as a derived table plus its params. */
@@ -6030,6 +6196,10 @@ function departureSlots(
   if (q.destination) {
     clause = `${clause} AND uf.arrival_airport = ?`;
     params.push(q.destination);
+  }
+  if (q.tail) {
+    clause = `${clause} AND uf.tail_number = ?`;
+    params.push(q.tail);
   }
   return { sql: `(${departureSlotsSql(clause)})`, params: [...params, q.from, q.to] };
 }
@@ -6157,6 +6327,17 @@ export function getRouteStarlinkSchedule(
   nowSec = unixNow()
 ): RouteSchedule {
   const { rows, total } = rankedEquippedRoutes(db, airline, nowSec, 60, 0);
+  return { rows, totalDepartures: total, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
+}
+
+/** Every equipped route pair in the live window, uncapped: the /routes map
+ * draws the whole network, where the table only ranks the busiest. */
+export function getRouteNetworkRows(
+  db: Database,
+  airline?: AirlineFilter,
+  nowSec = unixNow()
+): RouteSchedule {
+  const { rows, total } = rankedEquippedRoutes(db, airline, nowSec, -1, 0);
   return { rows, totalDepartures: total, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
 
@@ -6381,6 +6562,7 @@ function computeFleetPageData(
       ? getFleetProgressTails(db, airline).filter((r) => !equippedTails.has(r.tail))
       : [],
     movements: soleAirline ? computeFleetMovements(db, airline) : [],
+    sheetReported: soleAirline ? getListedNotCounted(db, soleAirline) : [],
   };
 }
 

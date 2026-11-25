@@ -58,6 +58,11 @@ interface RolloutFactBase {
    * ("all 93 Embraer 175s"). A bare count has no denominator, so without this
    * a short roster would read the count as "every one". */
   officialAll?: readonly string[];
+  /** The airline's own fleet-wide count of aircraft with Starlink, exactly as
+   * `fact` states it ("150 Starlink-equipped widebodies"). Where this site
+   * only knows an airline by aircraft type, this dated figure is the one count
+   * a ranking may print: a sum of fleet-list types is not a count of installs. */
+  officialFleetCount?: number;
   /** Verbatim excerpt of `fact` a type page renders instead of the whole
    * claim, for facts whose other clauses are about a different fleet. */
   pageText?: string;
@@ -192,7 +197,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing (regional done)",
     summary:
-      "More than 40% of the Alaska Air Group fleet had Starlink as of the September 29, 2026 investor day, including every Alaska regional aircraft and Hawaiian's long-haul fleet. Alaska mainline has barely started: 12 737-8 MAX connected, with the announced E175, 737, and 787 program targeted to finish in early 2027. Free for Atmos Rewards members via T-Mobile.",
+      "More than 40% of the Alaska Air Group fleet had Starlink as of the September 29, 2026 investor day, including every Alaska regional aircraft and Hawaiian's long-haul fleet. Alaska mainline has barely started: 12 737-8 MAX and 4 737-9 MAX connected on Alaska's October 26, 2026 tracker, with the announced E175, 737, and 787 program targeted to finish in early 2027. Free for Atmos Rewards members via T-Mobile.",
     facts: [
       {
         // Group-wide figure: the denominator spans Alaska, Hawaiian and Horizon,
@@ -252,6 +257,25 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           e175: 93,
           "737-max-8": 12,
           "737-max-9": 0,
+          "737-800": 0,
+          "737-900": 0,
+          "787": 0,
+        },
+        officialAll: ["e175"],
+        superseded: true,
+      },
+      {
+        fact: "Alaska's Starlink installation tracker shows 40% of aircraft equipped: all 93 Embraer 175s, all 18 Airbus A321-200neo and all 24 Airbus A330 aircraft, plus 12 Boeing 737-8 MAX (8 pending) and 4 Boeing 737-9 MAX (76 pending). No Boeing 737-800, 737-900 or Boeing 787 was connected yet.",
+        asOf: "2026-10-26",
+        source: {
+          label: "Alaska Airlines newsroom — Starlink tracker",
+          url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
+        },
+        aircraftPages: ["e175", "737-max-8", "737-max-9", "737-800", "737-900", "787"],
+        officialCounts: {
+          e175: 93,
+          "737-max-8": 12,
+          "737-max-9": 4,
           "737-800": 0,
           "737-900": 0,
           "787": 0,
@@ -317,15 +341,25 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Mostly done (widebodies)",
     summary:
-      "150 Starlink widebodies as of August 2026: the finished 777, A350 and 787-8 programmes plus the world's first 787-9. The 787 programme is due to finish by the end of 2026. The A330s and A380s are not in the announced programme, and Qatar has not said whether they will be.",
+      "170 Starlink widebodies as of November 2026, more than 95% of the planned widebody rollout, with up to 373 Starlink flights a day across 777s, 787s and A350s. The A330s and A380s are not in the announced programme, and Qatar has not said whether they will be.",
     facts: [
+      {
+        fact: "Qatar Airways has equipped 170 widebody aircraft with Starlink, more than 95 percent of its planned widebody deployment, across the Boeing 777-300ER, 777-200LR, 787-8 and 787-9 and the Airbus A350-900 and A350-1000. It operates up to 373 Starlink-enabled flights a day, and more than 31 million passengers have used the free service since it launched on October 22, 2024.",
+        asOf: "2026-11-16",
+        source: {
+          label: "The Peninsula",
+          url: "https://thepeninsulaqatar.com/article/17/11/2026/qatar-airways-starlink-benefits-over-31-million-passengers",
+        },
+      },
       {
         fact: "Qatar Airways reached 150 Starlink-equipped widebodies, including the world's first Starlink-equipped Boeing 787-9 and the completed 787-8 sub-fleet, and remains on track to finish the 787 rollout by the end of 2026. The 777 programme was completed in nine months and the A350 programme in eight.",
         asOf: "2026-08-21",
+        superseded: true,
         source: {
           label: "Qatar Airways press release",
           url: "https://www.qatarairways.com/press-releases/en-WW/269475-qatar-airways-150-starlink-equipped-widebody-aircraft-now-include-world-s-first-starlink-equipped-boeing-787-9/",
         },
+        officialFleetCount: 150,
       },
       {
         fact: "Starlink is deployed across the Boeing 777, Airbus A350, and Boeing 787-8 fleets. Qatar Airways has not confirmed whether its remaining widebodies, the Airbus A330s and A380s, will receive it. Complimentary Wi-Fi runs the whole journey via Privilege Club authentication or enrolment, though gate-to-gate access can be unavailable at some airports for local regulatory reasons.",
@@ -390,9 +424,35 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // the derived "Yes — Rollout Under Way" would imply a fleet you can plan around.
     headline: "Does Lufthansa Have Starlink? Just Started — First Aircraft Flying",
     summary:
-      "First Starlink flight on August 19, 2026 (A320neo D-AINM, Frankfurt–Rome), followed by Austrian (A320neo OE-LXF) in September and SWISS (A320neo HB-JDM) on September 28; rolling out to some 850 aircraft group-wide by 2029.",
-    aliases: ["austrian", "swiss"],
+      "First Starlink flight on August 19, 2026 (A320neo D-AINM, Frankfurt–Rome), followed by Austrian (A320neo OE-LXF) in September, SWISS (A320neo HB-JDM) on September 28 and Brussels Airlines (A320neo OO-SBA) on November 9. The first long-haul aircraft, Lufthansa's A350-1000 D-AIFA, flies with it from December 3; rolling out to some 850 aircraft group-wide by 2029.",
+    aliases: ["austrian", "swiss", "brussels-airlines"],
     facts: [
+      {
+        // Internal letter, not a company announcement; Lufthansa declined to add
+        // anything. It doesn't say how access will be charged, so neither do we.
+        fact: "An internal Lufthansa Airlines board letter reported on November 20, 2026 says ten more aircraft a month are to get Starlink, and that the airline wants to earn revenue from Wi-Fi access. The letter doesn't say how; access is free with a Travel ID or Miles & More account for now.",
+        asOf: "2026-11-20",
+        source: {
+          label: "airliners.de",
+          url: "https://www.airliners.de/lufthansa-starlink-einbau-flugzeuge-monat-beschleunigen/91635",
+        },
+      },
+      {
+        fact: "Brussels Airlines' first Starlink aircraft, A320neo OO-SBA, flew its first commercial flight with Wi-Fi on November 9, 2026 (SN2257 Brussels–Copenhagen). Brussels Airlines plans to have 15 aircraft equipped by the first half of 2027, free in all booking classes for passengers with a Travel ID or Miles & More account.",
+        asOf: "2026-11-09",
+        source: {
+          label: "Brussels Airlines press release",
+          url: "https://press.brusselsairlines.com/free-starlink-high-speed-wi-fi-takes-off-with-brussels-airlines",
+        },
+      },
+      {
+        fact: "Lufthansa's first Airbus A350-1000, D-AIFA, is the group's first long-haul aircraft with Starlink Wi-Fi, starting with its first scheduled flight, Munich to Tokyo Haneda, on December 3, 2026.",
+        asOf: "2026-11-11",
+        source: {
+          label: "Lufthansa Group newsroom",
+          url: "https://newsroom.lufthansagroup.com/en/lufthansas-first-airbus-a350-1000-welcome-to-munich/",
+        },
+      },
       {
         fact: "Lufthansa operated its first Starlink flight on August 19, 2026 (A320neo D-AINM on LH234 Frankfurt–Rome), with up to ten more A320-family aircraft planned for 2026 and a group-wide rollout to some 850 aircraft by 2029. Access is free for Miles & More members and Travel ID users.",
         asOf: "2026-08-19",
@@ -500,12 +560,20 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Aer Lingus",
     iata: "EI",
     status: "installing",
-    statusLabel: "Long-haul rollout under way",
+    statusLabel: "On all transatlantic routes",
     // No tail count on purpose: FlyerTalk and aggregator counts disagree (1 to
     // 10 aircraft) and no first-party source publishes one.
     summary:
-      "Live since March 29, 2026 (Airbus A330 EI-EIN, Dublin to New York JFK), free in every cabin. Aircraft flying to North America go first, and the whole long-haul fleet is due by Q1 2027.",
+      "Free in every cabin on all transatlantic routes as of November 2026; live since March 29, 2026 (Airbus A330 EI-EIN, Dublin to New York JFK). The whole long-haul fleet is due by Q1 2027.",
     facts: [
+      {
+        fact: "Aer Lingus says free Starlink Wi-Fi is already available across all of its transatlantic routes.",
+        asOf: "2026-11-18",
+        source: {
+          label: "Aer Lingus media centre",
+          url: "https://mediacentre.aerlingus.com/pressrelease/details/108/26586",
+        },
+      },
       {
         fact: "Aer Lingus' first Starlink aircraft, Airbus A330 EI-EIN, flew EI105 from Dublin to New York JFK on March 29, 2026, with Wi-Fi available across all cabins for free. Aer Lingus will equip all aircraft in a phased rollout, beginning with aircraft flying to North America, followed by those serving European destinations, and expects Starlink across its long-haul fleet by Q1 2027.",
         asOf: "2026-03-29",
@@ -530,16 +598,32 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Iberia",
     iata: "IB",
     status: "installing",
-    statusLabel: "First aircraft flying",
-    // One aircraft confirmed: the derived "Yes — Rollout Under Way" would
-    // imply a fleet you can plan around. Same call as Lufthansa.
-    headline: "Does Iberia Have Starlink? Rolling Out — First Aircraft Flew June 23",
+    statusLabel: "All 8 A321XLRs, some A350s and A330s",
+    // The A321XLR subfleet is done; the widebodies have no published count.
+    // "Yes — Rollout Under Way" would overstate a fleet you can plan around.
+    headline: "Does Iberia Have Starlink? On All A321XLRs, Some Widebodies",
     // Iberia's own release (grupo.iberia.com, which 403s every automated
     // client) also gives a flight number and an end-2026 fleet share; neither
     // appears on a readable copy, so neither is published here.
     summary:
-      "First Starlink flight on June 23, 2026 (Airbus A330-300 EC-MAA, Madrid to Sao Paulo), with free high-speed Wi-Fi; part of IAG's 500+ aircraft Starlink deal.",
+      "Free Starlink in every cabin on all eight A321XLRs (completed November 12, 2026) and on several A350s and A330s. First flight June 23, 2026 (A330-300 EC-MAA, Madrid to Sao Paulo); part of IAG's 500+ aircraft Starlink deal.",
     facts: [
+      {
+        fact: "Iberia Express starts installing Starlink on its first aircraft in the coming days and expects to equip 16 of its Airbus A321neo and A320ceo within two months, free for every passenger regardless of cabin, on routes linking Madrid with the Canary and Balearic Islands.",
+        asOf: "2026-11-18",
+        source: {
+          label: "Europa Press",
+          url: "https://www.europapress.es/economia/noticia-iberia-express-inicia-instalacion-conexion-starlink-espera-transformar-16-aviones-dos-meses-20261118115042.html",
+        },
+      },
+      {
+        fact: "All eight of Iberia's Airbus A321XLRs have Starlink; the last, EC-OIL, left the La Muñoza maintenance base on November 12, 2026. The service is free for all passengers regardless of cabin or fare type, and is already installed on several of Iberia's A350s and A330s.",
+        asOf: "2026-11-12",
+        source: {
+          label: "Aviacionline",
+          url: "https://www.aviacionline.com/english/commercial-aviation/europe/spain/all-of-iberia-s-a321xlrs-now-have-starlink-on-board_a6af5a5d74aa3de49099284b9",
+        },
+      },
       {
         fact: "The first Iberia aircraft fitted with Starlink, an Airbus A330-300 registered EC-MAA, departed Madrid-Barajas for Sao Paulo Guarulhos shortly before midnight on June 23, 2026.",
         asOf: "2026-06-23",
@@ -824,11 +908,11 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Korean Air",
     iata: "KE",
     status: "installing",
-    statusLabel: "First widebodies live",
+    statusLabel: "Installing",
     // Asiana only: the Jin Air / Air Busan / Air Seoul scope rests on one
     // report no other source repeats, so those brands do not 301 here.
     summary:
-      "Free Starlink live since September 15, 2026 on four Korean Air widebodies (three A350-900s and one 777-300ER) plus nine A350-900s and an A330-300 at Asiana, with every Korean Air and ex-Asiana aircraft targeted by the end of 2027.",
+      "Free Starlink since September 15, 2026, now on 42 Korean Air and Asiana aircraft (about 20% of their combined fleet of 208), including 14 A350s and 7 A330s at Asiana. Every Korean Air and ex-Asiana aircraft is targeted by the end of 2027.",
     aliases: ["asiana"],
     facts: [
       {
@@ -845,6 +929,22 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "TeslaNorth",
           url: "https://teslanorth.com/2026/09/15/asiana-airlines-starlink-free-wifi-onboard/",
+        },
+      },
+      {
+        fact: "Korean Air and Asiana have expanded free Starlink from 14 to 42 aircraft, 20.2% of their combined fleet of 208.",
+        accessed: "2026-11-17",
+        source: {
+          label: "Aju Press",
+          url: "https://www.ajupress.com/view/20261117160470611",
+        },
+      },
+      {
+        fact: "Asiana offers Starlink on select routes flown by 14 A350s and 7 A330s, and says it cannot confirm in advance whether a given flight will have it because aircraft assignments can change.",
+        accessed: "2026-11-17",
+        source: {
+          label: "Asiana Airlines",
+          url: "https://flyasiana.com/C/US/EN/contents/inflight-wi-fi",
         },
       },
     ],
@@ -1079,6 +1179,36 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "Air Data News",
           url: "https://www.airdatanews.com/el-al-signs-starlink-agreement-to-introduce-onboard-internet/",
+        },
+      },
+    ],
+  },
+  {
+    slug: "easyjet",
+    name: "easyJet",
+    shortName: "easyJet",
+    iata: "U2",
+    status: "announced",
+    statusLabel: "Installs from 2027",
+    summary:
+      "Announced October 26, 2026: Starlink on the A320, A320neo and A321neo fleet from the first half of 2027, completing by early 2028. Not planned for the A319s.",
+    facts: [
+      {
+        fact: "easyJet will offer Wi-Fi onboard for the first time, with Starlink deployed from the first half of 2027 across its A320, A320neo and A321neo fleet. The rollout is expected to be completed by early 2028.",
+        asOf: "2026-10-26",
+        source: {
+          label: "easyJet Media Centre",
+          url: "https://www.easyjet.com/en/news/airline/story/easyjet-to-offer-connectivity-onboard-for-the-first-time-with-starlink-the-fastest-wi-fi-in-the-sky-with-rapid-roll-out-coming-from-2027",
+          mirror:
+            "https://web.archive.org/web/20261030095740/https://www.easyjet.com/en/news/airline/story/easyjet-to-offer-connectivity-onboard-for-the-first-time-with-starlink-the-fastest-wi-fi-in-the-sky-with-rapid-roll-out-coming-from-2027",
+        },
+      },
+      {
+        fact: "easyJet's A319-100s, which are gradually being replaced, will not get Starlink, according to the airline. The announcement did not say whether the Wi-Fi will be free.",
+        asOf: "2026-10-26",
+        source: {
+          label: "AeroTime",
+          url: "https://www.aerotime.aero/articles/easyjet-starlink-wifi-spacex-airbus-elon-musk",
         },
       },
     ],
@@ -1467,6 +1597,43 @@ export function factsAliasTarget(slug: string): string | null {
 
 export function factsForCode(code: string): AirlineFactsEntry | null {
   return AIRLINE_FACTS.find((e) => e.trackedCode === code) ?? null;
+}
+
+export interface AirlineOwnCount {
+  count: number;
+  /** The fact's own date. Printed beside the count wherever it shows. */
+  asOf: string;
+  sourceLabel: string;
+  url: string;
+}
+
+/** The airline's own newest fleet-wide count, from the current dated fact that
+ * states one. A superseded fact never answers: once a later fact replaces its
+ * figures, the airline has no count here until that later fact carries one. */
+export function airlineOwnCount(code: string): AirlineOwnCount | null {
+  const fact = (factsForCode(code)?.facts ?? [])
+    .filter((f) => !f.superseded && f.asOf && f.officialFleetCount !== undefined)
+    .sort((a, b) => (b.asOf as string).localeCompare(a.asOf as string))[0];
+  if (!fact?.asOf || fact.officialFleetCount === undefined) return null;
+  return {
+    count: fact.officialFleetCount,
+    asOf: fact.asOf,
+    sourceLabel: fact.source.label,
+    url: fact.source.url,
+  };
+}
+
+/** The airline's own per-type counts added up, from its newest current dated
+ * fact that states them (Alaska's tracker: 93 E175s, 12 737-8 MAX). Only ever a
+ * check on a count tracked here: no source states this total, so it is never
+ * printed as the airline's figure the way `airlineOwnCount` is. */
+export function airlineOwnTypeTotal(code: string): { total: number; asOf: string } | null {
+  const fact = (factsForCode(code)?.facts ?? [])
+    .filter((f) => !f.superseded && f.asOf && f.officialCounts)
+    .sort((a, b) => (b.asOf as string).localeCompare(a.asOf as string))[0];
+  if (!fact?.asOf || !fact.officialCounts) return null;
+  const total = Object.values(fact.officialCounts).reduce((sum, n) => sum + n, 0);
+  return { total, asOf: fact.asOf };
 }
 
 /** Entries with no tail-level tracking — the content-only part of the roster. */

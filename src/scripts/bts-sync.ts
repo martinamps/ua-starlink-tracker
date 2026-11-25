@@ -13,6 +13,7 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { bodyClassOf, getBtsIngestedMonths, replaceBtsMonth } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import {
   COUNTERS,
   GAUGES,
@@ -276,7 +277,10 @@ export function startBtsSyncJob(db: Database): JobHandle {
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 45 * 60 * 1000,
     run: async () => {
-      await runBtsSync(db);
+      const r = await runBtsSync(db);
+      // "noop" (no new month posted) reports nothing: it is also what a moved
+      // download path looks like, so only an ingested month restarts the clock.
+      recordSyncOutcome(db, "bts", "UA", r.outcome === "ingested" ? "success" : r.outcome);
     },
   });
 }

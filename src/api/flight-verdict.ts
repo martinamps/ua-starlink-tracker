@@ -10,7 +10,13 @@
 import { OBSERVED_WIFI_SOURCES } from "../airlines/registry";
 import type { ScopedReader } from "../database/reader";
 import { inLookupWindow, unixNow } from "../database/sql/windows";
-import { COUNTERS, flightAirlineTag, metrics } from "../observability";
+import {
+  COUNTERS,
+  type LookupCaller,
+  flightAirlineTag,
+  metrics,
+  normalizeLookupCaller,
+} from "../observability";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
 import { memoPromise } from "../utils/ttl-cache";
@@ -29,14 +35,23 @@ type AssignmentFetcher = (flightNumber: string, targetDateUnix: number) => Promi
 // later, not after a 30s sleep the caller is stuck waiting on. Likewise no deep
 // queue: slots are 2s apart and the bucket admits a burst of 15, so uncapped the
 // last of a burst (plus any slots the background jobs hold) waits ~30s — past
-// the extension's 10s fetch timeout. One slot of wait is the floor, though:
-// below it any miss within 2s of another claim sheds, e.g. leg 2 of a connecting
-// itinerary the extension checks in parallel. 2s wait + 8s fetch fits in 10s.
-export const FR24_REQUEST_MAX_QUEUE_MS = MIN_REQUEST_INTERVAL;
+// the extension's 10s fetch timeout. Two slots of wait, because the extension
+// checks three cards at a time: the first goes now, the second waits 2s, the
+// third 4s. With one slot the third was shed (636 of 3,837 lookups, 18-24 Nov
+// 2026). The wait is longer; the slots stay 2s apart, so FR24 is asked no
+// more often.
+export const FR24_REQUEST_MAX_QUEUE_MS = 2 * MIN_REQUEST_INTERVAL;
+// Wait and fetch together end inside this, so the answer still beats the
+// extension's 10s timeout (FETCH_TIMEOUT_MS, chrome-extension/background.js)
+// with 1s left for the trip there and back: a lookup that waited the full 4s
+// has 5s to fetch (FR24 answers in 2.1s at p99), one that waited nothing
+// keeps the usual 8s. tests/flight-verdict-budget.test.ts pins the sum.
+export const FR24_REQUEST_DEADLINE_MS = 9000;
 const defaultFetcher: AssignmentFetcher = (flightNumber, targetDateUnix) =>
   fr24.getFlightAssignments(flightNumber, targetDateUnix, {
     maxRetries: 0,
     maxWaitMs: FR24_REQUEST_MAX_QUEUE_MS,
+    deadlineMs: FR24_REQUEST_DEADLINE_MS,
   });
 let fetchAssignments: AssignmentFetcher = defaultFetcher;
 
@@ -62,7 +77,8 @@ export const ASSIGNMENT_EMPTY_CACHE_MIN_LEAD = 6 * 3600;
 export function cachedFlightAssignments(
   flightNumber: string,
   targetDateUnix: number,
-  nowSec = unixNow()
+  nowSec = unixNow(),
+  caller: LookupCaller = "other"
 ): Promise<Assignment> {
   const key = `${flightNumber}:${Math.floor(targetDateUnix / 86400)}`;
   const now = nowSec;
@@ -71,7 +87,7 @@ export function cachedFlightAssignments(
 
   const shed = fr24RequestShedReason(now);
   if (shed) {
-    countShed(flightNumber, shed);
+    countShed(flightNumber, shed, caller);
     return Promise.reject(new Fr24UnavailableError(`shed: ${shed}`));
   }
 
@@ -98,7 +114,9 @@ export function cachedFlightAssignments(
     (err) => {
       if (isQueueShed(err)) {
         refundFr24Token();
-        countShed(flightNumber, "queue");
+        // Requests that joined this promise are not counted: one FR24 slot
+        // was refused, and the tag names who asked for it.
+        countShed(flightNumber, "queue", caller);
         return;
       }
       countLookup();
@@ -128,12 +146,17 @@ let fr24TokensAt = 0;
 let fr24ThrottledUntil = 0;
 let fr24ThrottleStreak = 0;
 
-function countShed(flightNumber: string, reason: "breaker" | "bucket" | "queue"): void {
+function countShed(
+  flightNumber: string,
+  reason: "breaker" | "bucket" | "queue",
+  caller: LookupCaller
+): void {
   metrics.increment(COUNTERS.VENDOR_REQUEST, {
     vendor: "fr24",
     type: "assignments",
     status: "shed",
     reason,
+    caller: normalizeLookupCaller(caller),
     airline: flightAirlineTag(flightNumber),
   });
 }
@@ -304,14 +327,16 @@ export async function lookupFlightTailVerdict(
   date: string,
   startOfDay: number,
   endOfDay: number,
-  nowSec = unixNow()
+  nowSec = unixNow(),
+  caller: LookupCaller = "other"
 ): Promise<FallbackSegment[] | null> {
   if (!inLookupWindow(startOfDay, endOfDay, nowSec)) return null;
 
   const assignments = await cachedFlightAssignments(
     normalizedFlightNumber,
     startOfDay + 43200,
-    nowSec
+    nowSec,
+    caller
   );
   const segments: FallbackSegment[] = [];
 

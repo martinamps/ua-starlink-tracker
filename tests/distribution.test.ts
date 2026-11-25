@@ -60,7 +60,10 @@ describe("newly-equipped Atom feed", () => {
       const ids = [...text.matchAll(/<id>([^<]+)<\/id>/g)].map((m) => m[1]);
       expect(ids.length).toBeGreaterThan(0);
       for (const id of ids) {
-        expect(new URL(id).host, `${host} feed id ${id}`).toBe(host);
+        // A reported entry's id is a tag: URI, so it can never collide with the
+        // confirmed entry the same tail gets later; it names the host all the same.
+        const idHost = id.startsWith("tag:") ? id.slice(4).split(",")[0] : new URL(id).host;
+        expect(idHost, `${host} feed id ${id}`).toBe(host);
       }
     }
   });

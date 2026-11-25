@@ -175,6 +175,7 @@ export function AircraftList({
   permalinkAirline,
   showFleetLink,
   fleetTotal,
+  tailPages = false,
   title = "Aircraft with Starlink",
 }: {
   /** Every equipped tail, freshest flight data first. */
@@ -187,6 +188,8 @@ export function AircraftList({
   showFleetLink: boolean;
   /** Every aircraft /fleet lists, equipped or not: where a missed search falls back to. */
   fleetTotal: number;
+  /** /fleet/{tail} serves for the permalink airline's planes. */
+  tailPages?: boolean;
   /** Names the scope where it is narrower than the page's headline count. */
   title?: string;
 }) {
@@ -321,7 +324,13 @@ export function AircraftList({
                         <div className="status-dot flex-shrink-0" />
                         <div>
                           <div className="font-mono text-base md:text-sm font-bold md:font-semibold text-primary group-hover:text-accent transition-colors">
-                            {plane.TailNumber}
+                            {tailPages && airline === permalinkAirline?.code ? (
+                              <a href={`/fleet/${plane.TailNumber}`} className="hover:underline">
+                                {plane.TailNumber}
+                              </a>
+                            ) : (
+                              plane.TailNumber
+                            )}
                           </div>
                           <div className="md:hidden font-mono text-xs text-secondary">
                             {aircraftName(plane.Aircraft)}

@@ -42,10 +42,41 @@ export const ASSIGNMENT_LOG_DDL = `
   CREATE INDEX IF NOT EXISTS idx_fal_dep_date ON flight_assignment_log(dep_date);
   CREATE INDEX IF NOT EXISTS idx_fal_route
     ON flight_assignment_log(departure_airport, arrival_airport);
+  CREATE INDEX IF NOT EXISTS idx_fal_tail
+    ON flight_assignment_log(tail_number, departure_time);
+  CREATE TABLE IF NOT EXISTS flown_assignments (
+    airline TEXT NOT NULL,
+    flight_number TEXT NOT NULL,
+    dep_date TEXT NOT NULL,
+    departure_airport TEXT NOT NULL,
+    arrival_airport TEXT,
+    tail_number TEXT NOT NULL,
+    starlink INTEGER,
+    departure_time INTEGER,
+    arrival_time INTEGER,
+    first_seen INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL,
+    PRIMARY KEY (airline, flight_number, dep_date, departure_airport, tail_number)
+  );
+  CREATE INDEX IF NOT EXISTS idx_fa_dep_date ON flown_assignments(dep_date);
 `;
 
 /** Kept past departure so a feed refreshed the day after still shows the swap. */
 const ASSIGNMENT_LOG_RETENTION_DAYS = 7;
+
+/**
+ * How long a past flight's rows are kept in flown_assignments, and so how far
+ * back a Watch feed still answers. A feed can be subscribed 330 days ahead and
+ * calendar apps poll it long after the flight (two months later in the traced
+ * week), so a year lets the event stay true for as long as a calendar shows it
+ * in a year view, while the table and the set of answerable URLs stay bounded.
+ * The route and airport readers scan flight_assignment_log whole, which is why
+ * the long tail lives in its own table instead of a longer retention there.
+ */
+export const FLOWN_RETENTION_DAYS = 365;
+
+const LOG_COLUMNS =
+  "airline, flight_number, dep_date, departure_airport, arrival_airport, tail_number, starlink, departure_time, arrival_time, first_seen, last_seen";
 
 export interface AssignmentLogRow {
   airline: string;
@@ -181,10 +212,19 @@ export function logResolvedAssignments(
   } catch {}
 }
 
+/** Rows leaving the log move to flown_assignments, which trims at a year. */
 export function pruneAssignmentLog(db: Database, now: number): void {
-  db.query("DELETE FROM flight_assignment_log WHERE dep_date < ?").run(
-    utcDate(now - ASSIGNMENT_LOG_RETENTION_DAYS * DAY_SEC)
-  );
+  const cutoff = utcDate(now - ASSIGNMENT_LOG_RETENTION_DAYS * DAY_SEC);
+  db.transaction(() => {
+    db.query(
+      `INSERT OR REPLACE INTO flown_assignments (${LOG_COLUMNS})
+       SELECT ${LOG_COLUMNS} FROM flight_assignment_log WHERE dep_date < ? AND dep_date >= ?`
+    ).run(cutoff, utcDate(now - FLOWN_RETENTION_DAYS * DAY_SEC));
+    db.query("DELETE FROM flight_assignment_log WHERE dep_date < ?").run(cutoff);
+    db.query("DELETE FROM flown_assignments WHERE dep_date < ?").run(
+      utcDate(now - FLOWN_RETENTION_DAYS * DAY_SEC)
+    );
+  })();
 }
 
 /** Every tail seen assigned to the flight on its local date, oldest first. */
@@ -203,6 +243,54 @@ export function getAssignmentHistory(
        ORDER BY first_seen ASC, tail_number ASC`
     )
     .all(...a.params, ...variants, depDate) as AssignmentLogRow[];
+}
+
+/**
+ * The same rows for a date already flown: still in the log for its first week,
+ * in flown_assignments after. A row lives in exactly one of the two.
+ */
+export function getFlownAssignmentHistory(
+  db: Database,
+  airlines: readonly string[],
+  variants: readonly string[],
+  depDate: string
+): AssignmentLogRow[] {
+  const recent = getAssignmentHistory(db, airlines, variants, depDate);
+  if (recent.length > 0 || variants.length === 0) return recent;
+  const a = airlineIn(airlines);
+  return db
+    .query(
+      `SELECT * FROM flown_assignments
+       WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND dep_date = ?
+       ORDER BY first_seen ASC, tail_number ASC`
+    )
+    .all(...a.params, ...variants, depDate) as AssignmentLogRow[];
+}
+
+/**
+ * Has this airline's flight number ever reached our store: a cached route, a
+ * scheduled leg, or a logged assignment on any date. Gates the answers we give
+ * with no record of the date itself, so an invented number mints no page.
+ */
+export function isKnownFlightNumber(
+  db: Database,
+  airlines: readonly string[],
+  variants: readonly string[]
+): boolean {
+  if (variants.length === 0) return false;
+  const a = airlineIn(airlines);
+  const inVariants = `flight_number IN (${placeholders(variants)})`;
+  // flight_routes is airline-agnostic; the variants carry the carrier prefix.
+  if (db.query(`SELECT 1 FROM flight_routes WHERE ${inVariants} LIMIT 1`).get(...variants)) {
+    return true;
+  }
+  for (const table of ["upcoming_flights", "flight_assignment_log", "flown_assignments"]) {
+    const hit = db
+      .query(`SELECT 1 FROM ${table} WHERE ${a.sql} AND ${inVariants} LIMIT 1`)
+      .get(...a.params, ...variants);
+    if (hit) return true;
+  }
+  return false;
 }
 
 export interface SameDayAlternative {

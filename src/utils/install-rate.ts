@@ -116,6 +116,13 @@ const MASS_DAY_MULTIPLE = 4;
  * normal, not the median, so a lumpy-but-real day is never mistaken for one. */
 const MASS_DAY_PERCENTILE = 0.9;
 
+/** The month arithmetic below throws on anything else, and a day that sorts
+ * ahead of the real ones would open the series. */
+const isCalendarDay = (day: unknown): day is string =>
+  typeof day === "string" &&
+  /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+  !Number.isNaN(Date.parse(`${day}T00:00:00Z`));
+
 const monthOf = (ms: number): string => new Date(ms).toISOString().slice(0, 7);
 
 function addMonths(month: string, n: number): string {
@@ -209,7 +216,7 @@ export function computeInstallRate(opts: {
   nowMs: number;
 }): InstallRateStats {
   const { equipped, total, targets, nowMs } = opts;
-  const { kept, excluded } = excludeMassWriteDays(opts.daily);
+  const { kept, excluded } = excludeMassWriteDays(opts.daily.filter((d) => isCalendarDay(d.day)));
   const months = zeroFillMonths(monthsFromDays(kept), nowMs);
 
   const currentMonth = monthOf(nowMs);

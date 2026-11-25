@@ -13,13 +13,27 @@
  */
 import type React from "react";
 import { flightInputRules } from "../airlines/flight-number";
-import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { type SiteConfig, liveAirlineSites, siteAirline } from "../airlines/registry";
 import { ClientScriptTag, buttonClass } from "./layout";
 
 /** The form's input look, for `extra` fields (a select) that must match it. */
 export const FIELD_CLASS =
-  "w-full min-w-0 rounded border border-subtle bg-base px-3 py-2 text-base text-primary placeholder-muted focus:border-accent focus:outline-none sm:text-sm";
+  "w-full min-w-0 min-h-11 rounded border border-subtle bg-base px-3 py-2 text-base text-primary placeholder-muted focus:border-accent focus:outline-none sm:text-sm";
 const LABEL = "mb-1 block text-xs text-muted";
+
+/** Airline name (as /api/check-any-flight spells it) → that airline's own
+ * check page, which names the aircraft and re-checks close to departure. */
+function checkPagesByAirline(): Record<string, { url: string; site: string }> {
+  const pages: Record<string, { url: string; site: string }> = {};
+  for (const { site, airline } of liveAirlineSites()) {
+    if (!site.features.checkFlightPage) continue;
+    pages[airline.name] = {
+      url: `https://${site.canonicalHost}/check-flight`,
+      site: site.brand.title,
+    };
+  }
+  return pages;
+}
 
 export function FlightSearchForm({
   site,
@@ -59,6 +73,10 @@ export function FlightSearchForm({
   const cfg = site.scope !== "ALL" ? siteAirline(site) : null;
   const label = hideLabels ? "sr-only" : LABEL;
   const rules = mode === "permalink" && cfg ? JSON.stringify(flightInputRules(cfg)) : undefined;
+  const checkPages =
+    mode === "check-any" && answer === "tracked"
+      ? JSON.stringify(checkPagesByAirline())
+      : undefined;
   return (
     <>
       <form
@@ -69,6 +87,7 @@ export function FlightSearchForm({
         data-flight-search={mode}
         data-rules={rules}
         data-answer={mode === "check-any" ? answer : undefined}
+        data-check-pages={checkPages}
         data-prefill-date={prefillDate ? "" : undefined}
         className={`flex flex-col gap-3 sm:flex-row sm:items-end ${className}`}
       >
@@ -84,7 +103,10 @@ export function FlightSearchForm({
             placeholder={placeholder ?? (cfg ? `${cfg.iata}881` : undefined)}
             autoComplete="off"
             autoCapitalize="characters"
+            // iOS autocorrect rewrites "ua 1"; spellCheck alone leaves it on.
+            autoCorrect="off"
             spellCheck={false}
+            enterKeyHint="search"
             required
             className={`${FIELD_CLASS} font-mono`}
           />
@@ -105,7 +127,7 @@ export function FlightSearchForm({
           </div>
         )}
         {extra}
-        <button type="submit" className={buttonClass()}>
+        <button type="submit" className={`${buttonClass()} min-h-11`}>
           {submitLabel}
         </button>
       </form>

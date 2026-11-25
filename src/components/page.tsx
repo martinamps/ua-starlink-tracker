@@ -217,7 +217,13 @@ export default function Page({
             <Eyebrow as="h2" className="mb-2 text-center">
               Does your flight have Starlink?
             </Eyebrow>
-            <FlightSearchForm site={site} id="home-flight-search" hideLabels withScript={false} />
+            <FlightSearchForm
+              site={site}
+              id="home-flight-search"
+              prefillDate
+              hideLabels
+              withScript={false}
+            />
             {features.routePlannerPage && (
               <p className="mt-2 text-center text-xs">
                 <a href="/route-planner" className={LINK} id="home-route-board-link">
@@ -257,6 +263,7 @@ export default function Page({
         flightsByTail={flightsByTail}
         permalinkAirline={airline}
         showFleetLink={features.fleetPage}
+        tailPages={features.tailPages}
         // /fleet lists the programme roster, partner jets included.
         fleetTotal={programme?.total ?? total}
         title={
@@ -271,7 +278,7 @@ export default function Page({
           dek={`Top ${Math.min(12, airportDepartures.rows.length)} airports, ${airportDepartures.windowLabel}.`}
           wide
         >
-          <AirportBars rows={airportDepartures.rows} />
+          <AirportBars rows={airportDepartures.rows} linked={features.airportPages} />
         </Section>
       )}
 

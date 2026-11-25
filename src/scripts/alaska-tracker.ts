@@ -24,6 +24,7 @@ import {
   replaceFleetProgress,
   settleOfficiallyCompleteType,
 } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
@@ -274,7 +275,8 @@ export function startAlaskaTrackerJob(db: Database): JobHandle | undefined {
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 4 * 60 * 1000,
     run: async () => {
-      await runAlaskaTrackerSync(db);
+      // "error" covers the page that loads with no types on it, too.
+      recordSyncOutcome(db, "alaska_tracker", "AS", (await runAlaskaTrackerSync(db)).outcome);
     },
   });
 }

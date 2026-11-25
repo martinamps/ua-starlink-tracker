@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { replaceFaaRegistry } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { FaaRegistryRow } from "../types";
 import { downloadZipToTemp, spawnLines } from "../utils/bulk-data";
@@ -29,6 +30,14 @@ export interface FaaSyncResult {
   resolved: number;
   flagged: number;
 }
+
+// Status codes for a registration that is still in effect. Besides V, the
+// renewal-notice codes (14/15/24 re-registration, 25/26/28 renewal) mean the
+// FAA has mailed a reminder ahead of the expiration date; the aircraft stays
+// registered until it actually expires (codes 13/16/27/29). See
+// https://registry.faa.gov/database/ardata.pdf
+const REGISTERED_STATUS = new Set(["V", "14", "15", "24", "25", "26", "28"]);
+const isRegistered = (statusCode: string) => REGISTERED_STATUS.has(statusCode);
 
 // FAA N-NUMBER columns carry no leading N.
 const stripN = (tail: string) => tail.trim().toUpperCase().replace(/^N/, "");
@@ -169,7 +178,7 @@ export function buildFaaRecords(opts: {
         .at(-1) ?? null;
 
     if (!m) flags.missingFromMaster.push(tail);
-    if (opts.starlinkTails.has(tail) && (!m || m.statusCode !== "V")) {
+    if (opts.starlinkTails.has(tail) && (!m || !isRegistered(m.statusCode))) {
       flags.wrongYes.push({
         tail,
         reason: m ? `FAA status ${m.statusCode}` : "not in FAA registry",
@@ -312,7 +321,10 @@ export function startFaaRegistryJob(db: Database): JobHandle {
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 20 * 60 * 1000,
     run: async () => {
-      await runFaaRegistrySync(db);
+      const r = await runFaaRegistrySync(db);
+      // A registry file that resolves none of our tails is an empty answer.
+      const empty = r.outcome === "success" && r.tracked > 0 && r.resolved === 0;
+      recordSyncOutcome(db, "faa_registry", "UA", empty ? "empty" : r.outcome);
     },
   });
 }

@@ -23,6 +23,7 @@ import {
   logVerification,
   updateVerifiedWifi,
 } from "../database/database";
+import { failureKindOf, recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import { debug, info, warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 
@@ -196,6 +197,13 @@ export function applyUnitedObservation(
 ): WifiConsensus | null {
   const log = opts.log ?? ownLog;
 
+  // Source health asks one thing: did united.com give us a provider reading?
+  // A page that loads without one (blocked, redesigned, not yet published) is
+  // an empty answer, whichever tail it turned out to describe.
+  if (verdict.category === "error") recordSourceFailure(db, "united_site", "UA", "error");
+  else if (!verdict.wifiProvider) recordSourceFailure(db, "united_site", "UA", "empty");
+  else recordSourceSuccess(db, "united_site", "UA");
+
   return db.transaction(() => {
     if (verdict.tailMismatch) {
       log.warn(
@@ -307,6 +315,7 @@ export function logUnitedCheckFailure(
   errorMessage: string,
   opts: { flightNumber: string | null; aircraftType: string | null }
 ): void {
+  recordSourceFailure(db, "united_site", "UA", failureKindOf(errorMessage));
   logVerification(db, {
     tail_number: tailNumber,
     airline: "UA",

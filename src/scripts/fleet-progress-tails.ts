@@ -16,6 +16,7 @@ import {
   insertPipelineEvents,
   replaceFleetProgressTails,
 } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { FleetProgressTailRow, FleetProgressTailState, PipelineEventRow } from "../types";
 import { type JobHandle, startJob } from "../utils/job-runner";
@@ -489,6 +490,7 @@ export async function runFleetProgressTailsSync(
         status: outcome,
       });
       span.setTag("result", outcome);
+      recordSyncOutcome(db, "fleet_progress_tails", "UA", outcome);
       if (outcome === "error") {
         logError("fleet-progress-tails: every progress sheet failed; nothing written");
       } else {
