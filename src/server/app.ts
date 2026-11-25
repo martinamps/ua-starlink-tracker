@@ -84,6 +84,7 @@ import {
   hubLookupAirlines,
   isGuideStale,
   programTypeOf,
+  programmeExclusionCaveat,
   publicAirlines,
   resolveSite,
   siteAirline,
@@ -853,6 +854,7 @@ const apiFleetSummary: Handler = ({ getReader }) => {
       installed: f.starlink,
       total: f.total,
       percentage: f.total > 0 ? Math.round((f.starlink / f.total) * 1000) / 10 : 0,
+      ...(f.outsideProgramme ? { excluded: true, label: f.outsideProgramme.label } : {}),
     }));
     return {
       code: cfg.code,
@@ -3943,7 +3945,9 @@ function fleetItemListJsonLd(
         return {
           "@type": "ListItem",
           position: i + 1,
-          name: `${aircraftName(f.family)}: ${f.starlink} of ${f.total} with Starlink`,
+          name: f.outsideProgramme
+            ? `${aircraftName(f.family)}: ${f.outsideProgramme.label}`
+            : `${aircraftName(f.family)}: ${f.starlink} of ${f.total} with Starlink`,
           ...(slug ? { url: `https://${ctx.site.canonicalHost}/fleet/${slug}` } : {}),
         };
       })
@@ -4156,7 +4160,17 @@ const aircraftTypePage: Handler = (ctx) => {
     .filter((d) => d.slug !== def.slug)
     .flatMap((d) => {
       const s = ctx.reader.getAircraftTypePage(d.slug);
-      return s ? [{ slug: d.slug, short: d.short, starlink: s.equipped, total: s.total }] : [];
+      return s
+        ? [
+            {
+              slug: d.slug,
+              short: d.short,
+              starlink: s.equipped,
+              total: s.total,
+              ...(s.outsideProgramme ? { outsideProgramme: s.outsideProgramme } : {}),
+            },
+          ]
+        : [];
     });
   const clockIso = data.dataClock
     ? new Date(data.dataClock * 1000).toISOString()
@@ -4725,7 +4739,7 @@ function programmeScopeNote(
 ): string | null {
   const partners = cfg.programmePartners?.partners ?? [];
   const p = partners.length > 0 ? getReader(cfg.code).getProgrammeHeadline() : null;
-  if (!p || p.total === 0) return null;
+  if (!p || p.total === 0) return programmeExclusionCaveat(cfg.code)?.short ?? null;
   const with_ = partners.map((x) => x.label).join(" and ");
   const named = `${fmt(p.equipped)} of ${fmt(p.total)} (${pctLabel(p.equipped, p.total)})`;
   // "As Alaska counts" once stood beside this figure, which Alaska's chart

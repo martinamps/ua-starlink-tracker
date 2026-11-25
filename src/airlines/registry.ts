@@ -267,10 +267,18 @@ export interface AirlineConfig {
      * statement that replaces a per-tail "no" nobody can refresh. */
     fleetTarget?: { text: string; asOf: string; source: { label: string; url: string } };
   };
-  /** Types flying today that the programme will never equip (retiring). They
-   * leave every denominator and render as "retiring"; status is never written
-   * from this list. */
-  programExclusions?: { families: readonly string[]; note: string; source: string };
+  /** Types flying today that the programme will never equip. They leave
+   * every denominator. `reason` chooses the label ("retiring" by default,
+   * matching Air France); status is never written from this list. */
+  programExclusions?: {
+    families: readonly string[];
+    note: string;
+    source: string;
+    reason?: ProgrammeExclusionReason;
+    /** The report that states the exclusion outright, linked wherever the
+     * airline's own whole-fleet line is shown beside it. */
+    report?: { label: string; url: string };
+  };
   /** Airline-local programme types, tested against the raw type string before
    * the shared family. For a carrier whose sub-variants have opposite status
    * (AF 777-200ER vs 777-300ER) while the global family must stay whole for
@@ -378,7 +386,28 @@ const AIRLINE_DEFS = {
     lastUpdatedOwner: "sheet-scrape",
     flightHistoryModel: true,
     verifySite: "united.com",
-    // Whole fleet eligible — Express + mainline both in the program.
+    programExclusions: {
+      families: ["ERJ-145"],
+      reason: "not_in_programme",
+      note: "Not in the programme",
+      // Two trade reports from March 2026, both in the reporter's own words,
+      // neither quoting United: PaxEx (24 Mar), "The ERJ145s will not be
+      // modified and, for now, will remain in the fleet", and Runway Girl
+      // (https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/),
+      // which calls the E145 "the sole unconnected aircraft in United's fleet
+      // once the Starlink rollout is complete in 2027". United itself has not
+      // said so in anything we found, so site copy attributes the claim
+      // ("not expected", "reports say") rather than stating United's intent.
+      // The same reports put the CRJ-200s in the rollout as CRJ-450s, which is
+      // why those stay in the denominator.
+      source: "https://paxex.aero/united-airlines-crj450-premium-twist-crj200/",
+      report: {
+        label: "Runway Girl Network, March 2026",
+        url: "https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/",
+      },
+    },
+    // Mainline and most Express types are in the programme; ERJ-145s are not
+    // (programExclusions). The remaining roster is the programme's own.
     rollout: {
       status: "in_progress",
       statusLabel: "Installing",
@@ -1161,6 +1190,13 @@ export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
   ),
 ].sort();
 
+/** Why a programme exclusion is out. Air France's types are retiring;
+ * United's ERJ-145s keep flying and are reported to be left out of the
+ * rollout. The label says "not in the programme", not "no Starlink planned":
+ * the second would claim the airline ruled the type out, which it has not
+ * said (same reasoning as PHASE_LABEL.negative in airlines-page.tsx). */
+export type ProgrammeExclusionReason = "retiring" | "not_in_programme";
+
 /** The one denominator rule: freighters and a programme's declared
  * exclusions are in the roster but never in a "how many of how many". */
 export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
@@ -1168,6 +1204,42 @@ export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
     isFreighterFamily(family) ||
     Boolean(AIRLINES[code]?.programExclusions?.families.includes(family))
   );
+}
+
+export function programmeExclusionReason(code: string): ProgrammeExclusionReason {
+  return AIRLINES[code]?.programExclusions?.reason ?? "retiring";
+}
+
+/** Short label for an excluded type: "Retiring" or "Not in the programme". */
+export function programmeExclusionLabel(code: string): string {
+  return programmeExclusionReason(code) === "not_in_programme"
+    ? "Not in the programme"
+    : "Retiring";
+}
+
+export interface ProgrammeExclusionCaveat {
+  text: string;
+  /** For a line under a count, where the whole-fleet statement is not quoted. */
+  short: string;
+  report?: { label: string; url: string };
+}
+
+/** United says "the whole fleet"; reports say the ERJ-145s are left out; our
+ * count follows the reports. Any page that prints the airline's whole-fleet
+ * line next to the exclusion (or to a count that applies it) prints this too,
+ * so a reader never meets the two answers without the sentence between them.
+ * Null for airlines with no reported exclusion: a retiring type contradicts
+ * nothing the airline said. */
+export function programmeExclusionCaveat(code: string): ProgrammeExclusionCaveat | null {
+  const cfg = AIRLINES[code];
+  const excl = cfg?.programExclusions;
+  if (!cfg || excl?.reason !== "not_in_programme") return null;
+  const types = excl.families.map((f) => `${f}s`).join(" and ");
+  return {
+    text: `${cfg.shortName}'s whole-fleet target does not name the ${types}. Reports say they are left out of the rollout, and we have found no ${cfg.shortName} statement on the type itself. Our count follows the reports and leaves them out.`,
+    short: `Our ${cfg.shortName} count leaves out the ${types}, which reports say are not part of the rollout.`,
+    ...(excl.report ? { report: excl.report } : {}),
+  };
 }
 
 /** Meta key (per airline) holding the community source's own last-edit date

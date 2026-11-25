@@ -1,4 +1,4 @@
-import type { SiteConfig } from "../airlines/registry";
+import { type SiteConfig, programmeExclusionCaveat } from "../airlines/registry";
 import { formatFactDate, rolloutTimeline } from "../airlines/rollout-facts";
 import type { InstallRateStats, TargetProjection, TargetVerdict } from "../utils/install-rate";
 import {
@@ -78,10 +78,13 @@ function TargetRow({
   p,
   shortName,
   stats,
+  exclusionNote,
 }: {
   p: TargetProjection;
   shortName: string;
   stats: InstallRateStats;
+  /** Which types a whole-fleet target's count leaves out, where any are. */
+  exclusionNote: string | null;
 }) {
   const verdict = VERDICT_TONE[p.verdict];
   return (
@@ -112,7 +115,7 @@ function TargetRow({
           {p.derivedFromStated && p.target.statedFleet
             ? `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of the ${fmt(p.derivedFrom)} aircraft ${shortName}'s ${p.target.statedFleet.basis} implies.`
             : p.target.fractionOfTracked === 1
-              ? `Fleet size is our count, not ${shortName}'s.`
+              ? `Fleet size is our count, not ${shortName}'s.${exclusionNote ? ` ${exclusionNote}` : ""}`
               : `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of our count of ${fmt(p.derivedFrom)}, not ${shortName}'s figure.`}
         </p>
       )}
@@ -220,6 +223,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
                 p={p}
                 shortName={a.shortName}
                 stats={stats}
+                exclusionNote={programmeExclusionCaveat(a.code)?.short ?? null}
               />
             ))}
           </ul>

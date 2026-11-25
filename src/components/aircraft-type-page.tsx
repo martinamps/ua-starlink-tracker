@@ -10,7 +10,12 @@ import {
   targetFact,
   tenantCopy,
 } from "../airlines/aircraft-pages";
-import type { SiteConfig } from "../airlines/registry";
+import {
+  type ProgrammeExclusionCaveat,
+  type SiteConfig,
+  programmeExclusionCaveat,
+  siteAirline,
+} from "../airlines/registry";
 import { type RolloutFact, formatFactDate } from "../airlines/rollout-facts";
 import { MIN_INSTALLS_FOR_PACE } from "../outlook/pace";
 import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "../types";
@@ -45,6 +50,7 @@ interface AircraftTypeSibling {
   short: string;
   starlink: number;
   total: number;
+  outsideProgramme?: { label: string };
 }
 
 interface AircraftTypePageProps {
@@ -74,6 +80,7 @@ const VERDICT_CLASS: Record<AircraftVerdictKind, string> = {
   installing: "verdict verdict-no",
   none: "verdict verdict-no",
   official_none: "verdict verdict-no",
+  not_in_programme: "verdict verdict-no",
   unknown: "verdict verdict-wait",
 };
 
@@ -410,7 +417,28 @@ function FlightsSection({
   );
 }
 
-function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: string }) {
+function CaveatReport({ caveat }: { caveat: ProgrammeExclusionCaveat }) {
+  if (!caveat.report) return null;
+  return (
+    <>
+      {" "}
+      <a href={caveat.report.url} className={LINK} rel="noopener noreferrer" target="_blank">
+        {caveat.report.label}
+      </a>
+    </>
+  );
+}
+
+function FactsSection({
+  facts,
+  airline,
+  caveat,
+}: {
+  facts: RolloutFact[];
+  airline: string;
+  /** Set on a type the airline's own statements do not square with. */
+  caveat: ProgrammeExclusionCaveat | null;
+}) {
   if (facts.length === 0) return null;
   return (
     <section className={CARD}>
@@ -429,6 +457,12 @@ function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: strin
           </li>
         ))}
       </ul>
+      {caveat && (
+        <p className="mt-4 border-t border-subtle pt-3 text-sm text-secondary leading-relaxed">
+          <strong className="text-primary">How this fits the answer above.</strong> {caveat.text}
+          <CaveatReport caveat={caveat} />
+        </p>
+      )}
     </section>
   );
 }
@@ -479,6 +513,7 @@ function SiblingsSection({
             href={`/fleet/${s.slug}`}
             n={s.starlink}
             total={s.total}
+            status={s.outsideProgramme?.label}
           />
         ))}
       </ul>
@@ -559,7 +594,15 @@ export default function AircraftTypePage({
         <RecentSection site={site} def={def} data={data} />
         <RoutesSection def={def} data={data} />
         <FlightsSection def={def} data={data} answer={answer} />
-        <FactsSection facts={facts.filter((f) => f !== headerTarget)} airline={airline} />
+        <FactsSection
+          facts={facts.filter((f) => f !== headerTarget)}
+          airline={airline}
+          caveat={
+            answer.kind === "not_in_programme"
+              ? programmeExclusionCaveat(siteAirline(site).code)
+              : null
+          }
+        />
         <SpecsSection def={def} spec={spec} />
         <Faq
           variant="card"

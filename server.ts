@@ -11,6 +11,7 @@ import {
   openDatabase,
   pruneCrashRows,
   recordFirstFlights,
+  refreshSheetOwnedFleetMeta,
   warmAircraftTypePages,
 } from "./src/database/database";
 import { startSourceHealthJob } from "./src/database/source-health";
@@ -54,6 +55,7 @@ const JOBS_ENABLED = process.env.DISABLE_JOBS !== "1";
 // One handle for the server and every in-process job; migrations run once, here.
 const db = openDatabase();
 migrate(db);
+refreshSheetOwnedFleetMeta(db);
 // Before createApp: the app reads the key once, to serve its key file.
 const indexNowKey = indexNowOn() ? ensureIndexNowKey(db) : null;
 const app = createApp(db);

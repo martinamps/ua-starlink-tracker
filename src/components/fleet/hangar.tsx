@@ -203,7 +203,8 @@ export function HangarFloor({
   typeLinks: Map<string, FleetTypeLink>;
   labels?: Record<WifiProvider, string>;
 }) {
-  const counts = providerCounts(families.flatMap((f) => f.tails));
+  const hangarFamilies = families.filter((f) => !f.outsideProgramme);
+  const counts = providerCounts(hangarFamilies.flatMap((f) => f.tails));
   const { pipeline, reported } = marks;
   const fitting = new Set([...marks.fitting.values()].filter((n) => !n.unsure).map((n) => n.tail));
   // A fitting tail wears the install mark, and a reported one the verification
@@ -249,7 +250,7 @@ export function HangarFloor({
         }
       />
       <div className="fam-container gap-3">
-        {families.map((fam) => (
+        {hangarFamilies.map((fam) => (
           <FamilyBlock
             key={fam.family}
             fam={fam}

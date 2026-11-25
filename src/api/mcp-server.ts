@@ -2072,7 +2072,11 @@ ${lines.join("\n")}`;
   const familyLines = reader
     .getFleetPageData()
     .families.filter((f) => f.family !== "unknown")
-    .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pctOf(f.starlink, f.total)}%)`);
+    .map((f) =>
+      f.outsideProgramme
+        ? `- ${f.family}: ${f.outsideProgramme.label} (${f.total})`
+        : `- ${f.family}: ${f.starlink} of ${f.total} (${pctOf(f.starlink, f.total)}%)`
+    );
   // A partnered programme (Alaska with Hawaiian's Airbus jets) headlines its
   // site with the wider count; both figures appear, each named, so an agent
   // quoting this never contradicts the site it points to.

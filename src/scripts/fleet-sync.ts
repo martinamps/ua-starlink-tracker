@@ -5,12 +5,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { Browser } from "playwright";
-import {
-  AIRLINES,
-  type AirlineConfig,
-  enabledAirlines,
-  lastUpdatedOwner,
-} from "../airlines/registry";
+import { AIRLINES, type AirlineConfig, enabledAirlines } from "../airlines/registry";
 import {
   getMeta,
   initializeDatabase,
@@ -216,12 +211,12 @@ export async function syncFleetFromFR24(
       result.total = admitted.length;
       result.success = true;
 
-      // Meta totals follow the lastUpdated owner: the sheet scrape owns
-      // UA's; for everyone else FR24 is the roster of record, so refresh
-      // meta here or it goes stale. (refreshFleetMeta itself only stamps
-      // lastUpdated for fleet-meta-owned airlines — QR's stays with the
-      // schedule ingester.)
-      if (lastUpdatedOwner(cfg.code) !== "sheet-scrape") refreshFleetMeta(db, cfg.code);
+      // The roster just changed, so the published totals follow it now, for
+      // every airline. /fleet reads the roster live; skipping UA here left
+      // its headline behind /fleet until the next hourly scrape.
+      // (refreshFleetMeta only stamps lastUpdated for fleet-meta-owned
+      // airlines, so UA's stays with the scrape and QR's with the ingester.)
+      refreshFleetMeta(db, cfg.code);
 
       span.setTag("planes.new", result.new);
       span.setTag("planes.updated", result.updated);

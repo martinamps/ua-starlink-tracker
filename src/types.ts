@@ -176,6 +176,8 @@ export interface FleetFamily {
   total: number;
   starlink: number;
   tails: FleetTail[];
+  /** Shown on /fleet but omitted from every denominator. */
+  outsideProgramme?: { label: string };
 }
 
 export interface FleetCarrier {
@@ -444,6 +446,7 @@ export type AircraftVerdictKind =
   | "installing"
   | "none"
   | "official_none"
+  | "not_in_programme"
   | "unknown";
 
 export interface AircraftTypeVariant {
@@ -536,4 +539,6 @@ export interface AircraftTypePageData {
   lastmodIso?: string;
   /** Newest verifier check for the airline (unix sec) — the page's own clock. */
   dataClock: number | null;
+  /** The type is outside the airline's Starlink programme. */
+  outsideProgramme?: { label: string };
 }

@@ -4,14 +4,14 @@
  * programme's declared exclusions (isOutsideProgramme). Each row carries the
  * one equipped flag (sql/equipped.ts), so numerators come from the same pass.
  *
- * One deliberate exception: the headline total (getTotalCount, meta
- * totalAircraftCount) behind the homepage, badge, fleet-summary API and MCP
- * get_fleet_stats. For AS/HA/QR/AF refreshFleetMeta writes it from this
- * roster, so the two agree. For UA the hourly sheet scrape writes the sheet's
- * own fleet total, the figure the community tracker publishes; it matched
- * programmeRoster on the 2026-09-21 snapshot (1,659) but can lead it between
- * fleet syncs. Moving the headline onto the roster is a contract change for
- * those surfaces (tests/golden pins them), not a refactor.
+ * The headline total (getTotalCount, meta totalAircraftCount) behind the
+ * homepage, badge, fleet-summary API and MCP get_fleet_stats is this roster's
+ * count, cached in meta by refreshFleetMeta. That holds for UA too: the hourly
+ * sheet scrape writes the sheet's own tally first, but only as the floor for
+ * an airline with no roster rows; updateDatabase ends in refreshFleetMeta,
+ * which overwrites it (tests/fleet-denominator.test.ts). The cache is also
+ * refreshed at boot and after every fleet sync, so a change to a programme's
+ * exclusions moves every surface together, without waiting on the sheet.
  */
 
 import type { Database } from "bun:sqlite";
