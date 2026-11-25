@@ -24,7 +24,13 @@ import {
   recordPassengerReport,
 } from "../database/database";
 import type { Database } from "../database/reader";
-import { COUNTERS, metrics, normalizeAirlineTag, normalizeProbeOutcome } from "../observability";
+import {
+  COUNTERS,
+  metrics,
+  normalizeAirborneMatch,
+  normalizeAirlineTag,
+  normalizeProbeOutcome,
+} from "../observability";
 import { PROBE_CONNECT_ORIGINS } from "../utils/constants";
 import { PrefixSet, dedupePrefix } from "../utils/ip-prefix";
 import { info } from "../utils/logger";
@@ -123,6 +129,10 @@ export function handlePassengerProbe(
       : null;
   const claimedDate = clampString(body.claimed_date, 10, DATE_RE);
 
+  const variants =
+    carrier && claimedFlight ? buildAirlineFlightNumberVariants(carrier, claimedFlight) : [];
+  const airborneMatch = inGeofeed && isFlightAirborne(db, variants);
+
   // Metric first so deduped beacons stay visible in DD; the dedupe key
   // includes source so the auto-probe row can never swallow a manual submit.
   metrics.increment(COUNTERS.PASSENGER_PROBE, {
@@ -130,6 +140,7 @@ export function handlePassengerProbe(
     source,
     in_geofeed: inGeofeed ? "1" : "0",
     airline: normalizeAirlineTag(carrier?.code ?? null),
+    airborne_match: normalizeAirborneMatch(claimedFlight, airborneMatch),
   });
 
   expirePassengerDedupeKeys(db, DEDUPE_WINDOW_SEC);
@@ -137,8 +148,6 @@ export function handlePassengerProbe(
     return "duplicate";
   }
 
-  const variants =
-    carrier && claimedFlight ? buildAirlineFlightNumberVariants(carrier, claimedFlight) : [];
   recordPassengerReport(db, {
     dedupe_key: dedupeKey,
     in_geofeed: inGeofeed,
@@ -147,7 +156,7 @@ export function handlePassengerProbe(
     claimed_flight: claimedFlight,
     claimed_tail: claimedTail,
     claimed_date: claimedDate,
-    airborne_match: inGeofeed && isFlightAirborne(db, variants),
+    airborne_match: airborneMatch,
   });
   return "stored";
 }

@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { SITES } from "../src/airlines/registry";
 import { PassengerBanner } from "../src/components/passenger-banner";
 import { expirePassengerDedupeKeys, replaceStarlinkPrefixes } from "../src/database/database";
+import { COUNTERS, metrics, normalizeAirborneMatch } from "../src/observability";
 import { parseGeofeed, runGeofeedSync } from "../src/scripts/starlink-geofeed";
 import { createApp } from "../src/server/app";
 import {
@@ -133,6 +134,44 @@ describe("passenger-probe trust model", () => {
       .get() as Record<string, unknown>;
     expect(row.in_geofeed).toBe(0);
     expect(row.airborne_match).toBe(0);
+  });
+
+  test("the counter carries the stored airborne match as a closed tag", () => {
+    const { db } = seeded();
+    const now = Math.floor(Date.now() / 1000);
+    db.query(
+      `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
+       VALUES ('N73275', 'UA2019', 'ORD', 'DEN', ?, ?, ?, 'UA')`
+    ).run(now - 3600, now + 3600, now);
+    const seen: Array<Record<string, string | number | boolean> | undefined> = [];
+    const original = metrics.increment;
+    metrics.increment = (name, tags) => {
+      if (name === COUNTERS.PASSENGER_PROBE) seen.push(tags);
+    };
+    try {
+      const manual = { source: "manual", outcome: "manual_report" };
+      handlePassengerProbe(db, ONBOARD_IP_V4, true, { ...manual, claimed_flight: "UA2019" });
+      handlePassengerProbe(db, ONBOARD_IP_V4, true, { ...manual, claimed_flight: "UA1" });
+      handlePassengerProbe(db, ONBOARD_IP_V4, true, { source: "probe", outcome: "timeout" });
+      handlePassengerProbe(db, ONBOARD_IP_V4, true, { ...manual, claimed_flight: "<b>" });
+      // Outside Starlink's range the stored flag is 0, and the tag follows it.
+      handlePassengerProbe(db, "8.8.8.8", false, { ...manual, claimed_flight: "UA2019" });
+    } finally {
+      metrics.increment = original;
+    }
+    expect(seen.map((t) => t?.airborne_match)).toEqual(["yes", "no", "none", "none", "no"]);
+    expect(seen.every((t) => typeof t?.airline === "string")).toBe(true);
+    const stored = db
+      .query(
+        "SELECT airborne_match FROM passenger_reports WHERE claimed_flight = 'UA2019' ORDER BY id"
+      )
+      .all() as Array<{ airborne_match: number }>;
+    expect(stored[0].airborne_match).toBe(1);
+    for (const hostile of [undefined, null, "", "UA2019\n,env:prod"]) {
+      for (const matched of [true, false]) {
+        expect(["yes", "no", "none"]).toContain(normalizeAirborneMatch(hostile, matched));
+      }
+    }
   });
 
   test("dedupes by /56 prefix + source + tail; auto-probe never swallows manual", () => {

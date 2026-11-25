@@ -150,6 +150,17 @@ export function normalizeProbeOutcome(raw: string | null | undefined): string {
   return PROBE_OUTCOMES.has(raw) ? raw : "other";
 }
 
+/** passenger.probe airborne_match: the stored flag as a tag, so the banner's
+ * hit rate reads from the counter. `none` = the post named no flight we
+ * recognise, so there was nothing to match. */
+export function normalizeAirborneMatch(
+  claimedFlight: string | null | undefined,
+  matched: boolean
+): "yes" | "no" | "none" {
+  if (!claimedFlight) return "none";
+  return matched ? "yes" : "no";
+}
+
 // Bounded user-agent classification, most-specific first. Still a fixed enum —
 // never the raw UA — but the named crawlers are split out: collapsing every
 // crawler into one `bot` bucket meant no metric could see a single engine's
@@ -758,7 +769,8 @@ export const COUNTERS = {
   // Starlink geofeed — tags: tenant, client_class
   PASSENGER_DETECT: "passenger.detect",
   // Probe beacon outcome — tags: outcome (onboard_api|cors_blocked|csp_blocked|
-  //   fetch_error|timeout|onboard_http_*|onboard_noflight|unknown), in_geofeed (0|1), airline
+  //   fetch_error|timeout|onboard_http_*|onboard_noflight|unknown), in_geofeed (0|1), airline,
+  //   airborne_match (yes|no|none: a listed tail is flying the claimed flight now)
   PASSENGER_PROBE: "passenger.probe",
 
   // A flight-number lookup for a carrier we don't answer (web, REST, MCP) —

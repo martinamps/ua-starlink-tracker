@@ -117,7 +117,11 @@ function TailMatrix({
       <p className="text-xs text-muted mt-2">
         {copy.checksEveryTail
           ? "One square per aircraft, as last checked on united.com."
-          : `${airline} doesn't publish Wi-Fi per aircraft, so only tails we've confirmed are lit.`}
+          : official && official.count > data.equipped
+            ? // The figure and its date stand on the line above; this is why
+              // fewer squares are lit than the airline counts.
+              `${airline} doesn't say which aircraft it counts, so we list ${data.equipped === 0 ? "none" : `only ${fmt(data.equipped)}`} by tail${data.equipped === 0 ? " yet" : ""}.`
+            : `${airline} doesn't publish Wi-Fi per aircraft, so only tails we've confirmed are lit.`}
       </p>
     </div>
   );

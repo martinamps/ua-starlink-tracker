@@ -5,13 +5,15 @@ import {
   byTypeSumBasis,
   countedNames,
   leftOutByType,
+  mainlineChartNote,
   ownCountAsOf,
   partnerIsByType,
   splitByMethod,
   trackingMethod,
+  typeGapSentences,
 } from "../airlines/published-count";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
-import type { AirlineChartCount } from "../database/roster";
+import type { AirlineChartCount, AirlineChartGaps } from "../database/roster";
 import type { FleetAnchorRow, FleetPageData } from "../types";
 import { ShareCardLink } from "./atoms";
 import { type CiteStat, CiteThis } from "./cite-this";
@@ -71,6 +73,7 @@ function OfficialAnchorsSection({ anchors }: { anchors: FleetAnchorRow[] }) {
 function SubfleetLine({
   pace,
   partners = [],
+  mainlineNote = null,
 }: {
   pace: FleetPageData["installPace"];
   /** Programme-partner slices the header count includes (Hawaiian's Airbus on Alaska). */
@@ -80,11 +83,14 @@ function SubfleetLine({
     /** Known by aircraft type: no share, and said so. */
     byType?: boolean;
   }>;
+  /** After the mainline share, where the airline's chart counts more
+   * (mainlineChartNote). */
+  mainlineNote?: string | null;
 }) {
   if (!pace) return null;
-  const parts: NonNullable<typeof partners> = [
+  const parts: Array<(typeof partners)[number] & { note?: string | null }> = [
     { label: "Regional", g: pace.express },
-    { label: "Mainline", g: pace.mainline },
+    { label: "Mainline", g: pace.mainline, note: mainlineNote },
     ...partners,
   ].filter((x) => x.g.total > 0);
   if (parts.length < 2) return null;
@@ -95,6 +101,7 @@ function SubfleetLine({
           {i > 0 && " · "}
           {x.label} {fmt(x.g.starlink)} of {fmt(x.g.total)}
           {x.byType ? `, ${BY_TYPE_TAB_NOTE}` : ` (${pct(x.g.starlink, x.g.total)})`}
+          {x.note ? ` ${x.note}` : ""}
         </span>
       ))}
     </p>
@@ -111,6 +118,9 @@ interface FleetPageProps {
   cite?: CiteStat | null;
   /** The airline's own chart, while it counts more than the tails named here. */
   airlineCount?: AirlineChartCount | null;
+  /** Types and mainline jets the airline's chart counts beyond the tails
+   * named here; null once they meet. */
+  chartGaps?: AirlineChartGaps | null;
   /** The header count's two parts, where it adds a by-type partner's
    * aircraft to the airline's own (programmePartsText). */
   countParts?: string | null;
@@ -128,6 +138,7 @@ export default function FleetPage({
   currentPath,
   cite,
   airlineCount = null,
+  chartGaps = null,
   countParts = null,
   typeLinks = [],
   installRateHref = null,
@@ -160,6 +171,8 @@ export default function FleetPage({
       starlink_listed: "Starlink, listed or by aircraft type, not checked plane by plane",
     }),
   };
+  const gapsCfg = scopeCode ? AIRLINES[scopeCode] : null;
+  const typeGaps = gapsCfg && chartGaps ? typeGapSentences(gapsCfg, chartGaps) : null;
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
@@ -208,6 +221,7 @@ export default function FleetPage({
       >
         <SubfleetLine
           pace={pace}
+          mainlineNote={gapsCfg && chartGaps ? mainlineChartNote(gapsCfg, chartGaps) : null}
           partners={(scopeCode ? (AIRLINES[scopeCode].programmePartners?.partners ?? []) : []).map(
             (p) => {
               const fams = data.families.filter((f) => p.families.includes(f.family));
@@ -222,6 +236,7 @@ export default function FleetPage({
             }
           )}
         />
+        {typeGaps && <p className="mt-2 text-sm text-secondary text-pretty">{typeGaps}</p>}
       </PageHeader>
 
       {!scopeCode && (

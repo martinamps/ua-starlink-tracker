@@ -3983,6 +3983,7 @@ const fleetPage: Handler = (ctx) => {
       shareCard: resolveShareCard(ctx.site.scope),
       cite: citeStat(ctx),
       airlineCount: programme?.airlineCount ?? null,
+      chartGaps: programme?.chartGaps ?? null,
       countParts: cfg && programme ? programmePartsText(cfg, programme) : null,
       typeLinks,
       installRateHref:
