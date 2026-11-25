@@ -137,10 +137,6 @@ export function RoutesMap({
             style={{ aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}` }}
           >
             <img
-              // The largest thing on a phone's first screen; at an image's
-              // default priority it waits behind the stylesheet. Lowercase,
-              // and spread past the types: React 18 warns on the camelCase prop.
-              {...{ fetchpriority: "high" }}
               src={basemapHref}
               alt=""
               width={MAP_WIDTH}

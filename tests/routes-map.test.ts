@@ -123,14 +123,6 @@ describe("/routes", () => {
     expect(r.headers.get("cache-control")).toContain("immutable");
     expect(await r.text()).toStartWith("<svg");
   });
-
-  test("the coastline, the first screen's largest picture, is fetched at high priority", async () => {
-    const { text } = await bodyOf(app, "/routes", UA);
-    const img = text.match(/<img [^>]*src="\/static\/routes-map\.[^>]*>/)?.[0];
-    expect(img).toBeDefined();
-    expect(img).toContain('fetchpriority="high"');
-    expect(img).not.toContain("loading=");
-  });
 });
 
 /**
