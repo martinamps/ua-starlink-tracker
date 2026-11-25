@@ -2470,20 +2470,34 @@ const LOG_PAGE_LIMIT = 250;
 // <updated>, and Atom requires one: the epoch showed in readers as a
 // 55-year-old item, and a raw "2026-13-45T12:00:00Z" is not a timestamp at
 // all. Same rule as getDailyInstalls' SQL date() check.
-const installIso = (dateFound: string | null): string | null => {
+// A day after today (UTC, the clock DateFound is written on) is no day
+// anything was found: "2099-01-01" became the feed's own <updated> and sat
+// first in every reader. It is left out the way an undated row is.
+const installIso = (dateFound: string | null, today: string): string | null => {
   const day = (dateFound ?? "").slice(0, 10);
-  return isRealIsoDate(day) ? `${day}T12:00:00Z` : null;
+  return isRealIsoDate(day) && day <= today ? `${day}T12:00:00Z` : null;
 };
 
 /** The rows the feed can date. The rest stay on /newly-equipped and in every
  * count; they are only left out of the syndicated document. */
 function datedForFeed<T extends { DateFound: string | null }>(
-  rows: T[]
+  rows: T[],
+  nowMs = Date.now()
 ): Array<T & { DateFound: string; updated: string }> {
+  const today = new Date(nowMs).toISOString().slice(0, 10);
   return rows.flatMap((r) => {
-    const updated = installIso(r.DateFound);
+    const updated = installIso(r.DateFound, today);
     return updated && r.DateFound ? [{ ...r, DateFound: r.DateFound, updated }] : [];
   });
+}
+
+/** <updated> for a feed with no entry to take it from. Atom requires one: the
+ * data's own last-updated stamp while it is a real past instant, else the
+ * start of the current UTC day, which holds still for a day of polling. */
+function emptyFeedUpdated(stamp: string | null, nowMs = Date.now()): string {
+  const t = stamp ? Date.parse(stamp) : Number.NaN;
+  const ms = Number.isFinite(t) && t <= nowMs ? t : nowMs - (nowMs % 86_400_000);
+  return `${new Date(ms).toISOString().slice(0, 19)}Z`;
 }
 
 /**
@@ -2519,26 +2533,28 @@ function reportedInstallsFor({ site, reader }: RequestContext): ReportedInstall[
 
 const feedXml: Handler = (ctx) => {
   const { site, reader } = ctx;
-  // An Atom document with zero entries is a broken subscription, not an empty
-  // one — readers keep polling it forever and it advertises a rollout that
-  // never moves. Same gate as the page it syndicates.
+  // Same gate as the page it syndicates, and as every link to it: with no
+  // install log nothing points here, and an Atom document for an airline that
+  // has no log would advertise a rollout that never moves.
   if (!hasInstallLog(ctx)) return notFound(site);
   const host = site.canonicalHost;
   const installs = datedForFeed(
     reader.getRecentInstalls(FEED_LIMIT, recentInstallCap(site.scope, FEED_LIMIT))
   );
   const reported = datedForFeed(reportedInstallsFor(ctx));
-  // Same broken-subscription rule once the undatable rows are gone.
-  if (installs.length + reported.length === 0) return notFound(site);
+  // A log whose rows the feed can't date is still linked from the home page,
+  // /newly-equipped and /embed, so it answers with a valid feed of no entries:
+  // a 404 there was a dead link and a subscription error.
   const firstFlights = firstFlightsFor(reader, installs);
   const airlineNames = new Map(publicAirlines().map((a) => [a.code, a.name]));
 
   // Honest <updated>: the newest entry's date, never the request clock (same
   // discipline as the sitemap's lastmod). Both lists arrive newest first.
-  const updated = [installs[0], reported[0]]
-    .flatMap((r) => (r ? [r.updated] : []))
-    .sort()
-    .at(-1) as string;
+  const updated =
+    [installs[0], reported[0]]
+      .flatMap((r) => (r ? [r.updated] : []))
+      .sort()
+      .at(-1) ?? emptyFeedUpdated(reader.getLastUpdatedRaw());
 
   const confirmedEntries = installs.map((i) => {
     const name = airlineNames.get(i.airline) ?? i.airline;
@@ -2607,8 +2623,7 @@ const feedXml: Handler = (ctx) => {
   <link href="https://${host}/newly-equipped"/>
   <id>https://${host}/feed.xml</id>
   <updated>${updated}</updated>
-  <author><name>${escapeXml(site.brand.title)}</name></author>
-${entries}
+  <author><name>${escapeXml(site.brand.title)}</name></author>${entries ? `\n${entries}` : ""}
 </feed>`;
   return text(body, "application/atom+xml; charset=utf-8", { cache: CACHE.fifteenMinutes });
 };
