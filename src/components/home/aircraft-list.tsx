@@ -6,7 +6,14 @@
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
 import { ensureAirlinePrefix } from "../../airlines/flight-number";
-import { BY_TYPE_TAB_NOTE, trackingMethod } from "../../airlines/published-count";
+import {
+  BY_TYPE_METHOD,
+  BY_TYPE_TAB_NOTE,
+  countedNames,
+  listed,
+  splitByMethod,
+  trackingMethod,
+} from "../../airlines/published-count";
 import { AIRLINES, type AirlineConfig } from "../../airlines/registry";
 import { FILTER_ACTIVE, FILTER_BUTTON, FILTER_INACTIVE } from "../../client/aircraft-list";
 import type { Aircraft, Flight } from "../../types";
@@ -16,9 +23,14 @@ import { fmt, formatPillTime } from "../ui/format";
 
 // SSR'ing every fleet row made the homepage a ~5 MB document with thousands of
 // outbound links. The list is sorted freshest-first, so the first rows carry
-// nearly all the value. Search and filters run over the rendered rows only, so
-// chip counts describe those rows and a miss points at /fleet, which lists all.
+// nearly all the value. Search and filters run over the rendered rows only: a
+// tab still counts every aircraft of its kind (a count of the rendered rows
+// read as "Hawaiian has none"), the note under the list says how many are
+// shown, and a miss points at /fleet, which lists all.
 const AIRCRAFT_LIST_CAP = 100;
+
+// Keeps the arrow on the link's line where the note wraps.
+const NBSP = "\u00a0";
 
 // Pills per row before the "+N" button, by breakpoint: mobile, md, xl.
 const PILLS_SM = 2;
@@ -168,6 +180,38 @@ function searchIndex(flights: Flight[], rowAirline: AirlineConfig | undefined) {
   };
 }
 
+/**
+ * "89 of the 134 United and Alaska aircraft counted on this site, and 11 of
+ * Hawaiian's 42 on our fleet list, counted by aircraft type, not checked plane
+ * by plane": the rows a capped list shows, each kind against its own whole.
+ * The two wholes are never added: only one of them is a count of aircraft.
+ */
+function capParts(
+  aircraft: Aircraft[],
+  shown: Aircraft[],
+  airlineOf: (p: Aircraft) => string
+): string | null {
+  const per = (rows: Aircraft[]) => {
+    const n = new Map<string, number>();
+    for (const p of rows) n.set(airlineOf(p), (n.get(airlineOf(p)) ?? 0) + 1);
+    return n;
+  };
+  const all = per(aircraft);
+  const inView = per(shown);
+  const split = splitByMethod([...all].map(([code, starlink]) => ({ code, starlink, total: 0 })));
+  if (split.byType.length === 0 || split.counted.starlink === 0) return null;
+  const of = (n: number) => (n === 0 ? "none" : fmt(n));
+  const shownByType = split.byType.reduce((s, b) => s + (inView.get(b.cfg.code) ?? 0), 0);
+  return [
+    `${of(shown.length - shownByType)} of the ${fmt(split.counted.starlink)} ${countedNames(split)} aircraft counted on this site`,
+    `${listed(
+      split.byType.map(
+        (b) => `${of(inView.get(b.cfg.code) ?? 0)} of ${b.cfg.shortName}'s ${fmt(b.sum)}`
+      )
+    )} on our fleet list, ${BY_TYPE_METHOD}`,
+  ].join(", and ");
+}
+
 export function AircraftList({
   aircraft,
   content,
@@ -199,7 +243,7 @@ export function AircraftList({
   const shown = aircraft.slice(0, AIRCRAFT_LIST_CAP);
   const capped = aircraft.length > shown.length;
   const subfleetCount = (key: string) =>
-    shown.filter((p) => p.fleet === key || airlineOf(p) === key).length;
+    aircraft.filter((p) => p.fleet === key || airlineOf(p) === key).length;
   // A list over several airlines may hold one known by aircraft type: its tab
   // says so, and no figure adds its rows to the aircraft counted one by one.
   const byTypeKeys = new Set(
@@ -208,6 +252,13 @@ export function AircraftList({
       .filter((key) => AIRLINES[key] && trackingMethod(AIRLINES[key]) === "type")
   );
   const mixed = byTypeKeys.size > 0 && byTypeKeys.size < content.subfleetFilters.length;
+  // Past the cap such a list says how many rows it shows of each kind, apart.
+  const shownParts = mixed && capped ? capParts(aircraft, shown, airlineOf) : null;
+  const countLabel = !capped
+    ? ""
+    : shownParts
+      ? `${fmt(shown.length)} shown`
+      : `${fmt(shown.length)} of ${fmt(aircraft.length)}`;
 
   return (
     <Panel pad="none" className={`${SECTION_WIDE} overflow-hidden`}>
@@ -257,10 +308,10 @@ export function AircraftList({
           <div
             id="search-count"
             aria-live="polite"
-            data-default={capped ? `${fmt(shown.length)} of ${fmt(aircraft.length)}` : ""}
+            data-default={countLabel}
             className="hidden sm:flex items-center text-xs font-mono text-muted whitespace-nowrap"
           >
-            {capped ? `${fmt(shown.length)} of ${fmt(aircraft.length)}` : null}
+            {countLabel || null}
           </div>
           <div className="flex gap-1.5 sm:gap-2">
             <button
@@ -271,7 +322,8 @@ export function AircraftList({
               data-filter="all"
               data-count={shown.length}
             >
-              ALL{mixed ? null : <span className="hidden sm:inline"> ({fmt(shown.length)})</span>}
+              ALL
+              {mixed ? null : <span className="hidden sm:inline"> ({fmt(aircraft.length)})</span>}
             </button>
             {content.subfleetFilters.length > 1 &&
               content.subfleetFilters.map((card) => (
@@ -397,22 +449,25 @@ export function AircraftList({
           </div>
         )}
       </div>
+      {/* A paragraph, so index.html's rule underlines the accent link in it. */}
       {capped && (
-        <div
+        <p
           id="list-cap"
           className="px-4 md:px-6 py-3 border-t border-subtle text-center text-sm text-muted"
         >
-          The {fmt(shown.length)} most recently flown of {fmt(aircraft.length)}. Search covers only
-          these.
+          {shownParts
+            ? `The ${fmt(shown.length)} most recently flown: ${shownParts}.`
+            : `The ${fmt(shown.length)} most recently flown of ${fmt(aircraft.length)}.`}{" "}
+          Search covers only these.
           {showFleetLink && (
             <>
               {" "}
-              <a href="/fleet" className="text-accent hover:underline">
-                See all →
+              <a href="/fleet" className="text-accent">
+                See all{NBSP}→
               </a>
             </>
           )}
-        </div>
+        </p>
       )}
     </Panel>
   );

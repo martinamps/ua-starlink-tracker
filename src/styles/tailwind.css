@@ -1,10 +1,12 @@
 /* Tailwind source. `bun run build:css` compiles this to static/tailwind.css,
    which the server fingerprints and serves itself.
 
-   Everything here lands in @layer utilities (and theme/base), so the unlayered
-   rules in index.html's <style> block keep winning every name they share —
-   the same precedence the browser JIT gave them, and the reason the link tag's
-   position relative to that block does not matter.
+   Everything here lands in @layer utilities (and theme/base), so an unlayered
+   rule in index.html's <style> block wins every property it shares with a
+   utility, variants included. That is why index.html defines no colour
+   utility of its own: an unlayered .border-subtle there once outranked every
+   hover:border-accent on the site. The rules below the components layer in
+   this file are unlayered too and win the same way.
 
    The output is a build artifact, never committed: a class works only once the
    CSS is rebuilt, so the Docker build and `bun run dev` compile it, and a
@@ -36,6 +38,13 @@
   --color-info: var(--color-info);
   --color-trial: var(--color-trial);
   --font-display: var(--font-display);
+}
+
+/* `base` can't be a theme colour (text-base is a font size), so its one
+   utility is spelled out. In the utilities layer like every other colour, so a
+   hover: or focus: variant beside it wins. */
+@utility bg-base {
+  background-color: var(--color-base);
 }
 
 /* Explicit, so the scan can never drift with the CSS file's location. Every

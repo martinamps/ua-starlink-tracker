@@ -111,20 +111,16 @@
       .font-display { font-family: var(--font-display); font-weight: 600; }
       .font-mono { font-family: var(--font-mono); }
 
-      /* Custom color utilities */
-      .bg-base { background-color: var(--color-base); }
-      .bg-surface { background-color: var(--color-surface); }
-      .bg-surface-elevated { background-color: var(--color-surface-elevated); }
-      .border-subtle { border-color: var(--color-border); }
-      .text-primary { color: var(--color-text-primary); }
-      .text-secondary { color: var(--color-text-secondary); }
-      .text-muted { color: var(--color-text-muted); }
-      .text-accent { color: var(--color-accent); }
+      /* The colour utilities (text-primary, border-subtle, bg-surface…) are
+         not defined here: Tailwind emits them from the theme mapping in
+         src/styles/tailwind.css, in its utilities layer. A copy in this
+         unlayered block outranks every layered hover: and focus: variant,
+         whatever its specificity, so no link or button that asked for a
+         hover colour ever showed one. */
 
-      /* Keyboard focus on a field. Unlayered on purpose: every field asks for
-         focus:outline-none with focus:border-accent, and .border-subtle above
-         (unlayered) beats that layered border, so a focused field showed no
-         mark at all. One rule here mends each of them. */
+      /* Keyboard focus on a field. Every field asks for focus:outline-none
+         with focus:border-accent, a 1px colour change; this outline is the
+         mark that can't be missed, and unlayered so no utility removes it. */
       input:focus-visible,
       select:focus-visible,
       textarea:focus-visible {
