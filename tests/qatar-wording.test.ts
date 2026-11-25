@@ -10,7 +10,7 @@ import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ownFigureNote } from "../src/airlines/published-count";
+import { byTypeSumBasis, ownFigureNote } from "../src/airlines/published-count";
 import {
   AIRLINES,
   heldBackCount,
@@ -248,5 +248,54 @@ describe("the own-figure line for any by-type airline", () => {
         if (note.kind === "fact") expect(note.fact.superseded).toBeUndefined();
       }
     }
+  });
+});
+
+describe("Qatar's dated line says what its number is", () => {
+  let line: string;
+  let tableSum: number;
+
+  beforeAll(async () => {
+    const db = seed();
+    db.run("INSERT INTO meta (key, value) VALUES ('QR:lastUpdated', '2026-11-25T06:00:00.000Z')");
+    db.run("INSERT INTO meta (key, value) VALUES ('QR:totalAircraftCount', ?)", [
+      String(LISTED.length),
+    ]);
+    tableSum = (
+      db
+        .query(
+          "SELECT COUNT(*) AS n FROM united_fleet WHERE airline = 'QR' AND starlink_status = 'confirmed'"
+        )
+        .get() as { n: number }
+    ).n;
+    const html = (await bodyOf(createApp(db), "/", QR_HOST)).text;
+    line = textOf(html.match(/<p id="starlink-stat"[^>]*>[\s\S]*?<\/p>/)?.[0] ?? "").trim();
+  });
+
+  test("the line is there, dated, and prints the fleet-list sum", () => {
+    expect(line).toMatch(/^As of [A-Z][a-z]+ \d{1,2}, \d{4}, [\d,]+ Qatar Airways aircraft /);
+    expect(tableSum).toBeGreaterThan(0);
+    expect(line).toContain(` ${tableSum} Qatar Airways aircraft on our fleet list are of `);
+  });
+
+  test("a sum by aircraft type is never said to have Starlink", () => {
+    expect(line).not.toMatch(/aircraft have Starlink/);
+    expect(line).toContain(byTypeSumBasis("QR"));
+    expect(line).toContain(`leaving out ${HELD} that aren't confirmed`);
+    expect(line).toContain("counted by aircraft type, not checked plane by plane");
+    for (const type of HELD_TYPES) expect(callsComplete(line, type), type).toBeNull();
+  });
+
+  test("llms.txt tells an assistant to cite the sum as a sum", async () => {
+    const llms = (await bodyOf(createApp(seed()), "/llms.txt", QR_HOST)).text;
+    const cite = llms.slice(llms.indexOf("## Citing the headline number")).split("\n## ")[0];
+    expect(cite).toContain("a sum by aircraft type, not a count of installs");
+    expect(cite).toContain(byTypeSumBasis("QR"));
+    expect(cite).not.toMatch(/aircraft \(\{percent\}%\) have Starlink/);
+  });
+
+  test("the basis names the held-back aircraft only where some are held back", () => {
+    expect(byTypeSumBasis("QR")).toContain("the airline reports finished");
+    expect(byTypeSumBasis("HA")).not.toContain("leaving out");
   });
 });

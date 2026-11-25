@@ -29,7 +29,7 @@ import {
   marketingFlightNumber,
   normalizeAirlineFlightNumber,
 } from "../airlines/flight-number";
-import { trackingMethod } from "../airlines/published-count";
+import { byTypeSumBasis, trackingMethod } from "../airlines/published-count";
 import {
   AIRLINES,
   type AirlineCode,
@@ -2111,10 +2111,9 @@ function toolListStarlinkAircraft(
   const scopeCfg = reader.scope === "ALL" ? undefined : AIRLINES[reader.scope];
   // A by-type list is every aircraft of the finished types that isn't held
   // back, not checked tails.
-  const held = scopeCfg ? heldBackCount(scopeCfg.code) : 0;
   const noun =
     scopeCfg && trackingMethod(scopeCfg) === "type"
-      ? `aircraft of ${held > 0 ? `types the airline reports finished, leaving out ${held} that aren't confirmed` : "fully equipped types"} (counted by aircraft type, not checked plane by plane)`
+      ? `aircraft of ${byTypeSumBasis(scopeCfg.code)} (counted by aircraft type, not checked plane by plane)`
       : "Starlink-equipped aircraft";
   const header = fleet
     ? `${total} ${noun} in the ${carrier} ${fleet} fleet`

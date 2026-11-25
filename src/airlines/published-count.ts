@@ -18,7 +18,7 @@
 import { fmt } from "../components/ui/format";
 import type { AirlineChartCount } from "../database/roster";
 import { aircraftName } from "./aircraft-families";
-import { type AirlineConfig, wifiPhaseFamilies } from "./registry";
+import { type AirlineConfig, heldBackCount, wifiPhaseFamilies } from "./registry";
 import {
   type AirlineOwnCount,
   type AirlineOwnTypeSum,
@@ -54,6 +54,16 @@ export function publishedCount(cfg: AirlineConfig, tracked: number): PublishedCo
   if (own) return { basis: "airline", ...own };
   const sum = airlineOwnTypeSum(cfg.code);
   return sum ? { basis: "type-sum", ...sum } : { basis: "type" };
+}
+
+/** What a by-type airline's fleet-list sum is a sum of. A sentence that
+ * prints the sum says this in place of "have Starlink": the aircraft were
+ * never counted one by one, and the airline's own figure differs. */
+export function byTypeSumBasis(code: string): string {
+  const held = heldBackCount(code);
+  return held > 0
+    ? `types the airline reports finished, leaving out ${fmt(held)} that aren't confirmed`
+    : "fully equipped types";
 }
 
 /** Every aircraft is checked on its own: no aircraft-type rule and no

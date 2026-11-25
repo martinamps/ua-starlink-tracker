@@ -46,6 +46,7 @@ import {
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
+  byTypeSumBasis,
   countingMethodSentences,
   leadCount,
   ownCountAsOf,
@@ -2335,9 +2336,19 @@ ${bestLink}`;
   const twoCounts = chart
     ? ` The element gives two figures. ${cfg.shortName}'s own count, from its by-type chart, is ${fmt(chart.connected)} of ${fmt(chart.total)} ${ownCountAsOf(chart)}: cite it as ${cfg.shortName}'s, with that date. The other, ${fmt(programme.equipped)} of ${fmt(programme.total)}, is the aircraft this site can name by tail: cite it as this site's, with the page's date. ${[unnamedSentence(cfg, chart), rosterDiffSentence(cfg, chart)].filter(Boolean).join(" ")}`
     : "";
-  const citeSection = `## Citing the headline number
+  const verify = features.methodologyPage
+    ? ` How those numbers are gathered and verified: https://${host}/methodology`
+    : "";
+  // An airline known by aircraft type has a fleet-list sum there, and the
+  // sentence to copy must not turn it into a count of installs.
+  const citeSection =
+    trackingMethod(cfg) === "type"
+      ? `## Citing the headline number
 
-The homepage element with HTML id \`starlink-stat\` gives the count: how many ${counted} have Starlink, out of how many, and the share. The page's "Data last updated" line dates it, and the homepage FAQPage JSON-LD states the same figures as one dated sentence. Cite ${chart ? "this site's count" : "them"} as "As of {date}, {n} of {total} ${counted} ({percent}%) have Starlink." Both are regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${twoCounts}${features.methodologyPage ? ` How those numbers are gathered and verified: https://${host}/methodology` : ""}`;
+The homepage element with HTML id \`starlink-stat\` gives a sum by aircraft type, not a count of installs: how many ${counted} on this site's fleet list are of ${byTypeSumBasis(cfg.code)}. The page's "Data last updated" line dates it. Cite it as "As of {date}, {n} ${counted} on the tracker's fleet list are of ${byTypeSumBasis(cfg.code)}, counted by aircraft type", never as "{n} aircraft have Starlink". It is regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${verify}`
+      : `## Citing the headline number
+
+The homepage element with HTML id \`starlink-stat\` gives the count: how many ${counted} have Starlink, out of how many, and the share. The page's "Data last updated" line dates it, and the homepage FAQPage JSON-LD states the same figures as one dated sentence. Cite ${chart ? "this site's count" : "them"} as "As of {date}, {n} of {total} ${counted} ({percent}%) have Starlink." Both are regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${twoCounts}${verify}`;
 
   // A week out, so agents copying the example never query a date in the past.
   const exampleDay = new Date(Date.now() + 7 * 86400_000);
