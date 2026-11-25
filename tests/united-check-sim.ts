@@ -35,6 +35,10 @@ export interface SimFleet {
   reopen(db: Database): void;
   /** Move every scheduled flight ahead of the clock, past the next refresh. */
   refreshFlights(db: Database, nowSec: number): void;
+  /** From now on the stand-in reads Starlink on this tail: it has been fitted. */
+  retrofit(tail: string): void;
+  /** Give a tail a scheduled flight, as the flight updater does once it is listed. */
+  scheduleFlight(db: Database, tail: string, nowSec: number): void;
 }
 
 /** Deterministic spread in [0, 1): seeds must not depend on Math.random. */
@@ -75,6 +79,7 @@ export function seedFleet(
   const equipped: string[] = [];
   const unequipped: string[] = [];
   const checks: SimCheck[] = [];
+  const fitted = new Set<string>();
 
   const addFleet = db.query(
     `INSERT INTO united_fleet (tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at,
@@ -154,12 +159,13 @@ export function seedFleet(
         }
       ).next_check_after;
       checks.push({ at, tail, kind, by, lateBy: at - due });
+      const starlink = kind === "equipped" || fitted.has(tail);
       const result: StarlinkCheckResult = {
-        hasStarlink: kind === "equipped",
+        hasStarlink: starlink,
         tailNumber: tail,
         shipNumber: null,
         aircraftType: "Boeing 737-900",
-        wifiProvider: kind === "equipped" ? "Starlink" : "Viasat",
+        wifiProvider: starlink ? "Starlink" : "Viasat",
         flightNumber,
         date,
         origin,
@@ -204,6 +210,17 @@ export function seedFleet(
       handle
         .query("UPDATE upcoming_flights SET departure_time = ?, arrival_time = ?, last_updated = ?")
         .run(nowSec + 7 * HOUR, nowSec + 12 * HOUR, nowSec);
+    },
+    retrofit(tail) {
+      fitted.add(tail);
+    },
+    scheduleFlight(handle, tail, nowSec) {
+      handle
+        .query(
+          `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
+           VALUES (?, ?, 'KSFO', 'KEWR', ?, ?, ?, 'UA')`
+        )
+        .run(tail, `UA${flightOf.get(tail)}`, nowSec + 7 * HOUR, nowSec + 12 * HOUR, nowSec);
     },
   };
 }

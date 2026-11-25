@@ -732,9 +732,11 @@ export const COUNTERS = {
   FLEET_SHEET_DISAGREEMENT: "fleet.sheet_disagreement",
 
   // A discovery check was skipped: no_flights (couldn't run the United.com
-  // scrape) or verifier_fresh (a settled-Starlink tail the verifier confirmed
-  // inside its own re-check window, so discovery put its turn off unspent)
-  // tags: fleet, reason (no_flights|verifier_fresh), airline
+  // scrape), verifier_fresh (a settled-Starlink tail the verifier confirmed
+  // inside its own re-check window, so discovery put its turn off unspent) or
+  // just_read (a tail still being settled that either job read within the
+  // last half day; a second reading that soon is not an independent one)
+  // tags: fleet, reason (no_flights|verifier_fresh|just_read), airline
   FLEET_CHECK_SKIPPED: "fleet.check_skipped",
 
   // A job tick that had an aircraft due and sat out because the united.com
@@ -931,6 +933,16 @@ export const DISTRIBUTIONS = {
   // Vendor request latency in milliseconds
   // tags: vendor, type, status
   VENDOR_DURATION_MS: "vendor.duration_ms",
+
+  // Hours between our last non-Starlink reading of a tail and the moment it
+  // became known as Starlink. One point per newly found tail that had such a
+  // reading; new deliveries have none and emit nothing.
+  // tags: first_source (own = a discovery check got there first | sheet = the
+  //   community sheet listed it first), trigger (scheduled | ground_gap for an
+  //   own find, sheet otherwise), fleet, airline
+  // The count by first_source is who was first; p50/p90 is how late we were;
+  // trigger says whether the ground-gap allowance is finding anything.
+  DISCOVERY_LAG_HOURS: "discovery.lag_hours",
 
   // MCP tool latency in milliseconds — tags: tool, airline, outcome, client_class
   MCP_TOOL_DURATION_MS: "mcp.tool_duration_ms",

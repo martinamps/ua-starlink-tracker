@@ -28,7 +28,10 @@ import {
   isSettledStarlink,
   lastCheckConfirmedStarlink,
   needsVerification,
+  postponeDiscoveryCheck,
+  recordDiscoveryLag,
   setMeta,
+  settleReadNotBefore,
   updateFleetVerificationResult,
   updateFlights,
 } from "../database/database";
@@ -206,6 +209,15 @@ function verifierHasItCovered(db: Database, plane: FleetAircraft): boolean {
     lastCheckConfirmedStarlink(db, plane.tail_number, UNITED_SOURCE)
   );
 }
+
+/**
+ * A reading of a tail still being settled, by either job, this recent stands
+ * in for discovery's own: its next comes on the unsettled pace, not on top of
+ * it (settleReadNotBefore). Half a day is under the shortest gap either job
+ * plans between two readings of one tail (16 hours), so no planned reading is
+ * taken for a duplicate.
+ */
+const JUST_READ_SECS = 12 * 3600;
 
 /**
  * Verify a single plane's Starlink status
@@ -419,6 +431,14 @@ export async function verifyPlane(
         // First time consensus flips to Starlink → add to starlink_planes and
         // seed its flight cache. Re-checks of already-confirmed planes skip this.
         if (statusChanged && starlinkStatus === "confirmed") {
+          // Before the insert below: a tail the sheet already lists was the
+          // sheet's find, and its lag was emitted when the sheet listed it.
+          const sheetListed = db
+            .query(
+              "SELECT 1 FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA' AND sheet_gid != 'discovery'"
+            )
+            .get(plane.tail_number);
+          if (!sheetListed) recordDiscoveryLag(db, plane.tail_number, "UA", "own", plane.fleet);
           addDiscoveredStarlinkPlane(
             db,
             plane.tail_number,
@@ -492,7 +512,7 @@ export async function runDiscoveryBatch(
   notStarlink: number;
   errors: number;
   noFlights: number;
-  /** Settled tails whose turn was put off because the verifier had just confirmed them. */
+  /** Turns put off unspent: a settled tail the verifier had just confirmed, or a tail read within the last half day. */
   deferred: number;
   /** The class the check budget refused, when this batch checked nothing because of it. */
   held: "settle" | "reconfirm" | null;
@@ -544,6 +564,24 @@ export async function runDiscoveryBatch(
       debug(`${plane.tail_number}: verifier confirmed it within its window, re-check put off`);
       continue;
     }
+    // Like the deferral above, this uses the plane's place in the batch.
+    const notBefore =
+      budgetClass === "settle"
+        ? settleReadNotBefore(db, plane, UNITED_SOURCE, JUST_READ_SECS)
+        : null;
+    if (notBefore !== null) {
+      postponeDiscoveryCheck(db, plane.tail_number, notBefore);
+      stats.deferred++;
+      metrics.increment(COUNTERS.FLEET_CHECK_SKIPPED, {
+        reason: "just_read",
+        fleet: normalizeFleet(plane.fleet),
+        airline: normalizeAirlineTag("UA"),
+      });
+      debug(
+        `${plane.tail_number}: read within the last half day, next reading put on the unsettled pace`
+      );
+      continue;
+    }
     if (!unitedBudgetState(db).open[budgetClass]) {
       held ??= budgetClass;
       continue;
@@ -556,7 +594,7 @@ export async function runDiscoveryBatch(
   // all this batch found and the budget is closed to them, the first tail a
   // check could still settle goes in their place.
   if (held === "reconfirm" && stats.checked === 0 && stats.deferred === 0) {
-    const [unsettled] = getNextPlanesToVerify(db, 1, "UA", { unsettledOnly: true });
+    const [unsettled] = getNextPlanesToVerify(db, 1, "UA", undefined, { unsettledOnly: true });
     if (unsettled && unitedBudgetState(db).open.settle) {
       await verify(unsettled);
       held = null;

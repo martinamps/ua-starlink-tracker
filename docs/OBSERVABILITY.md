@@ -182,6 +182,50 @@ push the table past the budget, group the new URLs behind a prefix family
 rather than raising the number. Pure redirects (the www aliases, `/extension`
 → `/chrome`) are answered in `dispatch` before the table and take no tag.
 
+### Discovery lag
+
+`starlink.discovery.lag_hours` (distribution; tags `first_source:own|sheet`,
+`trigger:scheduled|ground_gap|sheet`, `fleet`, `airline`) is the number the "fastest to find new
+tails" claim is judged by. One point per tail that becomes known as Starlink after our own checks
+had read it as something else: the hours since that last non-Starlink reading.
+
+- `first_source:own`: a fleet-discovery check confirmed the tail before the community sheet listed it.
+  `trigger` says which check: `scheduled` (the tail's regular re-check) or `ground_gap` (a check
+  pulled forward when the tail flew again after 36 hours unseen).
+- `first_source:sheet`: the sheet listed a tail our checks still held as non-Starlink.
+
+Read it three ways: the **count by `first_source`** is who got there first, **p50/p90 of the value**
+is how stale our last look was when the tail turned up, and the **count by `trigger`** is whether the
+ground-gap allowance finds anything. A tail never read as non-Starlink (a new delivery) emits
+nothing, so the count is retrofits only.
+
+The schedule behind it lives in `src/database/discovery-cadence.ts`. Negative tails are re-checked
+on a per-family interval (3 to 28 days, by installs found per negative tail over 30 days) that
+spends 90% of what the old flat 14 days did. The other 10% is a daily allowance of ground-gap
+checks, for negative tails of a family being retrofitted. The two never add up to more than the old
+budget, so `starlink.vendor.request{vendor:united}` should not rise because of them.
+
+`trigger:sheet` has a second use since the sheet sync began moving such a tail to the front of the
+discovery queue (once, on its first listing; a look already due within 36 hours is left alone; at
+most 10 tails a read). That changes how soon the tail is read, not this number: the point is still
+emitted at the listing, from our last non-Starlink reading.
+
+### The united.com check ceiling
+
+Both jobs that check united.com (the verifier and fleet discovery) claim a slot from one budget
+before each check: 364 in any rolling 24 hours (`src/scripts/united-check-budget.ts`). Everything
+the schedule above asks for, the ground-gap pulls and the sheet-listing move included, goes through
+that claim.
+
+| Metric | Tags | Reading it |
+|--------|------|------------|
+| `starlink.united_check.budget_used` (gauge) | `airline` | Checks started in the last 24 hours, sampled on every tick of either job. Never above the limit |
+| `starlink.united_check.budget_limit` (gauge) | `airline` | The ceiling itself, 364, so a dashboard can draw the line |
+| `starlink.united_check.held` (counter) | `job:verifier\|discovery`, `class:settle\|reconfirm`, `airline` | One per tick a job had an aircraft due and sat out. `class:reconfirm` (a settled Starlink tail looked at again) with `settle` at zero is the ceiling working. `class:settle` (an unknown, unequipped or disputed tail) above zero means even new aircraft are waiting: the one to alarm on |
+| `starlink.fleet.check_skipped` (counter) | `reason:no_flights\|verifier_fresh\|just_read`, `fleet`, `airline` | A discovery turn that made no check. `verifier_fresh`: a settled tail the verifier confirmed inside its own window, put off a week. `just_read`: a tail still being settled that either job read in the last 12 hours; its next reading waits the usual 36 hours from that one, so two jobs cannot read one page twice in a minute and count it as two |
+
+`starlink.vendor.request{vendor:united}` is still the count of checks and means what it meant.
+
 ### Gauges
 
 | Metric | Description |
