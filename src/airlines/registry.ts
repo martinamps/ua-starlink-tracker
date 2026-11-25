@@ -580,7 +580,9 @@ const AIRLINE_DEFS = {
       keywords:
         "alaska airlines starlink, alaska starlink tracker, alaska wifi, 737 MAX starlink, E175 starlink, check alaska flight starlink",
       accentColor: "#01426a",
-      accentText: "#4b99c9",
+      // 4.5:1 on its own 20% tint over a panel too (a primary button's
+      // fill), where #4b99c9 gave 4.2:1.
+      accentText: "#55a1cf",
       accentColorDim: "#2b6a8f",
       faviconAccent: "#00b2e3", // Alaska secondary brand blue — primary #01426a is too dark to glow
       socialImagePath: "/static/social-image-as.webp",

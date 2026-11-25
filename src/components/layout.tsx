@@ -337,6 +337,11 @@ export function Td({
   );
 }
 
+/** Footer links wrap onto several rows on a phone; the padding keeps each a
+ * 24px-tall target (WCAG 2.5.8) where rows of 16px text would sit 4px apart.
+ * From lg up each group is one row, spaced by its own margin. */
+const FOOTER_LINK = "inline-block py-1 lg:py-0 text-secondary hover:text-primary transition-colors";
+
 /**
  * One-line cross-domain footer links, rendered on every site. Registry-derived
  * (live sites only) and plain followed links — the sister domains are the same
@@ -364,7 +369,7 @@ function CrossSiteLinks({ site }: { site: SiteConfig }) {
       {links.map((l, i) => (
         <React.Fragment key={l.href}>
           {i > 0 && <span className="mx-1.5 text-subtle">·</span>}
-          <a href={l.href} className="text-secondary hover:text-primary transition-colors">
+          <a href={l.href} className={FOOTER_LINK}>
             {l.label}
           </a>
         </React.Fragment>
@@ -388,7 +393,7 @@ function PageNavLinks({ links }: { links?: Link[] }) {
       {links.map((l, i) => (
         <React.Fragment key={l.href}>
           {i > 0 && <span className="text-subtle">·</span>}
-          <a href={l.href} className="text-secondary hover:text-primary transition-colors">
+          <a href={l.href} className={FOOTER_LINK}>
             {l.label}
           </a>
         </React.Fragment>
@@ -401,7 +406,7 @@ function PageNavLinks({ links }: { links?: Link[] }) {
  * rather than through a cross-domain canonical. That link is a deliberate
  * cross-tenant mention, marked like CrossSiteLinks. */
 function ChromeExtensionLink({ site }: { site: SiteConfig }) {
-  const className = "text-secondary hover:text-primary transition-colors";
+  const className = FOOTER_LINK;
   if (site.key === SITES.united.key) {
     return (
       <a href="/chrome" className={className}>
@@ -426,7 +431,7 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
           href="https://x.com/martinamps"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center text-secondary hover:text-primary transition-colors"
+          className="inline-flex items-center py-1 lg:py-0 text-secondary hover:text-primary transition-colors"
         >
           Built with
           <svg
@@ -448,7 +453,7 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
           href="https://github.com/martinamps/ua-starlink-tracker"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-secondary hover:text-primary transition-colors"
+          className={FOOTER_LINK}
         >
           GitHub
         </a>
@@ -461,10 +466,7 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
             <span className="text-subtle" aria-hidden="true">
               ·
             </span>
-            <a
-              href="/is-starlink-free"
-              className="text-secondary hover:text-primary transition-colors"
-            >
+            <a href="/is-starlink-free" className={FOOTER_LINK}>
               Is it free?
             </a>
           </>
@@ -497,9 +499,21 @@ export function PageShell({
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
+      {/* First in the tab order, shown only on focus: the site bar's links
+          repeat on every page, and /fleet puts hundreds more before its end. */}
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-2 focus:z-50 focus:rounded focus:border focus:border-accent focus:bg-surface-elevated focus:px-3 focus:py-2 focus:text-sm focus:text-primary"
+      >
+        Skip to content
+      </a>
       {before}
       <SiteBar site={site} currentPath={currentPath} />
-      {children}
+      {/* A column like its parent, so each page's header and sections lay out
+          exactly as they did as the shell's own children. */}
+      <main id="main" tabIndex={-1} className="flex w-full flex-1 flex-col outline-none">
+        {children}
+      </main>
       <SiteFooter site={site} pageLinks={pageLinks} />
     </div>
   );

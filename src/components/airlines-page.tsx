@@ -357,7 +357,7 @@ export function AirlinesIndexPage({
                     {o.trackerHost && (
                       <a
                         href={`https://${o.trackerHost}/`}
-                        className="block text-xs text-accent hover:underline"
+                        className="mt-1 block py-1 text-xs text-accent hover:underline"
                       >
                         {o.cfg.shortName} Starlink Tracker →
                       </a>

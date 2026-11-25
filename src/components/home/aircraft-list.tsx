@@ -229,8 +229,7 @@ export function AircraftList({
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
-              role="img"
-              aria-label="Search icon"
+              aria-hidden="true"
             >
               <path
                 strokeLinecap="round"
@@ -245,13 +244,7 @@ export function AircraftList({
               className="absolute right-2 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted hover:text-primary transition-colors hidden"
               aria-label="Clear search"
             >
-              <svg
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                role="img"
-                aria-label="Clear"
-              >
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -274,6 +267,7 @@ export function AircraftList({
               type="button"
               id="filter-all"
               className={`${FILTER_BUTTON} ${FILTER_ACTIVE}`}
+              aria-pressed="true"
               data-filter="all"
               data-count={shown.length}
             >
@@ -286,6 +280,7 @@ export function AircraftList({
                   type="button"
                   id={`filter-${card.key}`}
                   className={`${FILTER_BUTTON} ${FILTER_INACTIVE}`}
+                  aria-pressed="false"
                   data-filter={card.key}
                 >
                   {card.label.toUpperCase()}{" "}

@@ -121,6 +121,29 @@
       .text-muted { color: var(--color-text-muted); }
       .text-accent { color: var(--color-accent); }
 
+      /* Keyboard focus on a field. Unlayered on purpose: every field asks for
+         focus:outline-none with focus:border-accent, and .border-subtle above
+         (unlayered) beats that layered border, so a focused field showed no
+         mark at all. One rule here mends each of them. */
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid var(--color-accent);
+        outline-offset: 1px;
+      }
+
+      /* A link inside a sentence: the accent and the grey prose around it are
+         about equally bright, so colour alone can't mark it (WCAG 1.4.1). */
+      :where(p, li, dd, figcaption) a.text-accent {
+        text-decoration-line: underline;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+        text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+      }
+      :where(p, li, dd, figcaption) a.text-accent:hover {
+        text-decoration-color: currentColor;
+      }
+
       /* Tooltip — CSS-only, works on hover and tap-to-focus. Trigger gets a
          dotted underline as the affordance; content comes from data-tip. */
       .tip {
@@ -222,6 +245,20 @@
       }
       .animate-pulse-glow {
         animation: pulse-glow 2s ease-in-out infinite;
+      }
+
+      /* For readers who ask their device for less motion: the pulsing dots,
+         the planner's travelling signal and its cards' slide-in all stop. */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-delay: 0s !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
       }
     </style>
     
