@@ -2459,13 +2459,26 @@ const FEED_LIMIT = 50;
 const LOG_PAGE_LIMIT = 250;
 
 // DateFound is a calendar date, not a timestamp — noon UTC keeps the entry on
-// the same calendar day in every timezone a feed reader renders it in. A row
-// whose DateFound isn't a date at all would otherwise be interpolated raw into
-// <updated>, so anything unparseable degrades to the epoch rather than breaking
-// the document for every subscriber.
-const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
-const installIso = (dateFound: string): string =>
-  ISO_DAY.test(dateFound) ? `${dateFound.slice(0, 10)}T12:00:00Z` : "1970-01-01T00:00:00Z";
+// the same calendar day in every timezone a feed reader renders it in. A
+// DateFound that names no real day ("unknown", "2026-13-45") has no honest
+// <updated>, and Atom requires one: the epoch showed in readers as a
+// 55-year-old item, and a raw "2026-13-45T12:00:00Z" is not a timestamp at
+// all. Same rule as getDailyInstalls' SQL date() check.
+const installIso = (dateFound: string | null): string | null => {
+  const day = (dateFound ?? "").slice(0, 10);
+  return isRealIsoDate(day) ? `${day}T12:00:00Z` : null;
+};
+
+/** The rows the feed can date. The rest stay on /newly-equipped and in every
+ * count; they are only left out of the syndicated document. */
+function datedForFeed<T extends { DateFound: string | null }>(
+  rows: T[]
+): Array<T & { DateFound: string; updated: string }> {
+  return rows.flatMap((r) => {
+    const updated = installIso(r.DateFound);
+    return updated && r.DateFound ? [{ ...r, DateFound: r.DateFound, updated }] : [];
+  });
+}
 
 /**
  * Per-airline cap for the hub's install log, so the cross-airline surface is
@@ -2505,22 +2518,21 @@ const feedXml: Handler = (ctx) => {
   // never moves. Same gate as the page it syndicates.
   if (!hasInstallLog(ctx)) return notFound(site);
   const host = site.canonicalHost;
-  const installs = reader.getRecentInstalls(FEED_LIMIT, recentInstallCap(site.scope, FEED_LIMIT));
-  const reported = reportedInstallsFor(ctx);
+  const installs = datedForFeed(
+    reader.getRecentInstalls(FEED_LIMIT, recentInstallCap(site.scope, FEED_LIMIT))
+  );
+  const reported = datedForFeed(reportedInstallsFor(ctx));
+  // Same broken-subscription rule once the undatable rows are gone.
+  if (installs.length + reported.length === 0) return notFound(site);
   const firstFlights = firstFlightsFor(reader, installs);
   const airlineNames = new Map(publicAirlines().map((a) => [a.code, a.name]));
 
-  // Honest <updated>: newest entry date, else the data's own stamp — never
-  // the request clock (same discipline as the sitemap's lastmod).
-  const rawStamp = Date.parse(reader.getLastUpdatedRaw() ?? "");
-  const newest = [installs[0], reported[0]]
-    .filter((r) => r !== undefined)
-    .map((r) => installIso(r.DateFound))
+  // Honest <updated>: the newest entry's date, never the request clock (same
+  // discipline as the sitemap's lastmod). Both lists arrive newest first.
+  const updated = [installs[0], reported[0]]
+    .flatMap((r) => (r ? [r.updated] : []))
     .sort()
-    .at(-1);
-  const updated =
-    newest ??
-    (Number.isFinite(rawStamp) ? new Date(rawStamp).toISOString() : "1970-01-01T00:00:00Z");
+    .at(-1) as string;
 
   const confirmedEntries = installs.map((i) => {
     const name = airlineNames.get(i.airline) ?? i.airline;
@@ -2536,12 +2548,12 @@ const feedXml: Handler = (ctx) => {
     // The page says so in its footer; a syndicated entry travels into press
     // and aggregators without that footer, so it carries its own caveat.
     return {
-      day: installIso(i.DateFound),
+      day: i.updated,
       xml: `  <entry>
     <title>${escapeXml(`${name} ${i.TailNumber} (${i.Aircraft}) now has Starlink`)}</title>
     <id>${escapeXml(url)}</id>
     <link href="${escapeXml(url)}"/>
-    <updated>${installIso(i.DateFound)}</updated>
+    <updated>${i.updated}</updated>
     <category term="confirmed"/>
     <summary>${escapeXml(
       `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) was first observed with Starlink on ${i.DateFound.slice(0, 10)} — the date this tracker found it equipped, not necessarily the install date.${firstFlightLine}`
@@ -2561,12 +2573,12 @@ const feedXml: Handler = (ctx) => {
     const operator = operatorLabel(i.OperatedBy, name);
     const operated = operator ? `, operated by ${operator}` : "";
     return {
-      day: installIso(i.DateFound),
+      day: i.updated,
       xml: `  <entry>
     <title>${escapeXml(`${name} ${i.TailNumber} (${i.Aircraft}) reported with Starlink, not yet confirmed`)}</title>
     <id>${escapeXml(`tag:${host},2026:reported:${i.TailNumber}`)}</id>
     <link href="${escapeXml(url)}"/>
-    <updated>${installIso(i.DateFound)}</updated>
+    <updated>${i.updated}</updated>
     <category term="reported"/>
     <summary>${escapeXml(
       `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) is listed with Starlink on the community-maintained fleet sheet, where this tracker first saw it on ${i.DateFound.slice(0, 10)} — the date this tracker first read the listing, not necessarily the day it was added. ${capitalize(reportedClause(i, "this tracker's"))}, so the aircraft is not confirmed and is not in the tracker's Starlink count.`
@@ -5596,7 +5608,18 @@ export function createApp(
   // a raw Bun.serve 500 carries no security headers and no CORS, which the
   // extension sees as an opaque cross-origin failure.
   async function dispatch(req: Request): Promise<Response> {
-    const url = new URL(req.url);
+    // Bun builds req.url from the Host header and hands over a bare path when
+    // the Host is not a host ("a/b", "x.com:abc", empty), so this parse is the
+    // one place a stranger's Host can throw. Outside the try it left as a raw
+    // 500. A Host that parses but names no site of ours stays a 421 below.
+    const url = URL.canParse(req.url) ? new URL(req.url) : null;
+    if (!url) {
+      metrics.increment(COUNTERS.HTTP_BAD_HOST, { method: req.method, airline: "unknown" });
+      return finalizeResponse(
+        text("Bad Request", "text/plain", { status: 400, cache: CACHE.noStore }),
+        true
+      );
+    }
     try {
       // Canonical-host 301s run before anything is served: parked domains
       // (HOST_REDIRECTS) and www aliases must redirect, never serve content.

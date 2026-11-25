@@ -9,6 +9,7 @@ import { BASE_RESPONSE_HEADERS, MCP_CORS_HEADERS, SECURITY_HEADERS } from "../ut
 export { CORS_ANY_ORIGIN } from "../utils/constants";
 
 export const CACHE = {
+  noStore: "no-store",
   fiveMinutes: "public, max-age=300",
   fifteenMinutes: "public, max-age=900",
   hour: "public, max-age=3600",

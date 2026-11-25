@@ -678,6 +678,11 @@ export const COUNTERS = {
   //   visit_source (classifyVisitSource)
   HTTP_REQUEST: "http.request",
 
+  // A Host header that is not a host at all, answered 400 before any tenant
+  // or route exists to tag — tags: method, airline (always "unknown").
+  // A well-formed Host we don't serve is a 421 and is not counted here.
+  HTTP_BAD_HOST: "http.bad_host",
+
   // A new SEC filing surfaced for anchor review — tags: company, form, airline
   SEC_FILING_SEEN: "sec.filing_seen",
 
