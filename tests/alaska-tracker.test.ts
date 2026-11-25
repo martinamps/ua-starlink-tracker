@@ -15,7 +15,10 @@ import {
 import { AIRLINES } from "../src/airlines/registry";
 import { InstallPipelineSection } from "../src/components/fleet/pipeline";
 import { RolloutPanel } from "../src/components/home/rollout";
-import { programmeHeadlineWithChart } from "../src/database/airline-count";
+import {
+  programmeHeadlineWithChart,
+  validateChartAgainstRoster,
+} from "../src/database/airline-count";
 import {
   CHART_MAX_HEADLINE_AGE_DAYS,
   CHART_MAX_STORE_AGE_DAYS,
@@ -28,6 +31,7 @@ import {
 } from "../src/database/chart-bounds";
 import { getFleetProgress } from "../src/database/database";
 import { programmeHeadline, programmeRoster, tenantProgrammeRoster } from "../src/database/roster";
+import { COUNTERS, metrics } from "../src/observability";
 import {
   parseAlaskaTracker,
   parseNewsroomDate,
@@ -150,29 +154,133 @@ describe("trackerProgressRows", () => {
 });
 
 describe("runAlaskaTrackerSync", () => {
-  test("stores AS rows and settles a type Alaska calls complete", async () => {
+  // A chart and a fleet list that agree, so the chart passes its bounds.
+  const SOUND: Array<[string, string, string]> = [
+    ["Embraer 175", "3", "Update complete"],
+    ["Boeing 737-8 MAX", "1", "3"],
+    ["Boeing 737-9 MAX", "2", "3"],
+    ["Boeing 787 Dreamliner", "-", "2"],
+  ];
+  function soundRoster(): Database {
     const db = makeSyntheticDb();
     seedRoster(db, "Embraer E175LR", 3, "6");
-    seedRoster(db, "Boeing 737 MAX 8", 4, "9");
-    const result = await runAlaskaTrackerSync(db, async () => trackerHtml(LIVE_ROWS));
+    seedRoster(db, "Boeing 737 MAX 8", 4, "8");
+    seedRoster(db, "Boeing 737 MAX 9", 5, "9");
+    seedRoster(db, "Boeing 787-9 Dreamliner", 2, "5");
+    return db;
+  }
+  const swap = (label: string, connected: string, pending: string) =>
+    SOUND.map((r): [string, string, string] =>
+      r[0].includes(label) ? [r[0], connected, pending] : r
+    );
+  const settledTails = (db: Database) =>
+    (
+      db
+        .query(
+          "SELECT (SELECT COUNT(*) FROM starlink_planes WHERE airline = 'AS') + (SELECT COUNT(*) FROM united_fleet WHERE airline = 'AS' AND starlink_status = 'confirmed') AS n"
+        )
+        .get() as { n: number }
+    ).n;
+  async function countingRefusals<T>(run: () => Promise<T>) {
+    const stages: string[] = [];
+    const original = metrics.increment;
+    metrics.increment = (name, tags) => {
+      if (name === COUNTERS.CHART_REJECTED) {
+        expect(tags?.airline).toBe("alaska");
+        stages.push(String(tags?.stage));
+      }
+    };
+    try {
+      return { result: await run(), stages };
+    } finally {
+      metrics.increment = original;
+    }
+  }
+
+  test("stores AS rows and settles a type Alaska calls complete", async () => {
+    const db = soundRoster();
+    const { result, stages } = await countingRefusals(() =>
+      runAlaskaTrackerSync(db, async () => trackerHtml(SOUND))
+    );
     expect(result.outcome).toBe("success");
+    expect(result.withheld).toBe(0);
+    expect(stages).toEqual([]);
     const stored = getFleetProgress(db, "AS");
     expect(stored.length).toBe(result.rows);
     expect(stored.every((r) => r.airline === "AS" && r.fetched_at > 0)).toBe(true);
-    // E175 is complete (3 roster ≤ 93 connected): every tail listed.
+    // E175 is complete (3 roster ≤ 3 connected): every tail listed.
+    expect(result.settled).toBe(3);
     expect(listedCount(db, "Embraer E175LR")).toBe(3);
     // 737-8 MAX still has pending installs: nothing named by type.
     expect(listedCount(db, "Boeing 737 MAX 8")).toBe(0);
   });
 
   test("refuses to settle when the roster holds more of the type than Alaska counts", async () => {
-    const db = makeSyntheticDb();
-    seedRoster(db, "Boeing 787-9 Dreamliner", 6, "7");
-    const rows = LIVE_ROWS.map((r): [string, string, string] =>
-      r[0].includes("787") ? [r[0], "5", "Update complete"] : r
+    const db = soundRoster();
+    seedRoster(db, "Boeing 787-9 Dreamliner", 1, "4");
+    const result = await runAlaskaTrackerSync(db, async () =>
+      trackerHtml(swap("787", "2", "Update complete"))
     );
-    await runAlaskaTrackerSync(db, async () => trackerHtml(rows));
+    // The chart itself is sound, so the E175s settle; only the 787s hold back.
+    expect(result.withheld).toBe(0);
+    expect(listedCount(db, "Embraer E175LR")).toBe(3);
     expect(listedCount(db, "Boeing 787-9 Dreamliner")).toBe(0);
+  });
+
+  const REFUSED: Array<[string, Array<[string, string, string]>, string | null | undefined]> = [
+    // The look's repro: a slipped digit on one row, a false "complete" on another.
+    [
+      "one type's size far from the fleet list",
+      swap("175", "930", "Update complete").map((r): [string, string, string] =>
+        r[0].includes("9 MAX") ? [r[0], "5", "Update complete"] : r
+      ),
+      undefined,
+    ],
+    ["rows missing for types we list", SOUND.filter((r) => !r[0].includes("MAX")), undefined],
+    ["no chart date", SOUND, null],
+    [
+      "a chart date past the headline's age bound",
+      SOUND,
+      `This chart was last updated on ${newsroom(day(-120))}.`,
+    ],
+  ];
+  for (const [name, rows, dateLine] of REFUSED) {
+    test(`a chart refused by its bounds settles no tail: ${name}`, async () => {
+      const db = soundRoster();
+      const { result, stages } = await countingRefusals(() =>
+        runAlaskaTrackerSync(db, async () => trackerHtml(rows, dateLine))
+      );
+      expect(result.outcome).toBe("success");
+      expect(validateChartAgainstRoster(db, "AS")).not.toBeNull();
+      expect(result.settled).toBe(0);
+      expect(result.withheld).toBeGreaterThan(0);
+      expect(settledTails(db)).toBe(0);
+      // Counted once as a refused chart and once as a withheld settle.
+      expect(stages).toEqual(["sync", "settle"]);
+    });
+  }
+
+  test("a refused chart with no complete type counts no withheld settle", async () => {
+    const db = soundRoster();
+    const { result, stages } = await countingRefusals(() =>
+      runAlaskaTrackerSync(db, async () => trackerHtml(swap("175", "930", "5")))
+    );
+    expect(result.withheld).toBe(0);
+    expect(stages).toEqual(["sync"]);
+  });
+
+  test("a refused chart leaves an earlier sound chart's settle as it was", async () => {
+    const db = soundRoster();
+    await runAlaskaTrackerSync(db, async () => trackerHtml(SOUND));
+    const before = settledTails(db);
+    await runAlaskaTrackerSync(db, async () => trackerHtml(swap("175", "930", "Update complete")));
+    expect(settledTails(db)).toBe(before);
+    // The next sound chart settles a newly complete type again.
+    const next = await runAlaskaTrackerSync(db, async () =>
+      trackerHtml(swap("9 MAX", "5", "Update complete"))
+    );
+    expect(next.settled).toBe(5);
+    expect(listedCount(db, "Boeing 737 MAX 9")).toBe(5);
   });
 
   test("a failed fetch keeps the last stored chart", async () => {

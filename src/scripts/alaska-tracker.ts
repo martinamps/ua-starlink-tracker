@@ -12,7 +12,8 @@
  *    freshness gauge and the fleet_progress.count gauges;
  *  - for a type Alaska marks "Update complete", a type-rule listing for every
  *    roster tail of that type in its operator's roster
- *    (settleOfficiallyCompleteType's guard applies).
+ *    (settleOfficiallyCompleteType's guard applies), and only from a chart
+ *    that passes chart-bounds.ts: a refused chart settles no tail.
  */
 
 import type { Database } from "bun:sqlite";
@@ -185,6 +186,9 @@ export interface AlaskaTrackerResult {
   outcome: "success" | "error";
   rows: number;
   settled: number;
+  /** Types the chart called complete that were not settled, because the chart
+   * failed its bounds. */
+  withheld: number;
 }
 
 async function fetchTrackerHtml(): Promise<string> {
@@ -218,7 +222,7 @@ export async function runAlaskaTrackerSync(
           status: "error",
         });
         span.setTag("result", "error");
-        return { outcome: "error", rows: 0, settled: 0 };
+        return { outcome: "error", rows: 0, settled: 0, withheld: 0 };
       }
 
       const unknown = parsed.rows.filter((r) => !FAMILY_CODE[r.family]);
@@ -233,7 +237,7 @@ export async function runAlaskaTrackerSync(
           airline: airlineTag,
           status: "error",
         });
-        return { outcome: "error", rows: 0, settled: 0 };
+        return { outcome: "error", rows: 0, settled: 0, withheld: 0 };
       }
       replaceFleetProgress(db, "AS", rows, { wholeAirline: true });
       emitFleetProgressCounts(
@@ -246,16 +250,34 @@ export async function runAlaskaTrackerSync(
       const offList = validateChartAgainstRoster(db, "AS", today);
       if (offList) reportChartRejected("AS", "sync", offList);
 
+      const complete = parsed.rows.filter(
+        (r) => FAMILY_CODE[r.family] && r.pending === 0 && r.connected > 0
+      );
+      // A settle names every tail of a type as equipped, and nothing takes
+      // that back when a later chart reads otherwise. The bounds judge the
+      // chart as one reading: a garbled row elsewhere means the parse or the
+      // page slipped, and "Update complete" came through the same slip. So a
+      // refused chart settles nothing, the sound-looking rows included.
       let settled = 0;
-      for (const r of parsed.rows) {
-        const mapped = FAMILY_CODE[r.family];
-        if (!mapped || r.pending > 0 || r.connected === 0) continue;
-        const res = settleOfficiallyCompleteType(db, mapped.airline, r.family, r.connected);
-        settled += res.settled;
-        if (res.skipped === "roster_exceeds_official") {
-          warn(
-            `alaska-tracker: ${r.label} marked complete at ${r.connected}, but the roster has ${res.roster}; not settling`
-          );
+      let withheld = 0;
+      if (offList) {
+        withheld = complete.length;
+        if (withheld > 0) {
+          reportChartRejected("AS", "settle", {
+            reason: offList.reason,
+            detail: `${offList.detail}; not settling ${complete.map((r) => r.label).join(", ")}`,
+          });
+        }
+      } else {
+        for (const r of complete) {
+          const mapped = FAMILY_CODE[r.family];
+          const res = settleOfficiallyCompleteType(db, mapped.airline, r.family, r.connected);
+          settled += res.settled;
+          if (res.skipped === "roster_exceeds_official") {
+            warn(
+              `alaska-tracker: ${r.label} marked complete at ${r.connected}, but the roster has ${res.roster}; not settling`
+            );
+          }
         }
       }
 
@@ -284,9 +306,9 @@ export async function runAlaskaTrackerSync(
         .map((r) => `${FAMILY_CODE[r.family].code} ${r.connected}/${r.connected + r.pending}`)
         .join(", ");
       info(
-        `alaska-tracker sync: chart ${parsed.asOf ?? "undated"}; ${summary}; ${settled} tails settled`
+        `alaska-tracker sync: chart ${parsed.asOf ?? "undated"}; ${summary}; ${settled} tails settled${withheld > 0 ? `; ${withheld} complete types withheld, chart refused` : ""}`
       );
-      return { outcome: "success", rows: rows.length, settled };
+      return { outcome: "success", rows: rows.length, settled, withheld };
     },
     { "job.type": "background" }
   );
