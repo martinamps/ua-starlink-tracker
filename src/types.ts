@@ -228,6 +228,8 @@ export interface FleetPageData {
   movements: FleetMovement[];
   /** Sheet-listed tails no count includes, with the reason (United's page only). */
   sheetReported: ReportedInstall[];
+  /** The sheet's Starlink hangar notes for tails that are not equipped. */
+  sheetFitting: SheetModNote[];
 }
 
 /** One per-type row of the install pipeline (United Fleet Site progress workbooks). */
@@ -257,6 +259,25 @@ export interface FleetProgressTailRow {
   mod_location: string | null;
   sheet_updated: string | null;
   fetched_at: number;
+}
+
+/**
+ * A Starlink hangar note from the mainline fleet sheet, parsed strictly
+ * (utils/sheet-mod-note.ts). Dates are YYYY-MM-DD and the sheet's own.
+ */
+export interface SheetModNote {
+  airline: string;
+  tail: string;
+  /** Three-letter station code as the sheet types it. */
+  station: string;
+  started: string;
+  /** The sheet's estimated return to service; null when it gives none. */
+  due_back: string | null;
+  /** The sheet itself doubts this is a Starlink fit ("SL?", "STC"). */
+  unsure: boolean;
+  /** The last day the note speaks for the tail. */
+  holds_until: string;
+  read_at: number;
 }
 
 export type PipelineEventKind = "entered_mod" | "to_verification" | "queued";

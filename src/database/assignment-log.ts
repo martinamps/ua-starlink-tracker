@@ -20,7 +20,7 @@ import {
 import { AIRLINES, type AirlineConfig } from "../airlines/registry";
 import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
-import { equippedSql, starlinkFlag, tailEvidence } from "./sql/equipped";
+import { equippedSql, modHoldSql, starlinkFlag, tailEvidence } from "./sql/equipped";
 import { airlineIn, placeholders } from "./sql/fragments";
 import { DAY_SEC } from "./sql/windows";
 
@@ -109,14 +109,15 @@ export function departureLocalDate(departureAirport: string, departureTime: numb
 function tailStarlinkFlag(db: Database, tailNumber: string, airline: string): number | null {
   const listed = db
     .query(
-      `SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ?
+      `SELECT verified_wifi, ${modHoldSql("starlink_planes.TailNumber", "starlink_planes.airline")} AS in_mod
+       FROM starlink_planes WHERE TailNumber = ?
        ORDER BY airline = ? DESC, id LIMIT 1`
     )
-    .get(tailNumber, airline) as { verified_wifi: string | null } | null;
+    .get(tailNumber, airline) as { verified_wifi: string | null; in_mod: number } | null;
   const fleet = db
     .query("SELECT starlink_status FROM united_fleet WHERE tail_number = ?")
     .get(tailNumber) as { starlink_status: string | null } | null;
-  return starlinkFlag(tailEvidence({ listed, fleet }));
+  return starlinkFlag(tailEvidence({ listed, fleet, inMod: listed?.in_mod === 1 }));
 }
 
 /** Upsert one row per scheduled leg; first_seen survives, last_seen moves. */

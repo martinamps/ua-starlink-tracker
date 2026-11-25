@@ -1,28 +1,48 @@
 import { isStarlinkProvider } from "../../database/sql/equipped";
-import type { FleetFamily, FleetTail, ReportedInstall, WifiProvider } from "../../types";
+import type {
+  FleetFamily,
+  FleetTail,
+  ReportedInstall,
+  SheetModNote,
+  WifiProvider,
+} from "../../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../../utils/aircraft-specs";
 import { reportedClause } from "../../utils/reported-reason";
 import { H2, SECTION_WIDE } from "../layout";
 import { fmt, pct } from "../ui/format";
-import { type PipelineMap, pipelinePhrase } from "./pipeline";
+import { type PipelineMap, fittingPhrase, pipelinePhrase } from "./pipeline";
 import { PROVIDER_LABEL, PROVIDER_ORDER, ProviderLegend, WIFI_CLASS } from "./providers";
 import { type FleetTypeLink, familyLabel, providerCounts } from "./type-bars";
 
 /** Sheet-listed tails no count includes, by tail (FleetPageData.sheetReported). */
 export type ReportedMap = Map<string, ReportedInstall>;
 
+/** The fleet sheet's Starlink hangar notes, by tail (FleetPageData.sheetFitting). */
+export type FittingMap = Map<string, SheetModNote>;
+
 /** The marks a tail carries beyond its provider. The sheet's own listing
  * outranks the progress workbook's colour: it is the list we count from. */
 export interface TailMarks {
   pipeline: PipelineMap;
   reported: ReportedMap;
+  fitting: FittingMap;
+}
+
+/** A hangar note the sheet is sure of: dated and per tail, so it speaks first. */
+function fittingNow(m: TailMarks | undefined, tail: string): SheetModNote | null {
+  const note = m?.fitting.get(tail);
+  return note && !note.unsure ? note : null;
 }
 
 function markNote(m: TailMarks, tail: string): string {
+  const fitting = fittingNow(m, tail);
+  if (fitting) return ` · ${fittingPhrase(fitting)}`;
   const reported = m.reported.get(tail);
   if (reported) return ` · sheet lists Starlink, not counted: ${reportedClause(reported)}`;
   const row = m.pipeline.get(tail);
-  return row ? ` · ${pipelinePhrase(row.state, row.mod_location)}` : "";
+  if (row) return ` · ${pipelinePhrase(row.state, row.mod_location)}`;
+  const doubted = m.fitting.get(tail);
+  return doubted ? ` · ${fittingPhrase(doubted)}` : "";
 }
 
 function tailTitle(t: FleetTail, marks?: TailMarks): string {
@@ -32,6 +52,7 @@ function tailTitle(t: FleetTail, marks?: TailMarks): string {
 // The two pipeline states worth a visual on the grid — "scheduled" stays
 // title-only (a dashed 8px cell reads as rendering noise, not information).
 function markCellClass(m: TailMarks | undefined, tail: string): string {
+  if (fittingNow(m, tail)) return " pipe-mod";
   if (m?.reported.has(tail)) return " pipe-verif";
   const state = m?.pipeline.get(tail)?.state;
   if (state === "in_mod") return " pipe-mod";
@@ -179,11 +200,16 @@ export function HangarFloor({
 }) {
   const counts = providerCounts(families.flatMap((f) => f.tails));
   const { pipeline, reported } = marks;
-  // A reported tail wears the verification mark whatever the workbook says of it.
+  const fitting = new Set([...marks.fitting.values()].filter((n) => !n.unsure).map((n) => n.tail));
+  // A fitting tail wears the install mark, and a reported one the verification
+  // mark, whatever the workbook says of either.
   const count = (state: string) =>
-    [...pipeline.values()].filter((r) => r.state === state && !reported.has(r.tail)).length;
-  const inMod = count("in_mod");
-  const verifying = count("verification_needed") + reported.size;
+    [...pipeline.values()].filter(
+      (r) => r.state === state && !reported.has(r.tail) && !fitting.has(r.tail)
+    ).length;
+  const inMod = count("in_mod") + fitting.size;
+  const verifying =
+    count("verification_needed") + [...reported.keys()].filter((t) => !fitting.has(t)).length;
   return (
     <section className={SECTION_WIDE}>
       <h2 className={H2}>Every aircraft</h2>
@@ -238,16 +264,21 @@ export function HangarFloor({
   );
 }
 
-function registryClass(t: FleetTail, { pipeline, reported }: TailMarks): string {
+function registryClass(t: FleetTail, marks: TailMarks): string {
   if (isStarlinkProvider(t.provider)) return "tail-sl";
-  return pipeline.has(t.tail) || reported.has(t.tail) ? "tail-dim tail-pipe" : "tail-dim";
+  const { pipeline, reported } = marks;
+  return pipeline.has(t.tail) || reported.has(t.tail) || fittingNow(marks, t.tail)
+    ? "tail-dim tail-pipe"
+    : "tail-dim";
 }
 
-function registryDot(t: FleetTail, { pipeline, reported }: TailMarks): { ch: string; cls: string } {
+function registryDot(t: FleetTail, marks: TailMarks): { ch: string; cls: string } {
+  const { pipeline, reported } = marks;
   if (t.provider === "starlink") return { ch: "◉", cls: "" };
   // Counted with Starlink, so it keeps the lit row, but a half-filled glyph
   // says nobody has seen it carrying Starlink yet.
   if (t.provider === "starlink_listed") return { ch: "◍", cls: "" };
+  if (fittingNow(marks, t.tail)) return { ch: "○", cls: " dot-mod" };
   if (reported.has(t.tail)) return { ch: "◎", cls: " dot-verif" };
   const state = pipeline.get(t.tail)?.state;
   if (state === "in_mod") return { ch: "○", cls: " dot-mod" };

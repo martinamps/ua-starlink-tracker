@@ -11,7 +11,7 @@
 
 import { aircraftName } from "../airlines/aircraft-families";
 import type { AirlineConfig } from "../airlines/registry";
-import { pipelinePhrase } from "../components/fleet/pipeline";
+import { fittingPhrase, pipelinePhrase } from "../components/fleet/pipeline";
 import { firstFlightLabel, operatorLabel } from "../components/newly-equipped-page";
 import { capitalize, fmt, shortDate, zonedDeparture } from "../components/ui/format";
 import type { Tone } from "../components/ui/tone-classes";
@@ -23,6 +23,7 @@ import type { FleetProgressTailRow } from "../types";
 import { airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { wifiPhrase } from "../utils/reported-reason";
+import { utcToday } from "../utils/sheet-mod-note";
 
 /** Rows in each flight list; a tail flies six or more legs a day. */
 export const TAIL_FLIGHT_ROWS = 12;
@@ -167,6 +168,13 @@ function pipelineAnswer(r: TailRecord) {
     : null;
 }
 
+/** A hangar note the sheet is sure of leads the answer the same way, wherever
+ * the page would say "No", "Not checked yet" or "Not confirmed": the listing
+ * (if any) ran ahead of the install, and the note says where the jet is. */
+function fittingAnswer(r: TailRecord) {
+  return r.fitting && !r.fitting.unsure && r.kind !== "observed" ? r.fitting : null;
+}
+
 const contradictedSentence = (tail: string, site: string, wifi: string | null) =>
   `The community fleet sheet lists ${tail} with Starlink, but our own check of ${site} still reads ${wifiPhrase(wifi)}.`;
 
@@ -185,8 +193,19 @@ function settledRowNote(r: TailRecord): string {
     : ` ${reading} is our verdict on the plane; no verdict of ours stands on the listing itself yet.`;
 }
 
-function answerFor(r: TailRecord, site: string): { answer: string; note: string | null } {
+function answerFor(
+  r: TailRecord,
+  site: string,
+  nowSec: number
+): { answer: string; note: string | null } {
   const { tail } = r;
+  const fitting = fittingAnswer(r);
+  if (fitting) {
+    return {
+      answer: `${tail} is ${fittingPhrase(fitting, utcToday(nowSec * 1000))}, per the community fleet sheet. Not in our count yet.${readingSentence(r, site)}`,
+      note: "The date is the sheet's estimate. This page changes when our own check reads Starlink on the plane.",
+    };
+  }
   const inPipeline = pipelineAnswer(r);
   if (inPipeline) {
     return {
@@ -252,7 +271,7 @@ function answerFor(r: TailRecord, site: string): { answer: string; note: string 
   }
 }
 
-function evidenceFacts(r: TailRecord, site: string): TailFact[] {
+function evidenceFacts(r: TailRecord, site: string, nowSec: number): TailFact[] {
   const facts: TailFact[] = [];
   const { listing, checks, fleet } = r;
   const equipped = r.kind === "verified" || r.kind === "listed";
@@ -284,7 +303,12 @@ function evidenceFacts(r: TailRecord, site: string): TailFact[] {
       value: `${fmt(checks.starlink)} of ${fmt(checks.total)} read Starlink${checks.since ? `, since ${shortDate(checks.since)}` : ""}`,
     });
   }
-  if (r.pipeline) {
+  if (r.fitting) {
+    facts.push({
+      label: "Install status",
+      value: `${capitalize(fittingPhrase(r.fitting, utcToday(nowSec * 1000)))}, per the community fleet sheet's notes`,
+    });
+  } else if (r.pipeline) {
     facts.push({
       label: "Install status",
       value: `${capitalize(pipelinePhrase(r.pipeline.state, r.pipeline.mod_location))}, per the community progress sheet${r.pipeline.sheet_updated ? ` (${r.pipeline.sheet_updated})` : ""}`,
@@ -378,6 +402,7 @@ export function buildTailPage(
   const raw = r.fleet?.aircraft_type ?? r.listing?.aircraft ?? null;
   const typeHref = raw ? (opts.typeHrefFor?.(raw) ?? null) : null;
   const inPipeline = pipelineAnswer(r);
+  const fitting = fittingAnswer(r);
   return {
     tail,
     airline: cfg.shortName,
@@ -385,11 +410,16 @@ export function buildTailPage(
     indexable: r.indexable,
     ...VERDICT[r.kind],
     ...(inPipeline ? { verdict: inPipeline.verdict, tone: inPipeline.tone } : {}),
-    ...answerFor(r, site),
-    installStatus: inPipeline && r.pipeline ? pipelinePhrase(r.pipeline.state, null) : null,
+    ...(fitting ? { verdict: "Not yet", tone: "neutral" as const } : {}),
+    ...answerFor(r, site, nowSec),
+    installStatus: fitting
+      ? "being fitted"
+      : inPipeline && r.pipeline
+        ? pipelinePhrase(r.pipeline.state, null)
+        : null,
     typeName: raw ? aircraftName(raw) : null,
     typeHref,
-    evidence: evidenceFacts(r, site),
+    evidence: evidenceFacts(r, site, nowSec),
     plane: planeFacts(r, cfg, typeHref),
     dated: datedSentence(r),
     faaRead: r.faa ? shortDate(r.faa.last_refreshed) : null,

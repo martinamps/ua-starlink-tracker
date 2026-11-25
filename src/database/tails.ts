@@ -16,8 +16,15 @@ import type { Database } from "bun:sqlite";
 import { canonicalPermalinkFor, marketingFlightNumber } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
 import { normalizeWifiProvider } from "../observability/metrics";
-import type { FaaRegistryRow, FirstFlight, FleetProgressTailRow, ReportedInstall } from "../types";
+import type {
+  FaaRegistryRow,
+  FirstFlight,
+  FleetProgressTailRow,
+  ReportedInstall,
+  SheetModNote,
+} from "../types";
 import { excludeMassWriteDays } from "../utils/install-rate";
+import { modNoteHolds, utcToday } from "../utils/sheet-mod-note";
 import {
   CLEAN_OBSERVATION_WHERE,
   flyertalkFirstSyncDays,
@@ -29,6 +36,7 @@ import {
   getListedNotCounted,
   isBulkRow,
 } from "./database";
+import { getSheetModNote, getSheetModNotes } from "./sheet-mod-notes";
 import { isEquipped, tailEvidence } from "./sql/equipped";
 import { isCleanAirportPair } from "./sql/fragments";
 import { DAY_SEC, TRAILING_WINDOW_DAYS, TRAILING_WINDOW_SEC, unixNow } from "./sql/windows";
@@ -71,12 +79,14 @@ interface TailClassInput {
   fleet: { starlink_status: string | null; verified_wifi: string | null } | null;
   /** In getListedNotCounted's "tail" scope: a sheet listing no count includes. */
   reported: boolean;
+  /** The sheet's hangar note holds for the tail (modNoteHolds). */
+  inMod?: boolean;
 }
 
 /** The page's answer tier, over the one evidence ranking. "verified" follows
  * the /fleet grid: either table observing Starlink on an equipped tail. */
 export function classifyTail(i: TailClassInput): TailAnswerKind {
-  const evidence = tailEvidence({ listed: i.listing, fleet: i.fleet });
+  const evidence = tailEvidence({ listed: i.listing, fleet: i.fleet, inMod: i.inMod });
   if (isEquipped(evidence)) {
     return evidence === "verified" || normalizeWifiProvider(i.fleet?.verified_wifi) === "starlink"
       ? "verified"
@@ -185,6 +195,8 @@ export interface TailRecord {
   checks: TailChecks;
   /** The install pipeline's row, only while the tail is not equipped. */
   pipeline: FleetProgressTailRow | null;
+  /** The fleet sheet's Starlink hangar note, only while the tail is not equipped. */
+  fitting: SheetModNote | null;
   firstFlight: FirstFlight | null;
   faa: FaaRegistryRow | null;
   indexable: boolean;
@@ -272,8 +284,15 @@ export function getTailRecord(
     getListedNotCounted(db, airline, { scope: "tail", now: nowSec }).find(
       (r) => r.TailNumber === tail
     ) ?? null;
-  const kind = classifyTail({ listing, fleet, reported: reportedRow !== null });
+  const modNote = getSheetModNote(db, airline, tail, utcToday(nowSec * 1000));
+  const kind = classifyTail({
+    listing,
+    fleet,
+    reported: reportedRow !== null,
+    inMod: modNoteHolds(modNote, utcToday(nowSec * 1000)),
+  });
   const equipped = kind === "verified" || kind === "listed";
+  const fitting = equipped ? null : modNote;
   const sheetListing =
     reportedRow ??
     (row && !equipped
@@ -297,9 +316,10 @@ export function getTailRecord(
     fleet,
     checks: tailChecks(db, airline, tail),
     pipeline,
+    fitting,
     firstFlight: equipped ? (getFirstFlights(db, [tail], airline)[0] ?? null) : null,
     faa: getFaaRegistryByTail(db, tail),
-    indexable: tailIndexable(kind, pipeline !== null),
+    indexable: tailIndexable(kind, pipeline !== null || (fitting !== null && !fitting.unsure)),
   };
 }
 
@@ -478,6 +498,12 @@ export function getTailIndex(db: Database, airline: string, nowSec = unixNow()):
     getListedNotCounted(db, airline, { scope: "tail", now: nowSec }).map((r) => r.TailNumber)
   );
   const pipeline = new Set(getFleetProgressTails(db, airline).map((r) => r.tail));
+  const today = utcToday(nowSec * 1000);
+  const fitting = new Set(
+    getSheetModNotes(db, airline, today)
+      .filter((n) => modNoteHolds(n, today))
+      .map((n) => n.tail)
+  );
   const massDays = massImportDays(db, airline);
   const firstSyncDays = flyertalkFirstSyncDays(db);
 
@@ -490,6 +516,7 @@ export function getTailIndex(db: Database, airline: string, nowSec = unixNow()):
         listing,
         fleet: fleet.get(tail) ?? null,
         reported: reported.has(tail),
+        inMod: fitting.has(tail),
       });
       const equipped = kind === "verified" || kind === "listed";
       const day = /^\d{4}-\d{2}-\d{2}/.test(listing?.found ?? "")
@@ -500,7 +527,7 @@ export function getTailIndex(db: Database, airline: string, nowSec = unixNow()):
       return {
         tail,
         kind,
-        indexable: tailIndexable(kind, !equipped && pipeline.has(tail)),
+        indexable: tailIndexable(kind, !equipped && (pipeline.has(tail) || fitting.has(tail))),
         found: equipped && real ? day : null,
       };
     });

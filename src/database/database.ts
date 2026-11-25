@@ -86,10 +86,12 @@ import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
 import { fleetRejectReason, recordFleetRejection } from "./fleet-admission";
 import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
+import { type TailModNote, getSheetModNotes, replaceSheetModNotes } from "./sheet-mod-notes";
 import {
   equippedSql,
   fleetStatusFromWifi,
   isStarlinkProvider,
+  modHoldSql,
   rowEvidence,
   settledNegativeJoin,
   verifiedEquippedSql,
@@ -526,6 +528,22 @@ export function setupTables(db: Database) {
       );
     `).run();
   }
+
+  // The mainline sheet's Starlink hangar notes, strictly parsed
+  // (utils/sheet-mod-note.ts); replaced whole on every accepted sheet read.
+  db.query(`
+    CREATE TABLE IF NOT EXISTS sheet_mod_notes (
+      airline TEXT NOT NULL,
+      tail_number TEXT NOT NULL,
+      station TEXT NOT NULL,
+      started TEXT NOT NULL,
+      due_back TEXT,
+      unsure INTEGER NOT NULL DEFAULT 0,
+      holds_until TEXT NOT NULL,
+      read_at INTEGER NOT NULL,
+      PRIMARY KEY (airline, tail_number)
+    );
+  `).run();
 
   // Observed pipeline transitions (diffed between daily grid reads) — the
   // spine of the movements feed.
@@ -1011,7 +1029,9 @@ export function updateDatabase(
   totalAircraftCount: number,
   starlinkAircraft: Partial<Aircraft>[],
   fleetStats: FleetStats,
-  airline: string
+  airline: string,
+  /** This read's hangar notes; omitted, the stored ones are left as they are. */
+  modNotes?: TailModNote[]
 ): string | null {
   const existingSheetRows = (
     db
@@ -1086,6 +1106,8 @@ export function updateDatabase(
       .all(airline) as Array<{ tail_number: string; aircraft_type: string }>) {
       fleetAircraftTypes.set(row.tail_number, row.aircraft_type);
     }
+
+    if (modNotes) replaceSheetModNotes(db, airline, modNotes);
 
     // Update meta data
     // Only delete spreadsheet planes, preserve discovered ones (sheet_gid = 'discovery')
@@ -1937,7 +1959,9 @@ export type FlightAssignmentRow = Flight & {
  * and ordered by last_updated DESC (for swap dedup). `settled_negative`
  * mirrors equippedSql's NOT EXISTS clause (the canonical negative-settle
  * rule) so callers don't re-derive it per row; the LEFT JOIN can't fan out
- * because united_fleet.tail_number is UNIQUE.
+ * because united_fleet.tail_number is UNIQUE. An unobserved listing held by a
+ * hangar note (evidence "in_mod") is left out like an unlisted tail: the core
+ * reads every row it gets with no verdict as listed.
  */
 export function getFlightAssignments(
   db: Database,
@@ -1955,7 +1979,9 @@ export function getFlightAssignments(
      INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
      ${settledNegativeJoin("_neg", "sp.TailNumber", "sp.airline")}
      WHERE uf.flight_number IN (${ph})
-       AND uf.departure_time >= ? AND uf.departure_time < ?`,
+       AND uf.departure_time >= ? AND uf.departure_time < ?
+       AND NOT (sp.verified_wifi IS NULL AND _neg.tail_number IS NULL
+         AND ${modHoldSql("sp.TailNumber", "sp.airline")})`,
     airline,
     "uf",
     [...flightNumberVariants, startOfDay, endOfDay]
@@ -6567,6 +6593,9 @@ function computeFleetPageData(
       : [],
     movements: soleAirline ? computeFleetMovements(db, airline) : [],
     sheetReported: soleAirline ? getListedNotCounted(db, soleAirline) : [],
+    sheetFitting: soleAirline
+      ? getSheetModNotes(db, soleAirline).filter((n) => !equippedTails.has(n.tail))
+      : [],
   };
 }
 
