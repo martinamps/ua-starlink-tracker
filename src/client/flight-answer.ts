@@ -82,6 +82,9 @@ export interface AnswerContext {
   originZone?: string | null;
   nowSec: number;
   airlineName: string;
+  /** How a listed, unsettled tail reads for this airline (listedWording's
+   * status); the united wording when absent. */
+  listedStatus?: string;
   /** IANA zone for an airport code, undefined when unmapped. */
   zoneFor: (airport: string) => string | undefined;
   liveTv: Record<SeatbackLiveTv, string> | null;
@@ -316,7 +319,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const flights = body.flights ?? [];
     const first = flights[0] ?? {};
     const verified = body.confidence !== "likely";
-    const headline = `Yes — ${on} has Starlink (${[first.tail_number, verified ? "verified" : "listed, not yet verified"].filter(Boolean).join(", ")})`;
+    const headline = `Yes — ${on} has Starlink (${[first.tail_number, verified ? "verified" : (ctx.listedStatus ?? "listed, not yet verified")].filter(Boolean).join(", ")})`;
     const legs = flights.map((f) => flightRows(f, ctx)).join("");
     const html = card(
       "yes",

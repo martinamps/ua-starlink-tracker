@@ -34,6 +34,7 @@ import {
   factsStamp,
   formatFactDate,
 } from "../airlines/rollout-facts";
+import { siteShowsAircraftNotWifi } from "../api/check-flight-core";
 import type { PerAirlineStat } from "../types";
 import { ROLLOUT_TONE, StagePill, factsStage, shareIsPublishable, trackedStage } from "./atoms";
 import {
@@ -480,7 +481,7 @@ function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
 function restOfFleetNote(cfg: AirlineConfig): string {
   return cfg.verifierBackend === "united"
     ? `The rest is checked one aircraft at a time against ${cfg.verifySite}.`
-    : `The rest is listed only where a report names the aircraft: ${cfg.verifySite} shows which aircraft flies a flight, not its Wi-Fi.`;
+    : `The rest is listed only where a report names the aircraft: ${siteShowsAircraftNotWifi(cfg)}.`;
 }
 
 export function AirlineDetailPage({

@@ -102,6 +102,8 @@ function TailMatrix({
   // Where the airline publishes nothing per tail, an unlit square is "no
   // data", never "not checked yet": nobody is going to check it.
   const labels = providerLabels(copy.checksEveryTail ? "tail" : "type");
+  const counts = providerCounts(data.tails);
+  const listed = counts.starlink_listed;
   return (
     <div
       className="mt-5 border-t border-subtle pt-4"
@@ -112,8 +114,8 @@ function TailMatrix({
       <div className={EYEBROW}>
         Wi-Fi on {airline} {def.short}s
       </div>
-      <TailGrid tails={data.tails} anchorBase="/fleet" size="lg" />
-      <ProviderLegend counts={providerCounts(data.tails)} labels={labels} className="mt-3" />
+      <TailGrid tails={data.tails} anchorBase="/fleet" size="lg" labels={labels} />
+      <ProviderLegend counts={counts} labels={labels} className="mt-3" />
       <p className="text-xs text-muted mt-2">
         {copy.checksEveryTail
           ? "One square per aircraft, as last checked on united.com."
@@ -121,7 +123,14 @@ function TailMatrix({
             ? // The figure and its date stand on the line above; this is why
               // fewer squares are lit than the airline counts.
               `${airline} doesn't say which aircraft it counts, so we list ${data.equipped === 0 ? "none" : `only ${fmt(data.equipped)}`} by tail${data.equipped === 0 ? " yet" : ""}.`
-            : `${airline} doesn't publish Wi-Fi per aircraft, so only tails we've confirmed are lit.`}
+            : listed > 0
+              ? // A listed square is unsettled: lit by the airline's own word
+                // for the whole type, or from a report naming the tail.
+                // Nothing we read confirms either, so "confirmed" overstates.
+                official?.all
+                ? `${airline} counts every ${def.short} as connected, so the ${fmt(listed)} listed ${listed === 1 ? "tail is" : "tails are"} lit by aircraft type, not checked one by one.`
+                : `${airline} doesn't publish Wi-Fi per aircraft, so the ${fmt(listed)} listed ${listed === 1 ? "tail is" : "tails are"} on our list from reports, not confirmed.`
+              : `${airline} doesn't publish Wi-Fi per aircraft, so only tails we've confirmed are lit.`}
       </p>
     </div>
   );

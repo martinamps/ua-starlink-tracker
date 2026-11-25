@@ -19,6 +19,7 @@ import type { AirlineConfig, SiteConfig } from "../airlines/registry";
 import {
   type FlightVerdict,
   type ResolveDeps,
+  listedWording,
   resolveFlightVerdict,
   verdictSummary,
 } from "../api/check-flight-core";
@@ -315,7 +316,9 @@ export async function watchFeed(ctx: RequestContext): Promise<Response> {
     return watchNotFound();
   }
 
-  const { verdict: watch, leg } = watchVerdictFrom(verdict, history);
+  const { verdict: seen, leg } = watchVerdictFrom(verdict, history);
+  const watch: WatchVerdict =
+    seen.state === "yes" ? { ...seen, listedStatus: listedWording(cfg).status } : seen;
   const alternatives = sameDayAlternativesFor(ctx.reader, verdict, parsed.date) ?? [];
 
   metrics.increment(COUNTERS.WATCH_FEED_FETCH, {

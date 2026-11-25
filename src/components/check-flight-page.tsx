@@ -1,4 +1,5 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { listedWording } from "../api/check-flight-core";
 import {
   type AnswerContext,
   CALENDAR_OFFER_ID,
@@ -90,6 +91,7 @@ export function answerContext(
     originZone: origin ? (airportTimezone(origin) ?? null) : null,
     nowSec: Math.floor(Date.now() / 1000),
     airlineName: cfg.name,
+    listedStatus: listedWording(cfg).status,
     zoneFor: (code) => airportTimezone(code),
     liveTv: site.features.liveTvPage ? SEATBACK_LIVE_TV_COPY : null,
     watchEnabled: watchFeedEnabled(site),

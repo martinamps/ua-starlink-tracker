@@ -10,7 +10,7 @@
  */
 
 import { aircraftName } from "../airlines/aircraft-families";
-import type { AirlineConfig } from "../airlines/registry";
+import { type AirlineConfig, VERIFIER_SITE } from "../airlines/registry";
 import { fittingPhrase, pipelinePhrase } from "../components/fleet/pipeline";
 import { firstFlightLabel, operatorLabel } from "../components/newly-equipped-page";
 import { capitalize, fmt, shortDate, zonedDeparture } from "../components/ui/format";
@@ -30,13 +30,6 @@ export const TAIL_FLIGHT_ROWS = 12;
 
 /** Airports named under "where it flies". */
 const TAIL_AIRPORT_ROWS = 8;
-
-/** The site each airline's verifier reads, as a reader would name it. */
-const CHECK_SITE: Record<NonNullable<AirlineConfig["verifierBackend"]>, string> = {
-  united: "united.com",
-  "alaska-json": "alaskaair.com",
-  "qatar-fltstatus": "qatarairways.com",
-};
 
 export interface TailFact {
   label: string;
@@ -390,7 +383,7 @@ export function buildTailPage(
   const nowSec = opts.nowSec ?? unixNow();
   const r = reader.getTailRecord(tail);
   if (!r) return null;
-  const site = cfg.verifierBackend ? CHECK_SITE[cfg.verifierBackend] : `${cfg.shortName}'s site`;
+  const site = cfg.verifierBackend ? VERIFIER_SITE[cfg.verifierBackend] : `${cfg.shortName}'s site`;
   const equipped = r.kind === "verified" || r.kind === "listed";
   // Only an equipped tail is tracked; a stale row for one that left the list
   // would read as "this plane flies with Starlink".

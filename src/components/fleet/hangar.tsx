@@ -46,8 +46,8 @@ function markNote(m: TailMarks, tail: string): string {
   return doubted ? ` · ${fittingPhrase(doubted)}` : "";
 }
 
-function tailTitle(t: FleetTail, marks?: TailMarks): string {
-  return `${t.tail} · ${PROVIDER_LABEL[t.provider]}${marks ? markNote(marks, t.tail) : ""}`;
+function tailTitle(t: FleetTail, marks?: TailMarks, labels = PROVIDER_LABEL): string {
+  return `${t.tail} · ${labels[t.provider]}${marks ? markNote(marks, t.tail) : ""}`;
 }
 
 // The two pipeline states worth a visual on the grid — "scheduled" stays
@@ -70,9 +70,12 @@ export function TailGrid({
   marks,
   anchorBase = "",
   size = "sm",
+  labels,
 }: {
   tails: FleetTail[];
   marks?: TailMarks;
+  /** The legend's wording for each square's title, where the page has its own. */
+  labels?: Record<WifiProvider, string>;
   anchorBase?: string;
   /** "sm" packs ten 8px cells per hangar block; "lg" wraps 12px cells to the container. */
   size?: "sm" | "lg";
@@ -89,8 +92,8 @@ export function TailGrid({
         <a
           key={t.tail}
           href={`${anchorBase}#t-${t.tail}`}
-          title={tailTitle(t, marks)}
-          aria-label={tailTitle(t, marks)}
+          title={tailTitle(t, marks, labels)}
+          aria-label={tailTitle(t, marks, labels)}
           // On /fleet the registry below links every tail again, so the
           // squares stay out of the tab order: a keyboard would otherwise
           // stop on each of the fleet's aircraft twice.
