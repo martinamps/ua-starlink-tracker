@@ -2765,11 +2765,31 @@ function spanLabel(codes: readonly string[]): string | null {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+/** A pace is installs counted by date. An airline known by aircraft type has
+ * a fleet-list sum and no dated installs of its own, so it gets no section:
+ * the hub names it in one line (installRateSplit) and its own site has no
+ * such page. */
 function installRateAirlines(ctx: RequestContext, nowMs: number): AirlineInstallRate[] {
   const cfg = tenantConfig(ctx.tenant);
-  return cfg
-    ? [airlineInstallRate(ctx.getReader, cfg, nowMs, true)]
-    : publicAirlines().map((a) => airlineInstallRate(ctx.getReader, a, nowMs));
+  return (cfg ? [cfg] : publicAirlines())
+    .filter((a) => trackingMethod(a) !== "type")
+    .map((a) => airlineInstallRate(ctx.getReader, a, nowMs, Boolean(cfg)));
+}
+
+/** Whose pace the hub's page gives, and whose sum it leaves out and why. */
+function installRateSplit(ctx: RequestContext) {
+  const split = splitByMethod(
+    publicAirlines().map((a) => ({
+      code: a.code,
+      starlink: ctx.getReader(a.code).countStarlinkPlanes(),
+      total: 0,
+    }))
+  );
+  const leftOut = leftOutByType(split);
+  return {
+    pacedNames: countedNames(split),
+    leftOut: leftOut && `${leftOut}, so no install pace is shown.`,
+  };
 }
 
 const installRatePage: Handler = (ctx) => {
@@ -2798,6 +2818,7 @@ const installRatePage: Handler = (ctx) => {
       };
   return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, {
     airlines,
+    ...(cfg ? {} : installRateSplit(ctx)),
     cite: citeStat(ctx),
   });
 };

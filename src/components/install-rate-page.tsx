@@ -37,6 +37,10 @@ export interface AirlineInstallRate {
 interface InstallRatePageProps {
   site: SiteConfig;
   airlines: AirlineInstallRate[];
+  /** Hub: the airlines the sections cover, "United and Alaska". */
+  pacedNames?: string;
+  /** Hub: the by-type airlines that get no section, and why, as one sentence. */
+  leftOut?: string | null;
   pageLinks?: Link[];
   currentPath?: string;
   cite?: CiteStat | null;
@@ -228,6 +232,8 @@ function singleDek(a: AirlineInstallRate): string {
 export default function InstallRatePage({
   site,
   airlines,
+  pacedNames,
+  leftOut,
   pageLinks,
   currentPath,
   cite,
@@ -240,7 +246,7 @@ export default function InstallRatePage({
         dek={
           single
             ? singleDek(single)
-            : "Installs per month for each tracked airline, against the targets each has stated."
+            : `Installs per month for ${pacedNames || "each tracked airline"}, against the targets each has stated.`
         }
       />
 
@@ -248,6 +254,7 @@ export default function InstallRatePage({
         {airlines.map((a) => (
           <AirlineSection key={a.code} a={a} />
         ))}
+        {leftOut && <p className="text-sm text-secondary">{leftOut}</p>}
       </section>
 
       <section className={SECTION}>

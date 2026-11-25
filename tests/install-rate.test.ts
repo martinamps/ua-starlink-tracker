@@ -5,7 +5,8 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { AIRLINES, SITES } from "../src/airlines/registry";
+import { trackingMethod } from "../src/airlines/published-count";
+import { AIRLINES, SITES, publicAirlines } from "../src/airlines/registry";
 import { airlinesWithTargetEntry, rolloutTargets } from "../src/airlines/targets";
 import {
   chartDescription,
@@ -490,12 +491,15 @@ describe("/install-rate page", () => {
     }
   });
 
-  test("hub page covers every public airline", async () => {
+  test("hub page covers every public airline counted on this site, and no by-type one", async () => {
     const { status, text } = await bodyOf(app, "/install-rate", SITES.airline.canonicalHost);
     expect(status).toBe(200);
-    for (const code of ["ua", "ha", "as"]) {
-      expect(text).toContain(`id="install-rate-stat-${code}"`);
+    for (const a of publicAirlines()) {
+      const section = `id="install-rate-stat-${a.code.toLowerCase()}"`;
+      if (trackingMethod(a) === "type") expect(text).not.toContain(section);
+      else expect(text).toContain(section);
     }
+    expect(text).toContain('id="install-rate-stat-ua"');
   });
 
   test("a count we derived is labelled as ours, not the airline's", async () => {

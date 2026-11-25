@@ -20,6 +20,8 @@ import {
   byTypeSumBasis,
   byTypeSumSentence,
   leftOutByType,
+  ownCountAsOf,
+  publishedCount,
   splitByMethod,
   trackingMethod,
 } from "../src/airlines/published-count";
@@ -30,7 +32,7 @@ import {
   publicAirlines,
   siteForAirline,
 } from "../src/airlines/registry";
-import { reconcileTypeDeterministicFleets } from "../src/database/database";
+import { getDailyInstalls, reconcileTypeDeterministicFleets } from "../src/database/database";
 import { badgeSvgMarkup, badgeValue, createApp } from "../src/server/app";
 import { addFleet, addPlane, bodyOf, makeFreshDb, mcpTool, openSnapshot } from "./helpers";
 
@@ -413,9 +415,11 @@ describe("no hub total adds a by-type sum to aircraft counted on this site", () 
   const counted = { starlink: 0, total: 0 };
   let sum = 0;
   let listedTotal = 0;
+  const sums: Record<string, number> = {};
+  let db: Database;
 
   beforeAll(async () => {
-    const db = makeFreshDb();
+    db = makeFreshDb();
     for (const cfg of hubCounted) {
       const seed = COUNTED_SEEDS[cfg.code];
       for (let i = 0; i < seed.equipped + seed.bare; i++) {
@@ -457,13 +461,14 @@ describe("no hub total adds a by-type sum to aircraft counted on this site", () 
           ).run(...(cols.map((c) => row[c]) as Array<string | number | null>));
         }
       }
-      sum += (
+      sums[cfg.code] = (
         db
           .query(
             "SELECT COUNT(*) AS n FROM united_fleet WHERE airline = ? AND starlink_status = 'confirmed'"
           )
           .get(cfg.code) as { n: number }
       ).n;
+      sum += sums[cfg.code];
       listedTotal += (
         db.query("SELECT COUNT(*) AS n FROM united_fleet WHERE airline = ?").get(cfg.code) as {
           n: number;
@@ -528,6 +533,91 @@ describe("no hub total adds a by-type sum to aircraft counted on this site", () 
     expect(said.filter(({ piece }) => new RegExp(`^ALL \\(?${mixed}\\)?$`).test(piece))).toEqual(
       []
     );
+  });
+
+  test("no page prints a by-type airline's own sum as aircraft with Starlink", () => {
+    expect(pages.map((p) => p.path)).toContain("/install-rate");
+    for (const cfg of hubByType) {
+      // The airline's source's own counts, printed with their date, are not
+      // our fleet-list sum, though this seed makes the two equal.
+      const own = publishedCount(cfg, sums[cfg.code]);
+      const dated = own.basis === "tracked" || own.basis === "type" ? null : ownCountAsOf(own);
+      expect(
+        pages.flatMap(({ path, body }) =>
+          saidOn(body)
+            .filter((piece) => flatCount(piece, sums[cfg.code]))
+            .filter((piece) => !(dated && piece.includes(dated)))
+            .map((piece) => ({ path, piece }))
+        ),
+        cfg.code
+      ).toEqual([]);
+    }
+  });
+
+  describe("the install pace page, were a by-type airline's rows ever dated", () => {
+    let dated: App;
+    let page: string;
+
+    beforeAll(async () => {
+      // The worst case: dated rows are what a pace chart is drawn from, and a
+      // by-type airline's bulk-settled rows carry none today.
+      for (const cfg of hubByType) {
+        const tails = db
+          .query("SELECT TailNumber AS t FROM starlink_planes WHERE airline = ?")
+          .all(cfg.code) as Array<{ t: string }>;
+        tails.forEach(({ t }, i) => {
+          const day = new Date(Date.UTC(2026, 5 + (i % 5), 2 + (i % 20)));
+          db.run(
+            "UPDATE starlink_planes SET DateFound = ?, sheet_gid = 'discovery', sheet_type = 'discovery' WHERE TailNumber = ? AND airline = ?",
+            [day.toISOString().slice(0, 10), t, cfg.code]
+          );
+        });
+      }
+      dated = createApp(db);
+      page = (await bodyOf(dated, "/install-rate", HUB)).text;
+    });
+
+    test("the seed would chart them: their rows count as dated installs", () => {
+      for (const cfg of hubByType) {
+        expect(getDailyInstalls(db, cfg.code).length, cfg.code).toBeGreaterThan(0);
+      }
+    });
+
+    test("the hub gives a pace section to counted airlines only", () => {
+      const said = saidOn(page);
+      for (const cfg of hubCounted) {
+        expect(page).toContain(`id="install-rate-stat-${cfg.code.toLowerCase()}"`);
+      }
+      for (const cfg of hubByType) {
+        expect(page).not.toContain(`id="install-rate-stat-${cfg.code.toLowerCase()}"`);
+        expect(said.filter((p) => flatCount(p, sums[cfg.code]))).toEqual([]);
+        expect(said.filter((p) => p.includes(`${cfg.name} aircraft with Starlink`))).toEqual([]);
+      }
+      expect(
+        said.some((p) =>
+          p.includes(`Installs per month for ${hubCounted.map((a) => a.shortName).join(" and ")},`)
+        )
+      ).toBe(true);
+    });
+
+    test("one line says who is left out and why", () => {
+      const lines = saidOn(page).filter((p) => p.endsWith("so no install pace is shown."));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(`on our fleet list are ${BY_TYPE_METHOD},`);
+      for (const cfg of hubByType) {
+        expect(lines[0]).toContain(`${cfg.shortName}'s ${sums[cfg.code]} `);
+      }
+    });
+
+    test("a by-type airline's own site serves no install pace page and lists none", async () => {
+      for (const cfg of hubByType) {
+        const host = hostOf(cfg);
+        expect((await bodyOf(dated, "/install-rate", host)).status, host).toBe(404);
+        expect((await bodyOf(dated, "/sitemap.xml", host)).text).not.toContain("/install-rate");
+        const fleet = (await bodyOf(dated, "/fleet", host)).text;
+        expect(fleet).not.toContain('href="/install-rate"');
+      }
+    });
   });
 
   test("the fleet page's heading counts only the counted airlines and names the rest", async () => {
