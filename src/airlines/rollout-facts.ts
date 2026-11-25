@@ -778,7 +778,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "100 aircraft equipped by October 2025, the world's largest Starlink 737 fleet; 787 installs are due to finish by the end of 2026. Free for WestJet Rewards members via TELUS.",
+      "100 of its 737s had Starlink by October 2025, the world's largest Starlink 737 fleet. WestJet's 2024 plan was to upgrade its wide-bodies by the end of 2026; its 787-9 page still listed Wi-Fi for a fee in November 2026. Free for WestJet Rewards members via TELUS.",
     facts: [
       {
         fact: "WestJet equipped its 100th aircraft with Wi-Fi presented by TELUS and powered by Starlink, the world's largest fleet of Starlink-equipped 737s, free for WestJet Rewards members.",
@@ -789,13 +789,35 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        // Announcement-day piece, never updated since; the plan it reports is
-        // the only thing it can support, so the fact is framed as one.
-        fact: "When WestJet announced the TELUS/Starlink partnership in July 2024 it said Boeing 787 installations would follow the 737 fleet and should be complete by the end of 2026.",
+        // WestJet has published no count newer than the October 2025 release
+        // and no word that its end-of-2025 737 target was met; this undated
+        // help page is its current wording, so the page says only that.
+        fact: "WestJet says WestJet Wi-Fi presented by TELUS is available in over 100 aircraft across its 737 fleet, and that travellers can look up their flight on the WestJet Flight Guide within 72 hours of departure to see whether it is available. On aircraft that offer WestJet Connect, Wi-Fi is for a fee.",
+        accessed: "2026-11-25",
+        source: {
+          label: "WestJet (Wi-Fi help page)",
+          url: "https://www.westjet.com/en-ca/help/westjet-wifi",
+        },
+      },
+      {
+        // The 2024 wide-body plan below ends with 2026; five weeks before that
+        // date WestJet's own 787-9 page still describes the older paid system.
+        fact: "WestJet's page for its 787-9 lists Wi-Fi access for a fee, with inflight entertainment on WestJet Connect.",
+        accessed: "2026-11-25",
+        source: {
+          label: "WestJet (787-9 Dreamliner page)",
+          url: "https://www.westjet.com/en-ca/aircraft/boeing-787-9-dreamliner",
+        },
+      },
+      {
+        // The announcement itself, so the plan is WestJet's wording and not a
+        // blog's reading of it. A plan is all a 2024 page can support, and
+        // WestJet has not said either date was met.
+        fact: "Announcing the TELUS partnership, WestJet said it planned to complete installation on its modern narrowbody fleet by the end of 2025, and that all wide-body aircraft were planned to be upgraded by the end of 2026.",
         asOf: "2024-07-24",
         source: {
-          label: "One Mile at a Time",
-          url: "https://onemileatatime.com/news/westjet-free-starlink-wi-fi/",
+          label: "WestJet news release",
+          url: "https://www.westjet.com/en-ca/news/2024/westjet-and-telus-form-partnership-to-revolutionize-guest-experi",
         },
       },
     ],
@@ -839,12 +861,23 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "Latin America's first Starlink airline: first flight July 4, 2026 (737 MAX 9 HP-9901CMP), fleet due by Q1 2027. Free for ConnectMiles elites and business class; others pay.",
+      "Latin America's first Starlink airline: first flight July 4, 2026 (737 MAX 9 HP-9901CMP). About one-quarter of the fleet was equipped by November 2026, with the rest expected by mid-2027, per an executive on its earnings call. Free for ConnectMiles elites and business class; others pay.",
     facts: [
       {
+        // An executive's words on the Q3 call as a market site's machine-written
+        // summary carries them: not Copa's page (copaair.com and its investor
+        // hosts refuse every automated client), and a share, not a count.
+        fact: "About one-quarter of Copa's fleet has been equipped with Starlink, with full implementation expected by mid-2027, executive vice president Robert Carey said on the airline's third-quarter earnings call.",
+        asOf: "2026-11-19",
+        source: {
+          label: "MarketBeat (Copa Q3 2026 earnings call summary)",
+          url: "https://www.marketbeat.com/instant-alerts/transcript-copa-q3-earnings-call-highlights-2026-11-19/",
+        },
+      },
+      {
         // copaair.com returns 401 to every automated client and has no archive
-        // snapshot, so both facts are re-sourced to reachable trade press.
-        fact: "Copa's first Starlink-equipped aircraft, a Boeing 737 MAX 9 registered HP-9901CMP, made its inaugural flight on July 4, 2026, with implementation across the fleet planned for the first quarter of 2027.",
+        // snapshot, so the launch facts are re-sourced to reachable trade press.
+        fact: "Copa's first Starlink-equipped aircraft, a Boeing 737 MAX 9 registered HP-9901CMP, made its inaugural flight on July 4, 2026.",
         asOf: "2026-07-06",
         source: {
           label: "Aviación al Día",
@@ -852,7 +885,17 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Copa became the first airline in Latin America to offer Starlink Wi-Fi, with the rollout expected to complete during the first quarter of 2027. Access is complimentary for ConnectMiles PreferMember Gold, Platinum and Presidential members, for Business Class passengers, and for customers with Starlink Residential or Starlink Roam subscriptions; all other passengers buy access through Starlink's onboard portal.",
+        // The November call moved the finish to mid-2027.
+        fact: "At the July 2026 launch, Copa planned to complete Starlink implementation across its entire fleet during the first quarter of 2027.",
+        asOf: "2026-07-06",
+        superseded: true,
+        source: {
+          label: "Aviación al Día",
+          url: "https://aviacionaldia.com/en/2026/07/copa-airlines-revolutionizes-inflight-connectivity-in-latin-america-first-starlink-high-speed-internet-equipped-aircraft-takes-off.html/amp",
+        },
+      },
+      {
+        fact: "Copa became the first airline in Latin America to offer Starlink Wi-Fi. Access is complimentary for ConnectMiles PreferMember Gold, Platinum and Presidential members, for Business Class passengers, and for customers with Starlink Residential or Starlink Roam subscriptions; all other passengers buy access through Starlink's onboard portal.",
         asOf: "2026-07-11",
         source: {
           label: "Future Travel Experience",
@@ -1057,7 +1100,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "complete",
     statusLabel: "Complete",
     summary:
-      "The first air carrier to adopt Starlink; all 40 active Embraer jets equipped by May 2023, free with no login.",
+      "The first air carrier to adopt Starlink: its then-active fleet of 40 Embraer jets was equipped by May 2023, and its ATR 42-600 turboprops by April 2026, on all their flights. Free with no login.",
     facts: [
       {
         // Was "first airline in the world to COMPLETE a Starlink rollout",
@@ -1072,7 +1115,18 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "JSX fully installed Starlink across its entire active fleet of 40 Embraer jets, with complimentary connectivity on all flights. It is Starlink's global launch customer, under an agreement to outfit up to 100 aircraft.",
+        // jsx.com answers 503 to automated clients; this page carries the
+        // announcement, CEO quote included. It names no fleet size, and no
+        // readable JSX page gives one newer than the 40 jets of 2023.
+        fact: "JSX rolled out Starlink across its fleet of ATR 42-600 turboprops, now available on all of their flights at no extra charge: customers connect by selecting the network name, without entering credit card details.",
+        asOf: "2026-04-27",
+        source: {
+          label: "50skyshades (JSX release)",
+          url: "https://50skyshades.com/news/airlines/jsx-becomes-first-to-offer-free-instant-access-starlink-wi-fi-across-its-atr-42-600-fleet",
+        },
+      },
+      {
+        fact: "By May 2023 JSX had fully installed Starlink across its entire active fleet, then 40 Embraer jets, with complimentary connectivity on all flights. It is Starlink's global launch customer, under an agreement to outfit up to 100 aircraft.",
         asOf: "2023-05-08",
         source: {
           label: "Private Jet Card Comparisons",
