@@ -2810,14 +2810,13 @@ export function badgeValue(equipped: number, total: number, rosterIsProgramScope
 
 const badgeSvg: Handler = ({ site, reader, tenant }) => {
   const cfg = tenantConfig(tenant);
-  // The homepage headline's figure (Alaska's includes Hawaiian's Airbus jets):
-  // the badge links there, so it must not show a different count.
+  // The homepage title's figure (Alaska's includes Hawaiian's Airbus jets):
+  // the badge links there, so it must not show a different count. Always our
+  // own named count: the badge has no room to say a figure is the airline's
+  // and give its date, and it travels off-site where nothing else says so.
   const programme = reader.getProgrammeHeadline();
-  const { n: equipped, total } = leadCount({
-    starlinkCount: programme?.equipped ?? reader.countStarlinkPlanes(),
-    totalCount: programme?.total ?? reader.getTotalCount(),
-    airlineCount: programme?.airlineCount,
-  });
+  const equipped = programme?.equipped ?? reader.countStarlinkPlanes();
+  const total = programme?.total ?? reader.getTotalCount();
   const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
   const value = badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
   return text(
@@ -5019,22 +5018,23 @@ function homeMeta(
     };
   }
   const cfg = AIRLINES[site.scope];
-  const figure = leadCount(stats);
-  const headline = cfg && homeHeadline(cfg, figure);
+  // The title is our own named count: it has no room for an owner and a date.
+  const headline = cfg && homeHeadline(cfg, stats.starlinkCount, stats.totalCount);
   if (!cfg || !headline) return null;
   const { name: lead, count, share } = headline;
   const siteTitle =
     [
-      share && `${lead}: ${count} Planes Have Starlink (${share})`,
+      `${lead}: ${count} Planes Have Starlink (${share})`,
       `${lead}: ${count} Planes Have Starlink`,
-      share && `${lead}: ${count} Planes (${share})`,
-    ].find((t): t is string => !!t && t.length <= TITLE_MAX) ?? `${lead}: ${count}`;
-  if (figure.own) {
+      `${lead}: ${count} Planes (${share})`,
+    ].find((t) => t.length <= TITLE_MAX) ?? `${lead}: ${count}`;
+  const { own } = leadCount(stats);
+  if (own) {
     // The airline's chart figure never stands without its owner and date; the
     // named count follows so the snippet carries both.
     return {
       siteTitle,
-      siteDescription: `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} have Starlink Wi-Fi, by ${cfg.shortName}'s own count ${ownCountAsOf(figure.own)}. We name ${fmt(stats.starlinkCount)} by tail.`,
+      siteDescription: `Yes: ${fmt(own.connected)} of ${fmt(own.total)} ${stats.noun ?? `${cfg.shortName} planes`} have Starlink Wi-Fi, by ${cfg.shortName}'s own count ${ownCountAsOf(own)}. We name ${fmt(stats.starlinkCount)} by tail.`,
     };
   }
   const express = stats.fleetStats?.express;

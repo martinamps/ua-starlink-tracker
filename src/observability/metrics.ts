@@ -632,6 +632,19 @@ export function normalizeSettleRule(raw: string | null | undefined): string {
   return raw && SETTLE_RULE_SET.has(raw) ? raw : "other";
 }
 
+const CHART_REJECT_REASONS: ReadonlySet<string> = new Set([
+  "date_invalid",
+  "date_future",
+  "date_old",
+  "count_invalid",
+  "type_size",
+  "types_left_out",
+]);
+
+export function normalizeChartRejectReason(raw: string | null | undefined): string {
+  return raw && CHART_REJECT_REASONS.has(raw) ? raw : "other";
+}
+
 // ============ Metric Names ============
 
 /**
@@ -644,6 +657,10 @@ export const COUNTERS = {
   // A fleet write refused at the membership gate (fleet-admission.ts) —
   // tags: source (FleetSource), reason (invalid_registration|non_airliner), airline
   FLEET_ROW_REJECTED: "fleet.row_rejected",
+  // An airline's own chart failed its bounds (database/chart-bounds.ts), so
+  // it was not stored (parse) or cannot stand in a headline (sync, read) —
+  // tags: stage (parse|sync|read), reason (normalizeChartRejectReason), airline
+  CHART_REJECTED: "fleet_progress.chart_rejected",
   // Sheet tab list drifted from the gids we know (utils.ts reconcileSheetTabs) —
   // tags: state (vanished_empty|vanished_listed|new), airline
   SHEET_TAB_DRIFT: "sheet.tab_drift",

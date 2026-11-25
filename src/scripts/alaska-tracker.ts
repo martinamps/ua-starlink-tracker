@@ -18,6 +18,16 @@
 import type { Database } from "bun:sqlite";
 import { normalizeAircraftType } from "../airlines/aircraft-families";
 import { AIRLINES } from "../airlines/registry";
+import { validateChartAgainstRoster } from "../database/airline-count";
+import {
+  CHART_MAX_CELL,
+  CHART_MAX_STORE_AGE_DAYS,
+  ChartRejected,
+  chartDateProblem,
+  isCalendarDay,
+  reportChartRejected,
+  utcDay,
+} from "../database/chart-bounds";
 import {
   equippedCountByFamily,
   initializeDatabase,
@@ -67,14 +77,15 @@ export interface ParsedTracker {
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
-/** "Sept. 25, 2026" / "September 25, 2026" → "2026-09-25". */
+/** "Sept. 25, 2026" / "September 25, 2026" → "2026-09-25"; null for a date
+ * the calendar doesn't have ("Feb. 31"). */
 export function parseNewsroomDate(raw: string): string | null {
   const m = raw.match(/([A-Za-z]{3,9})\.?\s+(\d{1,2}),\s*(\d{4})/);
   if (!m) return null;
   const month = MONTHS.indexOf(m[1].slice(0, 3).toLowerCase());
-  const day = Number(m[2]);
-  if (month < 0 || day < 1 || day > 31) return null;
-  return `${m[3]}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  if (month < 0) return null;
+  const iso = `${m[3]}-${String(month + 1).padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  return isCalendarDay(iso) ? iso : null;
 }
 
 function cellText(html: string): string {
@@ -88,17 +99,20 @@ function cellText(html: string): string {
 }
 
 /** A count cell: "-" and blank are 0, "Update complete" in the pending column
- * is 0; anything else non-numeric is unparseable (null). */
+ * is 0; anything else non-numeric, or longer than a fleet of one type can be,
+ * is unparseable (null). */
 function countCell(raw: string): number | null {
   const t = raw.trim();
   if (t === "" || /^[-–—]+$/.test(t) || /complete/i.test(t)) return 0;
   const n = Number(t.replace(/,/g, ""));
-  return Number.isInteger(n) && n >= 0 ? n : null;
+  return Number.isInteger(n) && n >= 0 && n <= CHART_MAX_CELL ? n : null;
 }
 
-/** Throws when the table is missing or any row fails to parse: a half-read
- * chart must never replace the last good one. */
-export function parseAlaskaTracker(html: string): ParsedTracker {
+/** Throws when the table is missing, any row fails to parse, or the chart's
+ * date is in the future or over a year old: a half-read or impossible chart
+ * must never replace the last good one. A date line that can't be read at all
+ * leaves the chart undated, and an undated chart never reaches a headline. */
+export function parseAlaskaTracker(html: string, today = utcDay()): ParsedTracker {
   const tables = html.match(/<table[\s\S]*?<\/table>/gi) ?? [];
   const table =
     tables.find((t) => /aria-label="[^"]*starlink tracker/i.test(t)) ??
@@ -131,7 +145,10 @@ export function parseAlaskaTracker(html: string): ParsedTracker {
   if (rows.length === 0) throw new Error("tracker table has no rows");
 
   const dateLine = html.match(/last updated on\s*([^<]{0,40})/i)?.[1];
-  return { asOf: dateLine ? parseNewsroomDate(dateLine) : null, rows };
+  const asOf = dateLine ? parseNewsroomDate(dateLine) : null;
+  const dated = asOf ? chartDateProblem(asOf, today, CHART_MAX_STORE_AGE_DAYS) : null;
+  if (dated) throw new ChartRejected(dated);
+  return { asOf, rows };
 }
 
 /** Tracker rows → fleet_progress rows, plus one "Totals" rollup per segment. */
@@ -181,7 +198,8 @@ async function fetchTrackerHtml(): Promise<string> {
 
 export async function runAlaskaTrackerSync(
   db: Database,
-  fetchHtml: () => Promise<string> = fetchTrackerHtml
+  fetchHtml: () => Promise<string> = fetchTrackerHtml,
+  today = utcDay()
 ): Promise<AlaskaTrackerResult> {
   return withSpan(
     "scraper.alaska_tracker",
@@ -190,8 +208,9 @@ export async function runAlaskaTrackerSync(
       const airlineTag = normalizeAirlineTag("AS");
       let parsed: ParsedTracker;
       try {
-        parsed = parseAlaskaTracker(await fetchHtml());
+        parsed = parseAlaskaTracker(await fetchHtml(), today);
       } catch (err) {
+        if (err instanceof ChartRejected) reportChartRejected("AS", "parse", err.problem);
         warn("alaska-tracker: fetch/parse failed; keeping the last stored chart", err);
         metrics.increment(COUNTERS.SCRAPER_SYNC, {
           source: "alaska_tracker",
@@ -221,6 +240,11 @@ export async function runAlaskaTrackerSync(
         "AS",
         rows.filter((r) => r.type_code === "Totals")
       );
+      // Stored either way, since /fleet shows it as Alaska's with its date;
+      // a chart far from our fleet list is kept out of the headline by the
+      // read and reported here once a day, where the job's log is read.
+      const offList = validateChartAgainstRoster(db, "AS", today);
+      if (offList) reportChartRejected("AS", "sync", offList);
 
       let settled = 0;
       for (const r of parsed.rows) {

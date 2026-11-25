@@ -1,4 +1,3 @@
-import type { leadCount } from "../../airlines/published-count";
 import type { AirlineConfig } from "../../airlines/registry";
 import { denominatorIsPublishable } from "../../utils/share-cards";
 import { fmt, pct } from "../ui/format";
@@ -8,26 +7,26 @@ export interface HomeHeadline {
   name: string;
   /** "617 of 1,674" */
   count: string;
-  /** "37%"; null for the airline's own chart figure, whose printed share is
-   * the airline's rounding, not ours. */
-  share: string | null;
+  /** "37%" */
+  share: string;
 }
 
 /**
  * The airline homepage's one headline. The <title>, the H1 and WebPage.name
  * all read from it: Google replaced a counted <title> with the number-free H1
  * while the two disagreed. Null when the ratio isn't publishable.
+ *
+ * Always this site's own count of named tails, never the airline's chart
+ * figure: none of the three has room for whose figure it is and its date, and
+ * a count that stands bare reads as ours.
  */
-export function homeHeadline(
-  cfg: AirlineConfig,
-  { n, total, own }: ReturnType<typeof leadCount>
-): HomeHeadline | null {
+export function homeHeadline(cfg: AirlineConfig, n: number, total: number): HomeHeadline | null {
   if (!denominatorIsPublishable(n, total, cfg.rollout.rosterIsProgramScope)) return null;
   return {
     name: `${cfg.shortName} Starlink Tracker`,
     count: `${fmt(n)} of ${fmt(total)}`,
     // pct(), not Math.round: the hero and /fleet floor shares, and the title
     // must never state a higher share than the page under it.
-    share: own ? null : pct(n, total),
+    share: pct(n, total),
   };
 }
