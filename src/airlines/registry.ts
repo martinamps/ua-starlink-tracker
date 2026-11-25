@@ -463,7 +463,8 @@ const AIRLINE_DEFS = {
       keywords:
         "hawaiian airlines starlink, hawaiian airlines wifi, does hawaiian have wifi, hawaiian a330 starlink, hawaiian a321neo wifi, hawaiian 717 wifi, hawaiian interisland wifi, free wifi hawaiian airlines",
       accentColor: "#413691",
-      accentText: "#928ac9",
+      // Lifted like Alaska's: 4.5:1 on its own 20% tint, a primary button's fill.
+      accentText: "#9c95ce",
       accentColorDim: "#6b5fb3",
       faviconAccent: "#9d4edd", // Pualani purple, lifted to glow on dark
       socialImagePath: "/static/social-image-ha.webp",
@@ -657,7 +658,8 @@ const AIRLINE_DEFS = {
       keywords:
         "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, B787 starlink, check qatar flight starlink, qr wifi",
       accentColor: "#5c0632",
-      accentText: "#d371a3",
+      // Lifted like Alaska's: 4.5:1 on its own 20% tint, a primary button's fill.
+      accentText: "#d77caa",
       accentColorDim: "#8a2851",
       faviconAccent: "#a3204e", // Qatar oryx burgundy, lifted
       socialImagePath: "/static/social-image-qr.webp",
@@ -739,7 +741,8 @@ const AIRLINE_DEFS = {
       keywords:
         "air france starlink, air france wifi, air france 777 starlink, air france a350 wifi, air france a220 wifi",
       accentColor: "#002157",
-      accentText: "#5991ed",
+      // Lifted like Alaska's: 4.5:1 on its own 20% tint, a primary button's fill.
+      accentText: "#689bef",
       accentColorDim: "#2a4a80",
       faviconAccent: "#e4002b",
       socialImagePath: "/static/social-image-af.webp",

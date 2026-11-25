@@ -24,13 +24,20 @@ export const PROB_TIER_TONE = {
   unlikely: "neutral",
 } as const satisfies Record<"likely" | "maybe" | "unlikely", Tone>;
 
+const NEUTRAL_COLOR = "var(--color-text-muted)";
+
 /** The tone's color. Neutral text is the muted text grey, as in TONE_TEXT. */
 export const toneColor = (tone: Tone) =>
-  tone === "neutral" ? "var(--color-text-muted)" : `var(--color-${tone})`;
+  tone === "neutral" ? NEUTRAL_COLOR : `var(--color-${tone})`;
 
-/** Inline colors for a tinted pill: a color, and that color at 12% for its fill. */
+/** Inline colors for a tinted pill: a color, and that color at 12% for its
+ * fill. The muted grey on its own tint is 4.4:1, under the 4.5:1 text needs,
+ * so a neutral pill's words take the secondary grey, 5.4:1 there. */
 export function pillColors(color: string): { color: string; background: string } {
-  return { color, background: `color-mix(in srgb, ${color} 12%, transparent)` };
+  return {
+    color: color === NEUTRAL_COLOR ? "var(--color-text-secondary)" : color,
+    background: `color-mix(in srgb, ${color} 12%, transparent)`,
+  };
 }
 
 /** pillColors as a style attribute, for string-rendered pills. */

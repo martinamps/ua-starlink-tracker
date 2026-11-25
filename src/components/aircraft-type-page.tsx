@@ -17,7 +17,7 @@ import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "..
 import type { AircraftSpec } from "../utils/aircraft-specs";
 import { article } from "../utils/grammar";
 import { Faq } from "./faq";
-import { TailGrid } from "./fleet/hangar";
+import { TailGrid, TypeTailList } from "./fleet/hangar";
 import {
   MovementsPanel,
   PipelineBar,
@@ -29,7 +29,17 @@ import { ProviderLegend, providerLabels } from "./fleet/providers";
 import { ShareBarRow, providerCounts } from "./fleet/type-bars";
 import { FlightSearchForm } from "./flight-search-form";
 import type { Link } from "./layout";
-import { EYEBROW, H2, LINK, PANEL, PageHeader, PageShell, StatInline } from "./layout";
+import {
+  EYEBROW,
+  H2,
+  LINK,
+  PANEL,
+  PageHeader,
+  PageShell,
+  SkipLink,
+  SkipTarget,
+  StatInline,
+} from "./layout";
 import {
   type TypeOutlookRef,
   forecastSentence,
@@ -112,7 +122,7 @@ function TailMatrix({
       <div className={EYEBROW}>
         Wi-Fi on {airline} {def.short}s
       </div>
-      <TailGrid tails={data.tails} anchorBase="/fleet" size="lg" />
+      <TailGrid tails={data.tails} size="lg" />
       <ProviderLegend counts={providerCounts(data.tails)} labels={labels} className="mt-3" />
       <p className="text-xs text-muted mt-2">
         {copy.checksEveryTail
@@ -362,6 +372,35 @@ function RoutesSection({ def, data }: { def: AircraftPageDef; data: AircraftType
   );
 }
 
+/** Every tail of the type as a row: what each square above jumps to, and the
+ * way in for a finger or a keyboard, which the 12px squares are not. Last on
+ * the page, so nothing a reader came for sits below a long list. */
+function TailsSection({
+  site,
+  def,
+  data,
+  airline,
+}: { site: SiteConfig; def: AircraftPageDef; data: AircraftTypePageData; airline: string }) {
+  if (data.tails.length === 0) return null;
+  const ownPages = data.tails.every((t) => tailHref(site, t.tail));
+  const labels = providerLabels(tenantCopy(data.airline).checksEveryTail ? "tail" : "type");
+  return (
+    <section className={`${CARD} relative`} id="tails">
+      <SkipLink to="tails-end">Skip the tail list</SkipLink>
+      <h2 className={H2_CARD}>{`${airline} ${def.short} tail numbers`}</h2>
+      <p className="text-sm text-muted mb-3">
+        {`All ${fmt(data.tails.length)}, in the order of the squares above. Click one ${
+          ownPages
+            ? "for its page: Starlink status, checks and flights."
+            : "to open it on FlightAware."
+        }`}
+      </p>
+      <TypeTailList tails={data.tails} labels={labels} tailHref={(tail) => tailHref(site, tail)} />
+      <SkipTarget id="tails-end">End of the tail list.</SkipTarget>
+    </section>
+  );
+}
+
 function dominantOther(data: AircraftTypePageData): WifiProvider | null {
   const others = (["viasat", "panasonic", "thales", "none"] as const).filter(
     (p) => data.providers[p] > 0
@@ -581,6 +620,7 @@ export default function AircraftTypePage({
           }))}
         />
         <SiblingsSection siblings={siblings} airline={airline} />
+        <TailsSection site={site} def={def} data={data} airline={airline} />
 
         <p className="text-sm text-muted text-center">
           {checkFlight ? (

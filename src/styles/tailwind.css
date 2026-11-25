@@ -36,9 +36,14 @@
   --color-warn: var(--color-warn);
   --color-danger: var(--color-danger);
   --color-info: var(--color-info);
+  --color-neutral: var(--color-neutral);
   --color-trial: var(--color-trial);
   --font-display: var(--font-display);
 }
+
+/* `neutral` is the edge of fields and bordered buttons (border-neutral):
+   3.2:1 against a panel, where border-subtle is 1.3:1 and stays the colour of
+   panels, rules and link chips. */
 
 /* `base` can't be a theme colour (text-base is a font size), so its one
    utility is spelled out. In the utilities layer like every other colour, so a
@@ -242,6 +247,14 @@
   background: color-mix(in srgb, var(--color-accent) 20%, transparent);
   opacity: 1;
   scroll-margin-top: 5rem;
+}
+/* A type page's tail list: one element per row, its glyph from data-dot.
+   Rows without one keep the empty box, so the tails line up. */
+.type-tails > a::before {
+  content: attr(data-dot);
+  width: 0.8em;
+  text-align: center;
+  flex-shrink: 0;
 }
 .tail-dot {
   width: 0.8em;

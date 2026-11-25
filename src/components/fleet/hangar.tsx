@@ -9,7 +9,7 @@ import type {
 } from "../../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../../utils/aircraft-specs";
 import { reportedClause } from "../../utils/reported-reason";
-import { H2, SECTION_WIDE } from "../layout";
+import { H2, SECTION_WIDE, SkipLink, SkipTarget } from "../layout";
 import { fmt, pct } from "../ui/format";
 import { type PipelineMap, fittingPhrase, pipelinePhrase } from "./pipeline";
 import { PROVIDER_LABEL, PROVIDER_ORDER, ProviderLegend, WIFI_CLASS } from "./providers";
@@ -50,6 +50,11 @@ function tailTitle(t: FleetTail, marks?: TailMarks): string {
   return `${t.tail} · ${PROVIDER_LABEL[t.provider]}${marks ? markNote(marks, t.tail) : ""}`;
 }
 
+/** A tail's title after the tail itself: its Wi-Fi system and any mark. */
+function wifiNote(t: FleetTail, marks?: TailMarks): string {
+  return tailTitle(t, marks).slice(`${t.tail} · `.length);
+}
+
 // The two pipeline states worth a visual on the grid — "scheduled" stays
 // title-only (a dashed 8px cell reads as rendering noise, not information).
 function markCellClass(m: TailMarks | undefined, tail: string): string {
@@ -63,7 +68,8 @@ function markCellClass(m: TailMarks | undefined, tail: string): string {
 
 /**
  * One square per tail, colored by Wi-Fi provider, each linking to its row in
- * the /fleet registry. `anchorBase` is "/fleet" off that page.
+ * the list of tails below it on the same page (the /fleet registry, a type
+ * page's tail list). `anchorBase` names another page's list.
  */
 export function TailGrid({
   tails,
@@ -91,9 +97,9 @@ export function TailGrid({
           href={`${anchorBase}#t-${t.tail}`}
           title={tailTitle(t, marks)}
           aria-label={tailTitle(t, marks)}
-          // On /fleet the registry below links every tail again, so the
-          // squares stay out of the tab order: a keyboard would otherwise
-          // stop on each of the fleet's aircraft twice.
+          // The list below links every tail again, in rows a finger can
+          // hit, so the squares stay out of the tab order: a keyboard would
+          // otherwise stop on each aircraft twice.
           tabIndex={anchorBase === "" ? -1 : undefined}
           className={`${WIFI_CLASS[t.provider]}${markCellClass(marks, t.tail)} ${cell} rounded-[1px] hover:scale-150 transition-transform`}
         />
@@ -102,7 +108,7 @@ export function TailGrid({
   );
 }
 
-function SpecCard({ name, spec }: { name: string; spec: AircraftSpec }) {
+function SpecCard({ id, name, spec }: { id: string; name: string; spec: AircraftSpec }) {
   const row = (label: string, value: string | number, unit = "") => (
     <div className="flex justify-between gap-4">
       <dt className="text-muted">{label}</dt>
@@ -113,7 +119,14 @@ function SpecCard({ name, spec }: { name: string; spec: AircraftSpec }) {
     </div>
   );
   return (
-    <span className="spec-card absolute top-full left-0 mt-1 w-64 bg-surface-elevated border border-subtle rounded-lg p-3 text-xs shadow-xl z-20 block">
+    <span
+      id={id}
+      // Out of the block heading's name, which read the whole card aloud
+      // ("CRJ700 CRJ700 Seats 70 Wingspan…"); the trigger still describes
+      // itself with it.
+      aria-hidden="true"
+      className="spec-card absolute top-full left-0 mt-1 w-64 bg-surface-elevated border border-subtle rounded-lg p-3 text-xs shadow-xl z-20 block"
+    >
       <span className="block font-display text-sm text-primary mb-2">{name}</span>
       <dl className="space-y-1 mb-2">
         {row("Seats", spec.seats)}
@@ -144,6 +157,7 @@ function FamilyBlock({
 }) {
   const spec = AIRCRAFT_SPECS[fam.family];
   const name = familyLabel(fam.family, typeLinks);
+  const specId = `spec-${fam.family.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
     <details
       className="fam-block bg-surface border border-subtle rounded"
@@ -157,9 +171,10 @@ function FamilyBlock({
               spec ? "text-secondary hover:text-accent cursor-help" : "text-secondary"
             }`}
             tabIndex={spec ? 0 : -1}
+            aria-describedby={spec ? specId : undefined}
           >
             <span className="block truncate">{name}</span>
-            {spec && <SpecCard name={name} spec={spec} />}
+            {spec && <SpecCard id={specId} name={name} spec={spec} />}
           </span>
           <span className="text-xs text-muted tabular-nums">
             {fmt(fam.starlink)}/{fmt(fam.total)}
@@ -262,7 +277,9 @@ export function HangarFloor({
       <script
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
         dangerouslySetInnerHTML={{
-          __html: `if(matchMedia('(max-width:767px)').matches)document.querySelectorAll('.fam-block').forEach(d=>d.removeAttribute('open'))`,
+          // From 768px the blocks are always open and a mouse can't fold
+          // them, so the keyboard doesn't stop on a fold control either.
+          __html: `if(matchMedia('(max-width:767px)').matches)document.querySelectorAll('.fam-block').forEach(d=>d.removeAttribute('open'));else document.querySelectorAll('.fam-summary').forEach(s=>{s.tabIndex=-1})`,
         }}
       />
     </section>
@@ -310,6 +327,7 @@ export function TailRegistry({
   const ownPages = allTails.length > 0 && allTails.every((t) => tailHref?.(t.tail));
   return (
     <section className={SECTION_WIDE}>
+      {allTails.length > 0 && <SkipLink to="tail-registry-end">Skip the tail registry</SkipLink>}
       <h2 className={H2}>Tail registry</h2>
       <p className="mt-1 mb-3 text-sm text-secondary">
         All {fmt(allTails.length)} aircraft. Click one{" "}
@@ -325,6 +343,7 @@ export function TailRegistry({
         {allTails.map((t) => {
           const dot = registryDot(t, marks);
           const own = tailHref?.(t.tail) ?? null;
+          const abbr = t.family === "unknown" ? "—" : familyLabel(t.family, typeLinks);
           return (
             <a
               key={t.tail}
@@ -337,19 +356,69 @@ export function TailRegistry({
                     rel: "nofollow noreferrer noopener",
                   })}
               title={`${familyLabel(t.family, typeLinks)} · ${tailTitle(t, marks)}`}
+              // The row shows a tail and a type; its Wi-Fi is colour and a
+              // glyph, so the name says it (a title alone is often skipped).
+              // It opens with the row's own text, space and all, as speech
+              // control expects (WCAG 2.5.3).
+              aria-label={`${t.tail} ${abbr} · ${wifiNote(t, marks)}`}
               className={registryClass(t, marks)}
             >
               <span aria-hidden="true" className={`tail-dot${dot.cls}`}>
                 {dot.ch}
               </span>
-              <span className="tail-num">{t.tail}</span>
-              <span className="tail-abbr">
-                {t.family === "unknown" ? "—" : familyLabel(t.family, typeLinks)}
-              </span>
+              <span className="tail-num">{t.tail}</span> <span className="tail-abbr">{abbr}</span>
             </a>
           );
         })}
       </div>
+      {allTails.length > 0 && (
+        <SkipTarget id="tail-registry-end">End of the tail registry.</SkipTarget>
+      )}
     </section>
+  );
+}
+
+/**
+ * A type page's tails as rows a finger or a keyboard can hit: its squares are
+ * 12px and out of the tab order, and each jumps to its row here. One element
+ * per tail, the glyph drawn by CSS from data-dot, so a type with 200 aircraft
+ * adds 200 elements and not 600.
+ */
+export function TypeTailList({
+  tails,
+  labels = PROVIDER_LABEL,
+  tailHref,
+}: {
+  tails: FleetTail[];
+  labels?: Record<WifiProvider, string>;
+  /** The tail's own page where this host has one; otherwise the row opens FlightAware. */
+  tailHref: (tail: string) => string | null;
+}) {
+  return (
+    <div className="type-tails font-mono text-xs leading-[2] columns-[12ch] gap-x-3">
+      {tails.map((t) => {
+        const own = tailHref(t.tail);
+        const lit = isStarlinkProvider(t.provider);
+        return (
+          <a
+            key={t.tail}
+            id={`t-${t.tail}`}
+            {...(own
+              ? { href: own }
+              : {
+                  href: `https://flightaware.com/live/flight/${t.tail}`,
+                  target: "_blank",
+                  rel: "nofollow noreferrer noopener",
+                })}
+            title={labels[t.provider]}
+            aria-label={`${t.tail} · ${labels[t.provider]}`}
+            data-dot={lit ? (t.provider === "starlink" ? "◉" : "◍") : undefined}
+            className={lit ? "tail-sl" : "tail-dim"}
+          >
+            {t.tail}
+          </a>
+        );
+      })}
+    </div>
   );
 }

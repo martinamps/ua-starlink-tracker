@@ -84,10 +84,11 @@ const QRHero = ({ stats, statSentence }: HeroProps) => {
           <StatValue size="lg" className="mt-2">
             {fmt(stats.starlinkCount)}
           </StatValue>
-          <div className="text-xs text-secondary mt-1">
+          {/* A paragraph, so index.html's rule underlines the source link in it. */}
+          <p className="text-xs text-secondary mt-1">
             Not checked plane by plane.
             <OwnFigure />
-          </div>
+          </p>
         </div>
         <div className="bg-surface p-5 text-center">
           <Eyebrow className="">Status</Eyebrow>

@@ -18,7 +18,7 @@ import { AIRLINES, type AirlineConfig } from "../../airlines/registry";
 import { FILTER_ACTIVE, FILTER_BUTTON, FILTER_INACTIVE } from "../../client/aircraft-list";
 import type { Aircraft, Flight } from "../../types";
 import { toIata } from "../../utils/airport-code";
-import { Panel, SECTION_WIDE, SectionTitle } from "../layout";
+import { Panel, SECTION_WIDE, SectionTitle, SkipLink, SkipTarget } from "../layout";
 import { fmt, formatPillTime } from "../ui/format";
 
 // SSR'ing every fleet row made the homepage a ~5 MB document with thousands of
@@ -140,7 +140,7 @@ function FlightPills({
       {mobileRemaining > 0 && (
         <button
           type="button"
-          className={`expand-flights ${expandVisibility} items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10`}
+          className={`expand-flights ${expandVisibility} items-center px-2 py-1 border border-accent/70 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10`}
           aria-expanded="false"
         >
           <span className="pill-more">
@@ -149,8 +149,14 @@ function FlightPills({
               <span className="hidden md:inline xl:hidden">+{tabletRemaining}</span>
             )}
             {desktopRemaining > 0 && <span className="hidden xl:inline">+{desktopRemaining}</span>}
+            {/* Only the count for this width is displayed, so the button's
+                name reads "+4 more flights" rather than a bare "+4". */}
+            <span className="sr-only"> more flights</span>
           </span>
-          <span className="pill-less">−</span>
+          <span className="pill-less">
+            <span aria-hidden="true">−</span>
+            <span className="sr-only">Show fewer flights</span>
+          </span>
         </button>
       )}
     </div>
@@ -262,6 +268,9 @@ export function AircraftList({
 
   return (
     <Panel pad="none" className={`${SECTION_WIDE} overflow-hidden`}>
+      {/* Each row is a link, its flight pills and a "+N" button: without this a
+          keyboard heading for what follows walks every one of them. */}
+      {shown.length > 0 && <SkipLink to="aircraft-list-end">Skip the aircraft list</SkipLink>}
       <SectionTitle className="px-4 md:px-6 pt-4 pb-0">{title}</SectionTitle>
       <div className="px-4 md:px-6 py-3 border-b border-subtle">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -273,7 +282,7 @@ export function AircraftList({
               type="text"
               id="aircraft-search"
               placeholder="Tail, route (sfo-lax) or flight"
-              className="w-full font-mono text-xs sm:text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+              className="w-full font-mono text-xs sm:text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
             />
             <svg
               className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted"
@@ -468,6 +477,9 @@ export function AircraftList({
             </>
           )}
         </p>
+      )}
+      {shown.length > 0 && (
+        <SkipTarget id="aircraft-list-end">End of the aircraft list.</SkipTarget>
       )}
     </Panel>
   );

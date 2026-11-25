@@ -151,6 +151,11 @@ describe("aircraft-type page links", () => {
         expect(status.get(href), `${page} → ${href}`).toBe(200);
         if (/^\/fleet\/[a-z0-9-]+$/.test(href)) typeLinks.set(href, (typeLinks.get(href) ?? 0) + 1);
       }
+      // A square on /fleet or a type page jumps to its tail's row on the same page.
+      for (const [, tail] of html.matchAll(/href="#t-([^"]+)"/g)) {
+        expect(html.includes(`id="t-${tail}"`), `${page} → #t-${tail}`).toBe(true);
+        anchors++;
+      }
       if (page.startsWith("/check-flight/")) {
         for (const [href, n] of typeLinks) expect(n, `${page} links ${href} ${n}×`).toBe(1);
       }

@@ -167,22 +167,53 @@ export function StatValue({
   );
 }
 
+/** Shown only on keyboard focus, in the corner of its `relative` parent. */
+const SKIP_LINK =
+  "sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-2 focus:z-50 focus:rounded focus:border focus:border-accent focus:bg-surface-elevated focus:px-3 focus:py-2 focus:text-sm focus:text-primary";
+
+/**
+ * A way past a long run of links for a keyboard: first Tab stop of its
+ * `relative` section, landing on the `SkipTarget` after the run. The page's
+ * own skip link jumps the site bar; this jumps a list that can hold hundreds
+ * of stops before the footer.
+ */
+export function SkipLink({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <a href={`#${to}`} className={SKIP_LINK}>
+      {children}
+    </a>
+  );
+}
+
+/** Where a SkipLink lands: focusable by script only, so the next Tab moves on from here. */
+export function SkipTarget({ id, children }: { id: string; children: React.ReactNode }) {
+  return (
+    <p id={id} tabIndex={-1} className="sr-only">
+      {children}
+    </p>
+  );
+}
+
 type ButtonVariant = "primary" | "secondary";
 type ButtonSize = "sm" | "md" | "lg";
 
+// A bordered button's edge is border-neutral, like a field's: 3.2:1 on a panel
+// where border-subtle is 1.3:1 (WCAG 1.4.11 asks 3:1 of a control's boundary).
+// On hover a primary button's text goes to white: the accent on its own
+// deepened tint fell to 3.8:1.
 const BUTTON: Record<`${ButtonVariant}-${ButtonSize}`, string> = {
   "primary-sm":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-3 py-1.5 font-display text-sm text-accent transition-colors hover:bg-accent/30",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-3 py-1.5 font-display text-sm text-accent transition-colors hover:bg-accent/30 hover:text-primary",
   "primary-md":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-2 font-display text-accent transition-colors hover:bg-accent/30",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-2 font-display text-accent transition-colors hover:bg-accent/30 hover:text-primary",
   "primary-lg":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-3 font-display text-accent transition-colors hover:bg-accent/30",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-3 font-display text-accent transition-colors hover:bg-accent/30 hover:text-primary",
   "secondary-sm":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-subtle bg-surface-elevated px-3 py-1.5 font-display text-sm text-secondary transition-colors hover:border-accent hover:text-accent",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-neutral bg-surface-elevated px-3 py-1.5 font-display text-sm text-secondary transition-colors hover:border-accent hover:text-accent",
   "secondary-md":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-subtle bg-surface-elevated px-5 py-2 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-neutral bg-surface-elevated px-5 py-2 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
   "secondary-lg":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-subtle bg-surface-elevated px-5 py-3 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-neutral bg-surface-elevated px-5 py-3 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
 };
 
 /** Classes for a <button> or a link styled as one. */
@@ -501,12 +532,7 @@ export function PageShell({
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
       {/* First in the tab order, shown only on focus: the site bar's links
           repeat on every page, and /fleet puts hundreds more before its end. */}
-      <a
-        href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-2 focus:z-50 focus:rounded focus:border focus:border-accent focus:bg-surface-elevated focus:px-3 focus:py-2 focus:text-sm focus:text-primary"
-      >
-        Skip to content
-      </a>
+      <SkipLink to="main">Skip to content</SkipLink>
       {before}
       <SiteBar site={site} currentPath={currentPath} />
       {/* A column like its parent, so each page's header and sections lay out

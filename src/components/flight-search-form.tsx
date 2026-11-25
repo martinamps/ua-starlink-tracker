@@ -18,7 +18,7 @@ import { ClientScriptTag, buttonClass } from "./layout";
 
 /** The form's input look, for `extra` fields (a select) that must match it. */
 export const FIELD_CLASS =
-  "w-full min-w-0 min-h-11 rounded border border-subtle bg-base px-3 py-2 text-base text-primary placeholder-muted focus:border-accent focus:outline-none sm:text-sm";
+  "w-full min-w-0 min-h-11 rounded border border-neutral bg-base px-3 py-2 text-base text-primary placeholder-muted focus:border-accent focus:outline-none sm:text-sm";
 const LABEL = "mb-1 block text-xs text-muted";
 
 /** Airline name (as /api/check-any-flight spells it) → that airline's own
