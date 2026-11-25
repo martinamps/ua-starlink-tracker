@@ -1,25 +1,61 @@
+import type { CSSProperties } from "react";
 import { isStarlinkProvider } from "../../database/sql/equipped";
-import type { FleetFamily, FleetTail, WifiProvider } from "../../types";
+import type {
+  FleetFamily,
+  FleetTail,
+  ReportedInstall,
+  SheetModNote,
+  WifiProvider,
+} from "../../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../../utils/aircraft-specs";
+import { reportedClause } from "../../utils/reported-reason";
 import { H2, SECTION_WIDE } from "../layout";
 import { fmt, pct } from "../ui/format";
-import { type PipelineMap, pipelinePhrase } from "./pipeline";
+import { type PipelineMap, fittingPhrase, pipelinePhrase } from "./pipeline";
 import { PROVIDER_LABEL, PROVIDER_ORDER, ProviderLegend, WIFI_CLASS } from "./providers";
 import { type FleetTypeLink, familyLabel, providerCounts } from "./type-bars";
 
-function pipelineNote(p: PipelineMap, tail: string): string {
-  const row = p.get(tail);
-  return row ? ` · ${pipelinePhrase(row.state, row.mod_location)}` : "";
+/** Sheet-listed tails no count includes, by tail (FleetPageData.sheetReported). */
+export type ReportedMap = Map<string, ReportedInstall>;
+
+/** The fleet sheet's Starlink hangar notes, by tail (FleetPageData.sheetFitting). */
+export type FittingMap = Map<string, SheetModNote>;
+
+/** The marks a tail carries beyond its provider. The sheet's own listing
+ * outranks the progress workbook's colour: it is the list we count from. */
+export interface TailMarks {
+  pipeline: PipelineMap;
+  reported: ReportedMap;
+  fitting: FittingMap;
 }
 
-function tailTitle(t: FleetTail, pipeline?: PipelineMap): string {
-  return `${t.tail} · ${PROVIDER_LABEL[t.provider]}${pipeline ? pipelineNote(pipeline, t.tail) : ""}`;
+/** A hangar note the sheet is sure of: dated and per tail, so it speaks first. */
+function fittingNow(m: TailMarks | undefined, tail: string): SheetModNote | null {
+  const note = m?.fitting.get(tail);
+  return note && !note.unsure ? note : null;
+}
+
+function markNote(m: TailMarks, tail: string): string {
+  const fitting = fittingNow(m, tail);
+  if (fitting) return ` · ${fittingPhrase(fitting)}`;
+  const reported = m.reported.get(tail);
+  if (reported) return ` · sheet lists Starlink, not counted: ${reportedClause(reported)}`;
+  const row = m.pipeline.get(tail);
+  if (row) return ` · ${pipelinePhrase(row.state, row.mod_location)}`;
+  const doubted = m.fitting.get(tail);
+  return doubted ? ` · ${fittingPhrase(doubted)}` : "";
+}
+
+function tailTitle(t: FleetTail, marks?: TailMarks): string {
+  return `${t.tail} · ${PROVIDER_LABEL[t.provider]}${marks ? markNote(marks, t.tail) : ""}`;
 }
 
 // The two pipeline states worth a visual on the grid — "scheduled" stays
 // title-only (a dashed 8px cell reads as rendering noise, not information).
-function pipelineCellClass(p: PipelineMap | undefined, tail: string): string {
-  const state = p?.get(tail)?.state;
+function markCellClass(m: TailMarks | undefined, tail: string): string {
+  if (fittingNow(m, tail)) return " pipe-mod";
+  if (m?.reported.has(tail)) return " pipe-verif";
+  const state = m?.pipeline.get(tail)?.state;
   if (state === "in_mod") return " pipe-mod";
   if (state === "verification_needed") return " pipe-verif";
   return "";
@@ -31,12 +67,12 @@ function pipelineCellClass(p: PipelineMap | undefined, tail: string): string {
  */
 export function TailGrid({
   tails,
-  pipeline,
+  marks,
   anchorBase = "",
   size = "sm",
 }: {
   tails: FleetTail[];
-  pipeline?: PipelineMap;
+  marks?: TailMarks;
   anchorBase?: string;
   /** "sm" packs ten 8px cells per hangar block; "lg" wraps 12px cells to the container. */
   size?: "sm" | "lg";
@@ -53,9 +89,13 @@ export function TailGrid({
         <a
           key={t.tail}
           href={`${anchorBase}#t-${t.tail}`}
-          title={tailTitle(t, pipeline)}
-          aria-label={tailTitle(t, pipeline)}
-          className={`${WIFI_CLASS[t.provider]}${pipelineCellClass(pipeline, t.tail)} ${cell} rounded-[1px] hover:scale-150 transition-transform`}
+          title={tailTitle(t, marks)}
+          aria-label={tailTitle(t, marks)}
+          // On /fleet the registry below links every tail again, so the
+          // squares stay out of the tab order: a keyboard would otherwise
+          // stop on each of the fleet's aircraft twice.
+          tabIndex={anchorBase === "" ? -1 : undefined}
+          className={`${WIFI_CLASS[t.provider]}${markCellClass(marks, t.tail)} ${cell} rounded-[1px] hover:scale-150 transition-transform`}
         />
       ))}
     </div>
@@ -93,12 +133,12 @@ function SpecCard({ name, spec }: { name: string; spec: AircraftSpec }) {
 
 function FamilyBlock({
   fam,
-  pipeline,
+  marks,
   typeLink,
   typeLinks,
 }: {
   fam: FleetFamily;
-  pipeline: PipelineMap;
+  marks: TailMarks;
   typeLink?: FleetTypeLink;
   typeLinks: Map<string, FleetTypeLink>;
 }) {
@@ -138,7 +178,7 @@ function FamilyBlock({
         </svg>
       </summary>
       <div className="px-2 pb-2">
-        <TailGrid tails={fam.tails} pipeline={pipeline} />
+        <TailGrid tails={fam.tails} marks={marks} />
         {typeLink && (
           <a
             href={`/fleet/${typeLink.slug}`}
@@ -154,19 +194,28 @@ function FamilyBlock({
 
 export function HangarFloor({
   families,
-  pipeline,
+  marks,
   typeLinks,
   labels = PROVIDER_LABEL,
 }: {
   families: FleetFamily[];
-  pipeline: PipelineMap;
+  marks: TailMarks;
   typeLinks: Map<string, FleetTypeLink>;
   labels?: Record<WifiProvider, string>;
 }) {
-  const counts = providerCounts(families.flatMap((f) => f.tails));
-  const count = (state: string) => [...pipeline.values()].filter((r) => r.state === state).length;
-  const inMod = count("in_mod");
-  const verifying = count("verification_needed");
+  const hangarFamilies = families.filter((f) => !f.outsideProgramme);
+  const counts = providerCounts(hangarFamilies.flatMap((f) => f.tails));
+  const { pipeline, reported } = marks;
+  const fitting = new Set([...marks.fitting.values()].filter((n) => !n.unsure).map((n) => n.tail));
+  // A fitting tail wears the install mark, and a reported one the verification
+  // mark, whatever the workbook says of either.
+  const count = (state: string) =>
+    [...pipeline.values()].filter(
+      (r) => r.state === state && !reported.has(r.tail) && !fitting.has(r.tail)
+    ).length;
+  const inMod = count("in_mod") + fitting.size;
+  const verifying =
+    count("verification_needed") + [...reported.keys()].filter((t) => !fitting.has(t)).length;
   return (
     <section className={SECTION_WIDE}>
       <h2 className={H2}>Every aircraft</h2>
@@ -201,11 +250,11 @@ export function HangarFloor({
         }
       />
       <div className="fam-container gap-3">
-        {families.map((fam) => (
+        {hangarFamilies.map((fam) => (
           <FamilyBlock
             key={fam.family}
             fam={fam}
-            pipeline={pipeline}
+            marks={marks}
             typeLink={typeLinks.get(fam.family)}
             typeLinks={typeLinks}
           />
@@ -221,16 +270,22 @@ export function HangarFloor({
   );
 }
 
-function registryClass(t: FleetTail, pipeline: PipelineMap): string {
+function registryClass(t: FleetTail, marks: TailMarks): string {
   if (isStarlinkProvider(t.provider)) return "tail-sl";
-  return pipeline.has(t.tail) ? "tail-dim tail-pipe" : "tail-dim";
+  const { pipeline, reported } = marks;
+  return pipeline.has(t.tail) || reported.has(t.tail) || fittingNow(marks, t.tail)
+    ? "tail-dim tail-pipe"
+    : "tail-dim";
 }
 
-function registryDot(t: FleetTail, pipeline: PipelineMap): { ch: string; cls: string } {
+function registryDot(t: FleetTail, marks: TailMarks): { ch: string; cls: string } {
+  const { pipeline, reported } = marks;
   if (t.provider === "starlink") return { ch: "◉", cls: "" };
   // Counted with Starlink, so it keeps the lit row, but a half-filled glyph
   // says nobody has seen it carrying Starlink yet.
   if (t.provider === "starlink_listed") return { ch: "◍", cls: "" };
+  if (fittingNow(marks, t.tail)) return { ch: "○", cls: " dot-mod" };
+  if (reported.has(t.tail)) return { ch: "◎", cls: " dot-verif" };
   const state = pipeline.get(t.tail)?.state;
   if (state === "in_mod") return { ch: "○", cls: " dot-mod" };
   if (state === "verification_needed") return { ch: "◎", cls: " dot-verif" };
@@ -240,35 +295,50 @@ function registryDot(t: FleetTail, pipeline: PipelineMap): { ch: string; cls: st
 
 export function TailRegistry({
   allTails,
-  pipeline,
+  marks,
   typeLinks,
   labels = PROVIDER_LABEL,
+  tailHref,
 }: {
   allTails: FleetTail[];
-  pipeline: PipelineMap;
+  marks: TailMarks;
   typeLinks: Map<string, FleetTypeLink>;
   labels?: Record<WifiProvider, string>;
+  /** The tail's own page where this host has one; otherwise the row opens FlightAware. */
+  tailHref?: (tail: string) => string | null;
 }) {
   const counts = providerCounts(allTails);
+  const ownPages = allTails.length > 0 && allTails.every((t) => tailHref?.(t.tail));
   return (
     <section className={SECTION_WIDE}>
       <h2 className={H2}>Tail registry</h2>
       <p className="mt-1 mb-3 text-sm text-secondary">
-        All {fmt(allTails.length)} aircraft. Click one to open it on FlightAware.
+        All {fmt(allTails.length)} aircraft. Click one{" "}
+        {ownPages
+          ? "for its page: Starlink status, checks and flights."
+          : "to open it on FlightAware."}
       </p>
       <ProviderLegend counts={counts} labels={labels} className="mb-4" />
-      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[1.7] columns-[20ch] gap-x-3">
+      <div
+        className="tail-registry bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[2] columns-[20ch] gap-x-3"
+        style={{ "--tail-rows": allTails.length } as CSSProperties}
+      >
         {allTails.map((t) => {
-          const dot = registryDot(t, pipeline);
+          const dot = registryDot(t, marks);
+          const own = tailHref?.(t.tail) ?? null;
           return (
             <a
               key={t.tail}
               id={`t-${t.tail}`}
-              href={`https://flightaware.com/live/flight/${t.tail}`}
-              target="_blank"
-              rel="nofollow noreferrer noopener"
-              title={`${familyLabel(t.family, typeLinks)} · ${tailTitle(t, pipeline)}`}
-              className={registryClass(t, pipeline)}
+              {...(own
+                ? { href: own }
+                : {
+                    href: `https://flightaware.com/live/flight/${t.tail}`,
+                    target: "_blank",
+                    rel: "nofollow noreferrer noopener",
+                  })}
+              title={`${familyLabel(t.family, typeLinks)} · ${tailTitle(t, marks)}`}
+              className={registryClass(t, marks)}
             >
               <span aria-hidden="true" className={`tail-dot${dot.cls}`}>
                 {dot.ch}

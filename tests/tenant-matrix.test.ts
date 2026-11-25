@@ -202,7 +202,9 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/routes", "routesPage"],
   ["/airlines", "airlinesPages"],
   [comparePair, "comparePages"],
-  ["/mcp", "mcpPage"],
+  // Served on every host (registries print the address); mcpPage only decides
+  // whether it is advertised and indexable — pinned in seo-copy.test.ts.
+  ["/mcp", null],
   ["/newly-equipped", "newlyEquippedPage"],
   ["/embed", "embedPage"],
   ["/install-rate", "installRatePage"],

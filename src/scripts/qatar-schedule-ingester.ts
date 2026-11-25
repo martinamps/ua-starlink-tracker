@@ -53,6 +53,7 @@ import {
   upsertQatarEquipmentHistory,
   upsertQatarSchedule,
 } from "../database/database";
+import { recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { airportLocalDate } from "../utils/airport-tz";
 import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
@@ -469,6 +470,14 @@ export function startQatarScheduleIngester(db: Database): JobHandle | undefined 
           span.setTag("history_staled", stats.history_staled);
           span.setTag("far_offset", stats.far_offset);
           span.setTag("breaker_tripped", stats.breaker_tripped);
+          // A partial run still refreshed most routes, so it counts. Every
+          // route answering with no flights at all does not: that is a
+          // blocked or reshaped response parsing to nothing.
+          if (stats.outcome === "error") recordSourceFailure(db, "qatar_schedule", "QR", "error");
+          else if (stats.outcome !== "abandoned") {
+            if (stats.flights_upserted > 0) recordSourceSuccess(db, "qatar_schedule", "QR");
+            else recordSourceFailure(db, "qatar_schedule", "QR", "empty");
+          }
           metrics.increment(COUNTERS.VENDOR_REQUEST, {
             vendor: "qatar",
             type: "ingest_run",

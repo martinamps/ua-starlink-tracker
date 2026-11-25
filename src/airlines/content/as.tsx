@@ -1,6 +1,14 @@
 import { RolloutPanel } from "../../components/home/rollout";
 import { LINK, StatInline } from "../../components/layout";
 import { fmt, pct } from "../../components/ui/format";
+import {
+  BY_TYPE_METHOD,
+  leadCount,
+  ownCountAsOf,
+  partnerIsByType,
+  statsParts,
+  unnamedSentence,
+} from "../published-count";
 import { AIRLINES, airlineHomeUrl } from "../registry";
 import { fleetTargetSentence } from "./fleet-target";
 import type { AirlineContent, ContentStats, HeroProps } from "./index";
@@ -10,14 +18,22 @@ const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, t
 
 // The headline spans the same fleets as Alaska's own tracker: Alaska's
 // aircraft plus Hawaiian's A321neo and A330s (registry programmePartners).
+// Where Alaska's stored chart counts more than the tails named here, the
+// panel prints both, each with whose it is.
 const ASHero = ({ stats }: HeroProps) => (
   <RolloutPanel
     stats={stats}
+    airline={AIRLINES.AS}
     noun={stats.noun ?? "Alaska aircraft"}
     segments={[
       { label: "Regional E175s", n: regional(stats).starlink, total: regional(stats).total },
       { label: "Mainline", n: mainline(stats).starlink, total: mainline(stats).total },
-      ...(stats.partners ?? []).map((p) => ({ label: p.label, n: p.starlink, total: p.total })),
+      ...(stats.partners ?? []).map((p) => ({
+        label: p.label,
+        n: p.starlink,
+        total: p.total,
+        byType: partnerIsByType(AIRLINES.AS, p.label),
+      })),
     ]}
   />
 );
@@ -55,8 +71,26 @@ export const content: AirlineContent = {
       q: "Does Alaska Airlines have Starlink?",
       // The panel above gives the count; the structured answer keeps it.
       a: () => <p>Yes. {fleetTargetSentence("AS", "Alaska")}</p>,
-      ld: (s) =>
-        `Yes. ${fmt(s.starlinkCount)} of ${fmt(s.totalCount)} ${s.noun ?? "Alaska aircraft"} (${pct(s.starlinkCount, s.totalCount)}) have Starlink Wi-Fi${s.asOf ? ` as of ${s.asOf}` : ""}. ${fleetTargetSentence("AS", "Alaska")}`,
+      ld: (s) => {
+        const noun = s.noun ?? "Alaska aircraft";
+        // Over a by-type partner's aircraft too: the parts, and no share.
+        const parts = statsParts(AIRLINES.AS, s);
+        const named = `${fmt(s.starlinkCount)} of ${fmt(s.totalCount)} ${noun}${parts ? "" : ` (${pct(s.starlinkCount, s.totalCount)})`}`;
+        const thatIs = parts ? ` That is ${parts.text}.` : "";
+        const dated = s.asOf ? ` as of ${s.asOf}` : "";
+        const chart = s.airlineCount;
+        const own = chart ? `${fmt(chart.connected)} of ${fmt(chart.total)} ${noun}` : "";
+        const counts = !chart
+          ? `${named} have Starlink Wi-Fi${dated}.${thatIs}`
+          : leadCount(s).own
+            ? parts
+              ? `By Alaska's own count ${ownCountAsOf(chart)}, ${own} have Starlink Wi-Fi. This site counts ${fmt(s.starlinkCount)} of them${dated}, out of ${fmt(s.totalCount)} on its fleet list: ${parts.text}.`
+              : `By Alaska's own count ${ownCountAsOf(chart)}, ${own} have Starlink Wi-Fi. This site can name ${fmt(s.starlinkCount)} of them by tail${dated}, out of ${fmt(s.totalCount)} on its fleet list.`
+            : parts
+              ? `This site counts ${named} with Starlink Wi-Fi${dated}.${thatIs} Alaska's own count is ${own} ${ownCountAsOf(chart)}.`
+              : `This site can name ${named} with Starlink Wi-Fi by tail${dated}. Alaska's own count is ${own} ${ownCountAsOf(chart)}.`;
+        return `Yes. ${counts} ${fleetTargetSentence("AS", "Alaska")}`;
+      },
     },
     {
       q: "Which Alaska planes have Starlink?",
@@ -72,7 +106,11 @@ export const content: AirlineContent = {
               also fly Alaska flight numbers
             </span>
           ))}
-          . Mainline installs started with the 737 MAX 8; the{" "}
+          {statsParts(AIRLINES.AS, s)
+            ? `. The Alaska figures count the tails we can name; the Hawaiian jets are ${BY_TYPE_METHOD}.`
+            : ", counting the tails we can name."}{" "}
+          Mainline installs started with the 737 MAX 8.{" "}
+          {s.airlineCount ? `${unnamedSentence(AIRLINES.AS, s.airlineCount) ?? ""} ` : ""}The{" "}
           <a href="/fleet" className={LINK}>
             fleet page
           </a>{" "}
@@ -88,8 +126,8 @@ export const content: AirlineContent = {
           {regional(s).total > 0 && regional(s).starlink === regional(s).total
             ? "All"
             : `${pct(regional(s).starlink, regional(s).total)} of`}{" "}
-          regional E175s have it, but only {pct(mainline(s).starlink, mainline(s).total)} of
-          mainline aircraft, so most 737 flights don't yet.
+          regional E175s have it, but we can name only {fmt(mainline(s).starlink)} of{" "}
+          {fmt(mainline(s).total)} mainline aircraft with it, so most 737 flights don't yet.
         </p>
       ),
     },
@@ -174,10 +212,12 @@ export const content: AirlineContent = {
           q: "Why can this count differ from Alaska's own percentage?",
           a: () => (
             <p>
-              Both count the same fleets, Hawaiian's A321neos and A330s included. Alaska's list
-              leaves out the 737-700s, which we count as not yet having Starlink. Our roster can
-              also differ from Alaska's by an aircraft or two in a type, and we round shares down.
-              The{" "}
+              Alaska counts by aircraft type and names no aircraft; we count the tails we can name.
+              So Alaska's figure runs ahead of ours whenever it connects an aircraft that no source
+              has named yet. Both count the same fleets, Hawaiian's A321neos and A330s included, and
+              both count those by aircraft type. Alaska's list leaves out the 737-700s, which stay
+              on our fleet list as not having Starlink. Our list can also differ from Alaska's by an
+              aircraft or two in a type, and we round shares down. The{" "}
               <a href="/fleet" className={LINK}>
                 fleet page
               </a>{" "}

@@ -36,22 +36,38 @@
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta name="referrer" content="no-referrer">
     
-    <!-- Google Fonts: Rajdhani 600 (headings only) + JetBrains Mono (tails,
-         codes, table numerals). Body copy is the system UI stack, so prose
-         never waits on or reflows for a web font. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <!-- display=optional: a late swap reflowed the hero (desktop CLS 0.14). The
-         preload is the latin Rajdhani 600 face — the only Rajdhani weight any
-         heading uses — so it usually lands inside the optional block period;
-         re-copy the URL if Google bumps the font version (v17). -->
-    <link rel="preload" as="font" type="font/woff2" crossorigin href="https://fonts.gstatic.com/s/rajdhani/v17/LDI2apCSOBg7S-QT7pbYF_OreefkkbIx.woff2">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Rajdhani:wght@600&display=optional" rel="stylesheet">
+    <!-- Self-hosted fonts (static/fonts, latin subset, SIL OFL 1.1): Rajdhani
+         600 (headings only) + JetBrains Mono 400/600 (tails, codes, table
+         numerals). Body copy is the system UI stack, so prose never waits on
+         or reflows for a web font. The @font-face rules open the inline style
+         block below. font-display: optional because a late swap
+         reflowed the hero (desktop CLS 0.14); the Rajdhani preload usually
+         lands inside the optional block period. File names carry a content
+         hash, so a new font file needs a new name. -->
+    <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/rajdhani-600-latin.35f7e628.woff2">
 
     <!-- Compiled Tailwind (src/styles/tailwind.css) -->
     {{stylesheetTag}}
 
     <style>
+      @font-face {
+        font-family: "Rajdhani";
+        font-style: normal;
+        font-weight: 600;
+        font-display: optional;
+        src: url(/static/fonts/rajdhani-600-latin.35f7e628.woff2) format("woff2");
+        unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+      }
+
+      @font-face {
+        font-family: "JetBrains Mono";
+        font-style: normal;
+        font-weight: 400 600;
+        font-display: optional;
+        src: url(/static/fonts/jetbrains-mono-latin.2c32b9b3.woff2) format("woff2");
+        unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+      }
+
       * {
         box-sizing: border-box;
       }
@@ -104,6 +120,29 @@
       .text-secondary { color: var(--color-text-secondary); }
       .text-muted { color: var(--color-text-muted); }
       .text-accent { color: var(--color-accent); }
+
+      /* Keyboard focus on a field. Unlayered on purpose: every field asks for
+         focus:outline-none with focus:border-accent, and .border-subtle above
+         (unlayered) beats that layered border, so a focused field showed no
+         mark at all. One rule here mends each of them. */
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid var(--color-accent);
+        outline-offset: 1px;
+      }
+
+      /* A link inside a sentence: the accent and the grey prose around it are
+         about equally bright, so colour alone can't mark it (WCAG 1.4.1). */
+      :where(p, li, dd, figcaption) a.text-accent {
+        text-decoration-line: underline;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+        text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+      }
+      :where(p, li, dd, figcaption) a.text-accent:hover {
+        text-decoration-color: currentColor;
+      }
 
       /* Tooltip — CSS-only, works on hover and tap-to-focus. Trigger gets a
          dotted underline as the affordance; content comes from data-tip. */
@@ -206,6 +245,20 @@
       }
       .animate-pulse-glow {
         animation: pulse-glow 2s ease-in-out infinite;
+      }
+
+      /* For readers who ask their device for less motion: the pulsing dots,
+         the planner's travelling signal and its cards' slide-in all stop. */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-delay: 0s !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
       }
     </style>
     

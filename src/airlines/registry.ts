@@ -121,6 +121,13 @@ export interface SiteFeatures {
   /** /fleet/{slug} aircraft-type pages. Single-airline tenants only: the hub
    * would need a page per airline per type, and those hosts already rank. */
   aircraftPages: boolean;
+  /** /routes/{airport}: the Starlink departures from one airport. Needs the
+   * route pages (every row links one) and a live departure window. */
+  airportPages: boolean;
+  /** /fleet/{tail}: one page per aircraft. Only where the verifier reads every
+   * tail and the roster is the airline's own: the page's answer is a per-plane
+   * check, which the type-rule airlines don't have. */
+  tailPages: boolean;
 }
 
 export interface SiteConfig {
@@ -228,8 +235,14 @@ export interface AirlineConfig {
    * figures; UA's fleet_progress rows come from a community sheet instead. */
   officialTracker?: { label: string; url: string };
   /** For airlines whose Starlink status is fully determined by aircraft type
-   * (no per-tail observation needed). null = leave as unknown (in progress). */
-  typeDeterministicWifi?: (aircraftType: string) => StarlinkStatus | null;
+   * (no per-tail observation needed). null = leave as it is (in progress, or a
+   * type string we don't recognise). "unknown" = this tail is named as an
+   * exception to its type's rule: the reconcile un-settles it and drops its
+   * listing, so it counts nowhere as equipped. */
+  typeDeterministicWifi?: (aircraftType: string, tailNumber?: string) => StarlinkStatus | null;
+  /** Tails named as exceptions to their type's rule, with the evidence. Pages
+   * read it to say why a "done" type counts fewer aircraft than it flies. */
+  heldBackTail?: (tailNumber: string | null | undefined) => HeldBackTail | null;
   /** Type-deterministic route rule for airlines whose Starlink status depends only on aircraft type / route class, not per-tail observation. */
   routeTypeRule?: (
     origin: string,
@@ -254,10 +267,18 @@ export interface AirlineConfig {
      * statement that replaces a per-tail "no" nobody can refresh. */
     fleetTarget?: { text: string; asOf: string; source: { label: string; url: string } };
   };
-  /** Types flying today that the programme will never equip (retiring). They
-   * leave every denominator and render as "retiring"; status is never written
-   * from this list. */
-  programExclusions?: { families: readonly string[]; note: string; source: string };
+  /** Types flying today that the programme will never equip. They leave
+   * every denominator. `reason` chooses the label ("retiring" by default,
+   * matching Air France); status is never written from this list. */
+  programExclusions?: {
+    families: readonly string[];
+    note: string;
+    source: string;
+    reason?: ProgrammeExclusionReason;
+    /** The report that states the exclusion outright, linked wherever the
+     * airline's own whole-fleet line is shown beside it. */
+    report?: { label: string; url: string };
+  };
   /** Airline-local programme types, tested against the raw type string before
    * the shared family. For a carrier whose sub-variants have opposite status
    * (AF 777-200ER vs 777-300ER) while the global family must stay whole for
@@ -365,7 +386,28 @@ const AIRLINE_DEFS = {
     lastUpdatedOwner: "sheet-scrape",
     flightHistoryModel: true,
     verifySite: "united.com",
-    // Whole fleet eligible — Express + mainline both in the program.
+    programExclusions: {
+      families: ["ERJ-145"],
+      reason: "not_in_programme",
+      note: "Not in the programme",
+      // Two trade reports from March 2026, both in the reporter's own words,
+      // neither quoting United: PaxEx (24 Mar), "The ERJ145s will not be
+      // modified and, for now, will remain in the fleet", and Runway Girl
+      // (https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/),
+      // which calls the E145 "the sole unconnected aircraft in United's fleet
+      // once the Starlink rollout is complete in 2027". United itself has not
+      // said so in anything we found, so site copy attributes the claim
+      // ("not expected", "reports say") rather than stating United's intent.
+      // The same reports put the CRJ-200s in the rollout as CRJ-450s, which is
+      // why those stay in the denominator.
+      source: "https://paxex.aero/united-airlines-crj450-premium-twist-crj200/",
+      report: {
+        label: "Runway Girl Network, March 2026",
+        url: "https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/",
+      },
+    },
+    // Mainline and most Express types are in the programme; ERJ-145s are not
+    // (programExclusions). The remaining roster is the programme's own.
     rollout: {
       status: "in_progress",
       statusLabel: "Installing",
@@ -385,7 +427,7 @@ const AIRLINE_DEFS = {
         "{{starlinkCount}} of {{totalAircraftCount}} United aircraft have Starlink. Check any United flight by number and date.",
       ogTitle: "United Starlink Tracker: Live Fleet Rollout",
       ogDescription:
-        "Check any United flight for Starlink Wi-Fi, free with MileagePlus, with plane-by-plane status checked against united.com.",
+        "Starlink Wi-Fi on any United flight, any date: odds weeks ahead, a firm yes or no once a plane is assigned, and every equipped plane by tail number.",
       keywords: "united starlink tracker, united starlink wifi",
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
@@ -402,6 +444,7 @@ const AIRLINE_DEFS = {
     enabled: true,
     publicInHub: true,
     iata: "HA",
+    freeForMembersOf: "Atmos Rewards",
     icao: "HAL",
     operators: [{ icao: "HAL", iata: "HA" }],
     subfleets: [{ key: "mainline", label: "Hawaiian", match: () => true }],
@@ -546,13 +589,13 @@ const AIRLINE_DEFS = {
       url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
     },
     typeDeterministicWifi: alaskaTypeToWifi,
-    // Alaska's own tracker (Aug. 28, 2026 fact in rollout-facts): E175s done,
-    // mainline only on the 737-8 MAX; no other 737 or 787 connected.
+    // Alaska's own tracker (Oct. 26, 2026 fact in rollout-facts): E175s done,
+    // mainline on the 737-8 MAX and 737-9 MAX; no 737-800, 737-900 or 787.
     rollout: {
       status: "phase_done",
       statusLabel: "Installing (regional done)",
       phaseNote:
-        "Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
+        "Every regional E175 has Starlink. Mainline has started with the 737-8 MAX and 737-9 MAX; no 737-800, 737-900 or 787 is connected yet.",
       // Mainline is in the programme too — the whole roster is the denominator.
       rosterIsProgramScope: true,
     },
@@ -566,7 +609,9 @@ const AIRLINE_DEFS = {
       keywords:
         "alaska airlines starlink, alaska starlink tracker, alaska wifi, 737 MAX starlink, E175 starlink, check alaska flight starlink",
       accentColor: "#01426a",
-      accentText: "#4b99c9",
+      // 4.5:1 on its own 20% tint over a panel too (a primary button's
+      // fill), where #4b99c9 gave 4.2:1.
+      accentText: "#55a1cf",
       accentColorDim: "#2b6a8f",
       faviconAccent: "#00b2e3", // Alaska secondary brand blue — primary #01426a is too dark to glow
       socialImagePath: "/static/social-image-as.webp",
@@ -617,11 +662,15 @@ const AIRLINE_DEFS = {
     flightHistoryModel: false,
     verifySite: "qatarairways.com",
     typeDeterministicWifi: qatarTypeToStarlink,
+    heldBackTail: qatarHeldBackTail,
     rollout: {
       status: "phase_done",
       statusLabel: "Mostly done (widebodies)",
-      phaseNote:
-        "777, A350 and 787-8 fleets done; 787-9 installs due by the end of 2026. The A380, A330, narrowbodies and freighters are not in the announced programme.",
+      // A getter, read at request time: the sentence is built from the phase
+      // table and the held-back list below, which this literal precedes.
+      get phaseNote() {
+        return qatarPhaseNote();
+      },
       // Roster counts ~277 including narrowbodies and freighters the programme
       // excludes; the in-scope widebody fleet is roughly half that.
       rosterIsProgramScope: false,
@@ -802,6 +851,148 @@ const QATAR_PHASE_BY_FAMILY: Record<string, WifiPhase> = {
   B737: "negative",
 };
 
+/** How strong the case is that a tail is outside its type's rule. */
+export type HeldBackEvidence =
+  /** Passengers on these aircraft report paid Wi-Fi, and Qatar's own count leaves them out. */
+  | "passenger_reports"
+  /** Qatar's own count leaves the group out; nothing names the tails. */
+  | "count_only"
+  /** A fleet site reports them parked; whether they are fitted has no source. The thinnest. */
+  | "reported_parked";
+
+export interface HeldBackTail {
+  /** The IATA equipment code Qatar publishes for this airframe's type. */
+  equipment: string;
+  /** What sets the group apart, as a noun phrase for copy. */
+  group: string;
+  evidence: HeldBackEvidence;
+  /** Newest date a source supports the reason. */
+  asOf: string;
+  reason: string;
+}
+
+const EX_CATHAY: HeldBackTail = {
+  equipment: "77W",
+  group: "second-hand",
+  evidence: "passenger_reports",
+  asOf: "2026-07-15",
+  reason:
+    "Second-hand from Cathay Pacific. Qatar called 54 777s the whole 777 programme (The Peninsula, 2025-07-10) while flying 64; passengers on the ex-Cathay aircraft report paid Wi-Fi and no Starlink (One Mile at a Time reader comments, 2026-01-07 to 2026-07-15).",
+};
+const EX_VIRGIN_AUSTRALIA: HeldBackTail = {
+  equipment: "77W",
+  group: "second-hand",
+  evidence: "count_only",
+  asOf: "2026-03-12",
+  reason:
+    "Second-hand from Virgin Australia, still in Virgin Australia's cabin (Australian Frequent Flyer, 2026-03-12). Outside Qatar's count of 54 fitted 777s; no passenger report found either way.",
+};
+// Thinner than the 777s: the lease is well sourced, "parked since 03/2026" is
+// a fleet site's remark we could not open ourselves, and nothing says whether
+// they are fitted. Qatar's August 2026 count of 150 leaves no room for them.
+const OMAN_AIR_LEASE: HeldBackTail = {
+  equipment: "788",
+  group: "leased",
+  evidence: "reported_parked",
+  asOf: "2026-03",
+  reason:
+    "Leased from Oman Air, in Oman Air's cabin. Reported parked since March 2026 (Airfleets, read second-hand); fitted or not is unsourced, and Qatar's count of 150 in August 2026 leaves no room for them.",
+};
+
+// QR tails their type's phase does not settle. Qatar publishes no tail list,
+// so each entry rests on the evidence its `reason` names; none shows a tail's
+// wiring. A held-back tail is "not confirmed", never "negative": it leaves
+// every count and every listing, and its type's flight answers become odds
+// (qatarFittedShares). To restore one, delete its line — the next reconcile
+// settles it by type again. One more 777 with Qatar's own customer code is
+// outside Qatar's count of 54 and can't be named; it stays counted.
+const QATAR_HELD_BACK_TAILS: Readonly<Record<string, HeldBackTail>> = {
+  "A7-BOA": EX_CATHAY,
+  "A7-BOB": EX_CATHAY,
+  "A7-BOC": EX_CATHAY,
+  "A7-BOD": EX_CATHAY,
+  "A7-BOH": EX_CATHAY,
+  "A7-BOI": EX_CATHAY,
+  "A7-BOE": EX_VIRGIN_AUSTRALIA,
+  "A7-BOF": EX_VIRGIN_AUSTRALIA,
+  "A7-BOG": EX_VIRGIN_AUSTRALIA,
+  "A7-BUA": OMAN_AIR_LEASE,
+  "A7-BUB": OMAN_AIR_LEASE,
+};
+
+export function qatarHeldBackTail(tailNumber: string | null | undefined): HeldBackTail | null {
+  return tailNumber ? (QATAR_HELD_BACK_TAILS[tailNumber.toUpperCase()] ?? null) : null;
+}
+
+export function qatarHeldBackTails(): ReadonlyArray<readonly [string, HeldBackTail]> {
+  return Object.entries(QATAR_HELD_BACK_TAILS);
+}
+
+/** What Qatar's copy may say about each passenger type, read off the phase
+ * table and the held-back list: the two things the by-type table is built from. */
+export interface QatarProgrammeState {
+  /** Finished types with no aircraft held back, as copy names them: "A350". */
+  done: string[];
+  /** Finished types with aircraft held back, and how many of each. */
+  doneExcept: Array<{ name: string; held: number }>;
+  /** Types mid-install. */
+  installing: string[];
+  held: number;
+  /** What sets the held-back aircraft apart: "second-hand or leased". */
+  heldGroups: string;
+}
+
+export function qatarProgrammeState(
+  phases: Readonly<Record<string, WifiPhase>> = QATAR_PHASE_BY_FAMILY,
+  heldBack: ReadonlyArray<HeldBackTail> = Object.values(QATAR_HELD_BACK_TAILS)
+): QatarProgrammeState {
+  const name = (family: string) => family.replace(/^B(?=7)/, "");
+  const familyOf = (h: HeldBackTail) => QATAR_EQUIPMENT[h.equipment]?.family;
+  // A held-back tail of a type that isn't "done" changes no sentence.
+  const counted = heldBack.filter((h) => phases[familyOf(h) ?? ""] === "confirmed");
+  const heldByFamily = new Map<string, number>();
+  for (const h of counted) {
+    const family = familyOf(h) as string;
+    heldByFamily.set(family, (heldByFamily.get(family) ?? 0) + 1);
+  }
+  const confirmed = Object.keys(phases).filter((f) => phases[f] === "confirmed");
+  return {
+    done: confirmed.filter((f) => !heldByFamily.has(f)).map(name),
+    doneExcept: confirmed
+      .filter((f) => heldByFamily.has(f))
+      .map((f) => ({ name: name(f), held: heldByFamily.get(f) as number })),
+    installing: Object.keys(phases)
+      .filter((f) => phases[f] === "rolling")
+      .map(name),
+    held: counted.length,
+    heldGroups: [...new Set(counted.map((h) => h.group))].join(" or "),
+  };
+}
+
+export const listedTypes = (names: readonly string[]) =>
+  names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : (names[0] ?? "");
+
+/** Qatar's rollout in one line, for the hub, llms.txt, MCP and descriptions.
+ * A type is called done only while none of its aircraft is held back. */
+export function qatarPhaseNote(state: QatarProgrammeState = qatarProgrammeState()): string {
+  const fleets = (names: string[]) => `${listedTypes(names)} fleet${names.length === 1 ? "" : "s"}`;
+  const parts = [
+    state.done.length > 0 ? `${fleets(state.done)} done` : null,
+    state.doneExcept.length > 0
+      ? `${fleets(state.doneExcept.map((t) => t.name))} done except ${state.held} ${state.heldGroups} aircraft that aren't confirmed`
+      : null,
+    state.installing.length > 0
+      ? `${listedTypes(state.installing)} installs due by the end of 2026`
+      : null,
+  ].filter((p) => p !== null);
+  return `${parts.join("; ")}. The A380, A330, narrowbodies and freighters are not in the announced programme.`;
+}
+
+/** Aircraft of an airline's finished types that its type rule doesn't settle. */
+export function heldBackCount(code: AirlineCode): number {
+  return code === "QR" ? qatarProgrammeState().held : 0;
+}
+
 // Collapse normalizeAircraftType's granular families to QR program families:
 // the program treats the whole 737/A320 lineups uniformly. The 787 is the
 // opposite — QR's program splits it by sub-variant, which the shared family
@@ -853,6 +1044,24 @@ export function qatarEquipment(
   return QATAR_EQUIPMENT[code.toUpperCase()] ?? null;
 }
 
+// The roster names airframes the way FR24 does ("Boeing 777-3DZ(ER)"); Qatar's
+// schedule names them by IATA code. Only passenger types the programme fits
+// need a row: this joins a roster count to a scheduled code, nothing else.
+const QATAR_ROSTER_EQUIPMENT: ReadonlyArray<readonly [RegExp, string]> = [
+  [/777-3/i, "77W"],
+  [/777-2/i, "77L"],
+  [/787-8/i, "788"],
+  [/787-9/i, "789"],
+  [/A350-9/i, "359"],
+  [/A350-10/i, "351"],
+];
+
+/** The equipment code Qatar's schedule uses for a roster type string. */
+export function qatarEquipmentCodeOfType(aircraftType: string | null | undefined): string | null {
+  const raw = aircraftType ?? "";
+  return QATAR_ROSTER_EQUIPMENT.find(([re]) => re.test(raw))?.[1] ?? null;
+}
+
 export function qatarStarlinkPhase(family: string | null): WifiPhase | null {
   return family ? (QATAR_PHASE_BY_FAMILY[family] ?? null) : null;
 }
@@ -884,10 +1093,19 @@ export function providerLabel(status: StarlinkStatus | null): "Starlink" | "None
 // Catch-all is null so an FR24 type-string format drift produces no
 // observation instead of mass-flipping confirmed tails on reconcile
 // (unrecognized strings normalize to "other"/"unknown" — no phase).
-export function qatarTypeToStarlink(aircraftType: string): StarlinkStatus | null {
-  return phaseToStatus(
-    qatarStarlinkPhase(qatarProgramFamily(normalizeAircraftType(aircraftType), aircraftType))
-  );
+//
+// A held-back tail answers "unknown" whatever its type's phase says, so the
+// exception outlives a phase flip (the 787-9 switch included).
+export function qatarTypeToStarlink(
+  aircraftType: string,
+  tailNumber?: string,
+  /** The phase table to read; a test passes a flipped one to ask what a
+   * programme change would settle. */
+  phases: Readonly<Record<string, WifiPhase>> = QATAR_PHASE_BY_FAMILY
+): StarlinkStatus | null {
+  if (qatarHeldBackTail(tailNumber)) return "unknown";
+  const family = qatarProgramFamily(normalizeAircraftType(aircraftType), aircraftType);
+  return phaseToStatus(phases[family] ?? null);
 }
 
 // HA program truth: Airbus fleet complete (Sep 2024), 787s pending install,
@@ -972,6 +1190,13 @@ export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
   ),
 ].sort();
 
+/** Why a programme exclusion is out. Air France's types are retiring;
+ * United's ERJ-145s keep flying and are reported to be left out of the
+ * rollout. The label says "not in the programme", not "no Starlink planned":
+ * the second would claim the airline ruled the type out, which it has not
+ * said (same reasoning as PHASE_LABEL.negative in airlines-page.tsx). */
+export type ProgrammeExclusionReason = "retiring" | "not_in_programme";
+
 /** The one denominator rule: freighters and a programme's declared
  * exclusions are in the roster but never in a "how many of how many". */
 export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
@@ -979,6 +1204,42 @@ export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
     isFreighterFamily(family) ||
     Boolean(AIRLINES[code]?.programExclusions?.families.includes(family))
   );
+}
+
+export function programmeExclusionReason(code: string): ProgrammeExclusionReason {
+  return AIRLINES[code]?.programExclusions?.reason ?? "retiring";
+}
+
+/** Short label for an excluded type: "Retiring" or "Not in the programme". */
+export function programmeExclusionLabel(code: string): string {
+  return programmeExclusionReason(code) === "not_in_programme"
+    ? "Not in the programme"
+    : "Retiring";
+}
+
+export interface ProgrammeExclusionCaveat {
+  text: string;
+  /** For a line under a count, where the whole-fleet statement is not quoted. */
+  short: string;
+  report?: { label: string; url: string };
+}
+
+/** United says "the whole fleet"; reports say the ERJ-145s are left out; our
+ * count follows the reports. Any page that prints the airline's whole-fleet
+ * line next to the exclusion (or to a count that applies it) prints this too,
+ * so a reader never meets the two answers without the sentence between them.
+ * Null for airlines with no reported exclusion: a retiring type contradicts
+ * nothing the airline said. */
+export function programmeExclusionCaveat(code: string): ProgrammeExclusionCaveat | null {
+  const cfg = AIRLINES[code];
+  const excl = cfg?.programExclusions;
+  if (!cfg || excl?.reason !== "not_in_programme") return null;
+  const types = excl.families.map((f) => `${f}s`).join(" and ");
+  return {
+    text: `${cfg.shortName}'s whole-fleet target does not name the ${types}. Reports say they are left out of the rollout, and we have found no ${cfg.shortName} statement on the type itself. Our count follows the reports and leaves them out.`,
+    short: `Our ${cfg.shortName} count leaves out the ${types}, which reports say are not part of the rollout.`,
+    ...(excl.report ? { report: excl.report } : {}),
+  };
 }
 
 /** Meta key (per airline) holding the community source's own last-edit date
@@ -1076,7 +1337,7 @@ export const HUB_BRAND: PageBrand = {
   heading: "Which airlines have Starlink Wi-Fi?",
   siteTitle: "Starlink Wi-Fi by Airline: Which Airlines Have Starlink in 2026?",
   description:
-    "Starlink Wi-Fi by airline. United and Alaska are tracked plane by plane, Hawaiian and Qatar by aircraft type, and every other announced rollout has a dated source.",
+    "Starlink Wi-Fi by airline. United, Alaska, Hawaiian and Qatar are tracked here, and every other announced rollout has a dated source.",
   ogTitle: "Which Airlines Have Starlink Wi-Fi? Full List and Comparison",
   ogDescription:
     "How far each airline's Starlink Wi-Fi rollout has got, with a dated source for each.",
@@ -1108,6 +1369,8 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   installRatePage: true,
   liveTvPage: false,
   aircraftPages: false,
+  airportPages: false,
+  tailPages: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -1132,6 +1395,8 @@ export const SITES: Record<string, SiteConfig> = {
       intentPages: true,
       liveTvPage: true,
       aircraftPages: true,
+      airportPages: true,
+      tailPages: true,
     },
   },
   airline: {
@@ -1163,6 +1428,8 @@ export const SITES: Record<string, SiteConfig> = {
       installRatePage: true,
       liveTvPage: false,
       aircraftPages: false,
+      airportPages: false,
+      tailPages: false,
     },
   },
   hawaiian: {

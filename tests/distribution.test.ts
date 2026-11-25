@@ -60,7 +60,10 @@ describe("newly-equipped Atom feed", () => {
       const ids = [...text.matchAll(/<id>([^<]+)<\/id>/g)].map((m) => m[1]);
       expect(ids.length).toBeGreaterThan(0);
       for (const id of ids) {
-        expect(new URL(id).host, `${host} feed id ${id}`).toBe(host);
+        // A reported entry's id is a tag: URI, so it can never collide with the
+        // confirmed entry the same tail gets later; it names the host all the same.
+        const idHost = id.startsWith("tag:") ? id.slice(4).split(",")[0] : new URL(id).host;
+        expect(idHost, `${host} feed id ${id}`).toBe(host);
       }
     }
   });
@@ -173,8 +176,13 @@ describe("/badge.svg", () => {
       // Shape, not values: a denominator only where the tracked roster IS the
       // programme's own scope AND the two counts are consistent.
       const cfg = airlineOf(site);
-      expect(svg, site.key).toMatch(/\d+ (of \d+ aircraft|aircraft equipped)/);
-      if (cfg && !cfg.rollout.rosterIsProgramScope) {
+      // An airline known by aircraft type prints a sum, worded as one
+      // (tests/by-type-sums.test.ts).
+      const byType = cfg ? wifiPhaseFamilies(cfg.code) !== null : false;
+      expect(svg, site.key).toMatch(
+        byType ? /\d+, by aircraft type/ : /\d+ (of \d+ aircraft|aircraft equipped)/
+      );
+      if (cfg && !cfg.rollout.rosterIsProgramScope && !byType) {
         expect(svg, site.key).toMatch(/\d+ aircraft equipped/);
       }
     }

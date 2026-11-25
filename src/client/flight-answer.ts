@@ -87,6 +87,8 @@ export interface AnswerContext {
   liveTv: Record<SeatbackLiveTv, string> | null;
   watchEnabled: boolean;
   routePlannerEnabled: boolean;
+  /** /fleet/{tail} serves on this host, for the planes we list. */
+  tailPages: boolean;
   /** Host for webcal:// links. */
   host: string;
 }
@@ -153,6 +155,13 @@ function row(label: string, valueHtml: string): string {
 const tail = (t: string | null | undefined) =>
   `<span class="font-mono text-primary">${esc(t)}</span>`;
 
+/** A plane on our Starlink list, linked to its page where the host has them.
+ * Only for listed tails: a fallback segment's tail may be on no roster. */
+const listedTail = (t: string | null | undefined, ctx: AnswerContext) =>
+  ctx.tailPages && t && /^N[A-Z0-9]{1,5}$/.test(t)
+    ? `<a href="/fleet/${esc(t)}" class="font-mono text-primary hover:text-accent transition-colors">${esc(t)}</a>`
+    : tail(t);
+
 const typeName = (t: string | null | undefined) => (t ? ` · ${esc(aircraftName(t))}` : "");
 
 function flightRows(f: WireFlight, ctx: AnswerContext): string {
@@ -165,7 +174,7 @@ function flightRows(f: WireFlight, ctx: AnswerContext): string {
     rows.push(row("Departs", `${esc(when.day)}, ${esc(when.time)}`));
   }
   if (f.tail_number) {
-    rows.push(row("Aircraft", `${tail(f.tail_number)}${typeName(f.aircraft_type)}`));
+    rows.push(row("Aircraft", `${listedTail(f.tail_number, ctx)}${typeName(f.aircraft_type)}`));
   }
   if (f.operated_by) rows.push(row("Operated by", esc(f.operated_by)));
   return `<dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
@@ -198,7 +207,7 @@ function alternativesHtml(
   const items = list
     .map(
       (a) =>
-        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${tail(a.tail_number)}${typeName(a.aircraft_type)}</li>`
+        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${listedTail(a.tail_number, ctx)}${typeName(a.aircraft_type)}</li>`
     )
     .join("");
   return `<div class="mt-4"><h3 class="text-sm font-semibold text-primary">Starlink flights on this route that day</h3><ul class="mt-1 space-y-1 text-sm text-secondary">${items}</ul></div>`;
@@ -215,20 +224,46 @@ function routePlannerCta(
   return `<p class="mt-3 text-sm"><a href="/route-planner/${o}/${d}" rel="nofollow" class="text-accent hover:underline">Find Starlink flights from ${o} to ${d}</a></p>`;
 }
 
-function watchRow(ctx: AnswerContext): string {
-  if (!ctx.watchEnabled || datePassed(ctx) || ctx.daysOut > WATCH_MAX_DAYS_OUT) return "";
+/** Anchor of the calendar offer, for links from the undated flight page. */
+export const CALENDAR_OFFER_ID = "flight-calendar";
+
+/** The feed serves this flight and date: same gate as /cal (src/server/watch.ts). */
+export const calendarOffered = (
+  ctx: Pick<AnswerContext, "watchEnabled" | "date" | "daysOut" | "nowSec" | "originZone">
+) => ctx.watchEnabled && !datePassed(ctx) && ctx.daysOut <= WATCH_MAX_DAYS_OUT;
+
+// Each sentence claims only what the feed does (src/utils/ics.ts): the event is
+// re-rendered from our rows on every fetch, and the app decides when to fetch.
+const CALENDAR_LEAD_FIRM =
+  "The event shows this answer and changes if we see a different aircraft on the flight.";
+const CALENDAR_LEAD_PENDING =
+  "The event shows today's answer, then the aircraft and a yes or no once we see it assigned, usually about 2 days before departure. It changes again if the aircraft is swapped.";
+const CALENDAR_LAG =
+  "Your calendar app fetches changes on its own schedule, from about hourly to once a day, so this is not an instant alert.";
+
+const CALENDAR_BUTTON =
+  "inline-flex min-h-11 items-center rounded border border-subtle bg-base px-3 text-sm text-primary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/50";
+
+/**
+ * The calendar offer. The two subscriptions keep fetching the feed; the file
+ * is imported once and never fetched again, so it is set apart and says so.
+ */
+function watchRow(ctx: AnswerContext, firm: boolean): string {
+  if (!calendarOffered(ctx)) return "";
   const path = `/cal/${encodeURIComponent(ctx.flightNumber)}/${encodeURIComponent(ctx.date)}.ics`;
   const webcal = `webcal://${ctx.host}${path}`;
   const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
-  return `<div class="mt-4 border-t border-subtle pt-4"><h3 class="text-sm font-semibold text-primary">Watch this flight</h3><div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm"><a href="${esc(webcal)}" data-watch="webcal" class="text-accent hover:underline">Apple / Outlook</a><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">Google Calendar</a><a href="${esc(path)}" data-watch="ics" download class="text-accent hover:underline">Download .ics</a></div><p class="mt-2 text-xs text-muted">Adds a calendar event that updates when the aircraft is assigned or changes.</p></div>`;
+  const heading = `${CALENDAR_OFFER_ID}-title`;
+  const add = '<span class="sr-only">Add to </span>';
+  return `<section id="${CALENDAR_OFFER_ID}" aria-labelledby="${heading}" class="mt-4 border-t border-subtle pt-4"><h3 id="${heading}" class="text-sm font-semibold text-primary">Add this flight to your calendar</h3><p class="mt-1 text-sm text-secondary">${firm ? CALENDAR_LEAD_FIRM : CALENDAR_LEAD_PENDING}</p><ul class="mt-3 flex flex-wrap gap-2"><li><a href="${esc(webcal)}" data-watch="webcal" class="${CALENDAR_BUTTON}">${add}Apple Calendar or Outlook</a></li><li><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="${CALENDAR_BUTTON}">${add}Google Calendar</a></li></ul><p class="mt-3 text-xs text-muted">${CALENDAR_LAG} Or <a href="${esc(path)}" data-watch="ics" download class="text-accent underline hover:no-underline">download the event as a file</a>, a one-time copy that will not update.</p></section>`;
 }
 
 /** The page's one swap caveat: firm cards carry it, nothing else repeats it. */
 const CHANGE_NOTE = "Aircraft can be swapped before departure.";
 
-/** The caveat with its remedy right under it: a watch that updates on a swap. */
+/** The caveat with its remedy right under it: a calendar event that follows a swap. */
 const swapNote = (ctx: AnswerContext) =>
-  `<p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${watchRow(ctx)}`;
+  `<p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${watchRow(ctx, true)}`;
 
 function card(answer: AnswerTone, headline: string, body: string): string {
   const tone = ANSWER_TONE[answer];
@@ -375,7 +410,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
       html: card(
         "unknown",
         headline,
-        `<p class="mt-2 text-sm text-secondary">${esc(text)}</p>${watchRow(ctx)}`
+        `<p class="mt-2 text-sm text-secondary">${esc(text)}</p>${watchRow(ctx, false)}`
       ),
     };
   }
@@ -399,6 +434,6 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
   const detail = typeRule
     ? ""
     : `${probabilityBar(pred.probability, tone)}<p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>`;
-  const html = card(tone, headline, `${detail}${watchRow(ctx)}`);
+  const html = card(tone, headline, `${detail}${watchRow(ctx, false)}`);
   return { tone, headline, html, firm: false };
 }

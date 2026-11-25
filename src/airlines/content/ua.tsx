@@ -11,14 +11,21 @@ const installsPerMonth = (s: ContentStats): number | null =>
 const express = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
 const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
 
+// United's Nov. 12, 2026 release: Starlink on more than half of daily flights.
+const UA_DAILY_FLIGHTS_RELEASE =
+  "https://www.united.com/en/us/newsroom/announcements/cision-125497";
+
 // United's June 22, 2026 release, the source of the widebody figures.
 const UA_WIDEBODY_RELEASE =
   "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html";
 
+// The address United's 2026-10-15 release links for its own tracker.
+const UA_OWN_TRACKER = "https://starlinktracker.united.com/program/starlink";
+
 const UAHero = ({ stats }: HeroProps) => (
   <RolloutPanel
     stats={stats}
-    noun="United aircraft"
+    noun="United aircraft in the rollout"
     segments={[
       { label: "United Express", n: express(stats).starlink, total: express(stats).total },
       { label: "Mainline", n: mainline(stats).starlink, total: mainline(stats).total },
@@ -41,8 +48,9 @@ export const content: AirlineContent = {
 
   intro: () => (
     <>
-      United Airlines is adding Starlink Wi-Fi to every plane, starting with its United Express
-      regional jets.
+      United Airlines is adding Starlink Wi-Fi to its mainline and most United Express aircraft,
+      starting with regional jets. The ERJ-145s are not expected to get it, so the count leaves them
+      out.
     </>
   ),
 
@@ -55,7 +63,8 @@ export const content: AirlineContent = {
         <p>
           Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)} United aircraft (
           {pct(s.starlinkCount, s.totalCount)}) have Starlink Wi-Fi
-          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("UA", "United")}
+          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("UA", "United")} The count
+          leaves them out.
         </p>
       ),
     },
@@ -79,8 +88,17 @@ export const content: AirlineContent = {
       a: (s) => (
         <p>
           No, not yet. {pct(s.starlinkCount, s.totalCount)} of the fleet has it, so it depends on
-          the plane assigned to your flight. United Express flights (UA3000 to UA6999) are the
-          likeliest to have it.
+          the plane assigned to your flight. United's own figure is higher:{" "}
+          <a
+            href={UA_DAILY_FLIGHTS_RELEASE}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={LINK}
+          >
+            more than half of daily flights
+          </a>{" "}
+          as of November 12, 2026, because its regional jets, most of which have Starlink, fly more
+          trips a day. United Express flights (UA3000 to UA6999) are the likeliest to have it.
         </p>
       ),
     },
@@ -97,7 +115,11 @@ export const content: AirlineContent = {
           <a href="/chrome" className={LINK}>
             Chrome extension
           </a>{" "}
-          shows the same answer on Google Flights.
+          shows the same answer on Google Flights. United also has its own{" "}
+          <a href={UA_OWN_TRACKER} className={LINK} target="_blank" rel="noopener noreferrer">
+            Starlink tracker
+          </a>
+          , for flights "within three days of departure", in United's words.
         </p>
       ),
     },
@@ -175,10 +197,10 @@ export const content: AirlineContent = {
           q: "When will all United flights have Starlink?",
           a: (s) => (
             <p>
-              United's target is every United and United Express aircraft by the end of 2027, with
-              more than 880 expected by the end of 2026. Today {pct(s.starlinkCount, s.totalCount)}{" "}
-              of the {fmt(s.totalCount)}
-              -plane fleet has it. The{" "}
+              United's target is to finish the rollout by the end of 2027, with more than 880
+              expected by the end of 2026. Reports say the ERJ-145s are not part of that plan. Today{" "}
+              {pct(s.starlinkCount, s.totalCount)} of the {fmt(s.totalCount)} aircraft in the
+              rollout have it. The{" "}
               <a href="/timeline" className={LINK}>
                 rollout timeline
               </a>{" "}
@@ -202,7 +224,12 @@ export const content: AirlineContent = {
         },
         {
           q: "What can I do with Starlink Wi-Fi?",
-          a: () => <p>Stream video, watch live sports and make video calls.</p>,
+          a: () => (
+            <p>
+              Browse, work and stream video, including live sports. Voice and video calls aren't
+              allowed on United flights.
+            </p>
+          ),
         },
       ],
     },

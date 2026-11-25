@@ -1,11 +1,14 @@
 import React from "react";
 import { aircraftName } from "../airlines/aircraft-families";
 import {
-  AIRLINES,
-  type AirlineConfig,
-  airlineHomeUrl,
-  wifiPhaseFamilies,
-} from "../airlines/registry";
+  byPublishedCount,
+  ownCountCredit,
+  publishedCount,
+  trackingMethod,
+  typeSumCredit,
+  typeSumParts,
+} from "../airlines/published-count";
+import { AIRLINES, type AirlineConfig, airlineHomeUrl } from "../airlines/registry";
 import type { RolloutFactsStatus } from "../airlines/rollout-facts";
 import type { PopularFlight } from "../database/database";
 import type { PerAirlineStat, RecentInstall } from "../types";
@@ -188,28 +191,26 @@ export function StagePill({ info }: { info: StageInfo }) {
   return <Pill tone={STAGE_TONE[info.stage]}>{info.label}</Pill>;
 }
 
-/** How an airline's Starlink status is decided: per aircraft, by aircraft
- * type, or from a community-curated list. Only "tail" earns "plane by plane". */
-export function trackingMethod(cfg: AirlineConfig): "tail" | "type" | "community" {
-  if (cfg.communitySource) return "community";
-  return wifiPhaseFamilies(cfg.code) ? "type" : "tail";
-}
-
 /**
  * One row per tracked airline: name, standard stage, and a bar where the
  * fleet share is publishable. Where it isn't (the roster counts types the
  * programme excludes) the row gives the count and the airline's own note, never
- * a ratio that would make a finished rollout look two-thirds done.
+ * a ratio that would make a finished rollout look two-thirds done. An airline
+ * known by aircraft type shows its own dated figure, our sum of its source's
+ * whole-type counts, or no count (see
+ * published-count.ts), and ranks by that.
  */
 export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
-  const rows = stats
-    .map((stat) => ({ stat, cfg: AIRLINES[stat.code] }))
-    .filter((r): r is { stat: PerAirlineStat; cfg: AirlineConfig } => Boolean(r.cfg))
-    .sort((a, b) => b.stat.starlink - a.stat.starlink);
+  const rows = byPublishedCount(
+    stats
+      .map((stat) => ({ stat, cfg: AIRLINES[stat.code] }))
+      .filter((r): r is { stat: PerAirlineStat; cfg: AirlineConfig } => Boolean(r.cfg))
+      .map((r) => ({ ...r, published: publishedCount(r.cfg, r.stat.starlink) }))
+  );
   return (
     <ul className="divide-y divide-subtle">
-      {rows.map(({ stat, cfg }) => {
-        const publishable = shareIsPublishable(cfg, stat);
+      {rows.map(({ stat, cfg, published }) => {
+        const publishable = published.basis === "tracked" && shareIsPublishable(cfg, stat);
         return (
           <li key={cfg.code} className="py-3 first:pt-0 last:pb-0">
             <div className="flex items-center justify-between gap-3">
@@ -241,12 +242,33 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                   {fmt(stat.starlink)} of {fmt(stat.total)} · {pct(stat.starlink, stat.total)}
                 </span>
               </div>
+            ) : published.basis === "type" ? (
+              <p className="mt-1 text-sm text-secondary">{stat.phaseNote}</p>
             ) : (
               <p className="mt-1 text-sm text-secondary">
                 <strong className="font-semibold text-primary tabular-nums">
-                  {fmt(stat.starlink)}
+                  {fmt(published.count)}
                 </strong>{" "}
-                aircraft with Starlink. {stat.phaseNote}
+                aircraft with Starlink
+                {published.basis !== "tracked" && (
+                  <>
+                    {published.basis === "airline"
+                      ? `, ${ownCountCredit(cfg, published)}`
+                      : `: ${typeSumParts(published)}, ${typeSumCredit(published)}`}{" "}
+                    {!published.reportedBy && "("}
+                    <a
+                      href={published.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent hover:underline"
+                    >
+                      {published.sourceLabel}
+                    </a>
+                    {!published.reportedBy && ")"}
+                  </>
+                )}
+                .{published.basis === "type-sum" && " The total is our sum of those counts."}{" "}
+                {stat.phaseNote}
               </p>
             )}
             {(stat.installs30d ?? 0) > 0 && (

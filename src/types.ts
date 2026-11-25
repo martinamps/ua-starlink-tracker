@@ -1,6 +1,7 @@
 // Shared types for the application
 
 import type { SUBFLEET_KEY_LIST } from "./airlines/registry";
+import type { UncountedReason } from "./database/sql/listed-not-counted";
 
 // Derived from the registry's literal key list (which tests/vocabulary.test.ts
 // pins against the runtime-derived SUBFLEET_KEYS) — no third copy to drift.
@@ -63,6 +64,18 @@ export interface RecentInstall {
   Aircraft: string;
   OperatedBy: string;
   DateFound: string;
+}
+
+/** A sheet listing our own check has not confirmed: shown apart, never counted. */
+export interface ReportedInstall extends RecentInstall {
+  /** Why it isn't counted (database/sql/listed-not-counted.ts). */
+  reason: UncountedReason;
+  /** The reading our check holds against the listing; null while it awaits a check. */
+  observed_wifi: string | null;
+  /** Unix seconds of that reading's last write; null without one, and on rows that predate the column. */
+  observed_at: number | null;
+  /** Clean reads of ours since the day the listing was first seen. */
+  checks_since_listed: number;
 }
 
 /** A newly equipped tail's first observed revenue departure (first_flights). */
@@ -129,6 +142,8 @@ export interface FleetAircraft {
   check_attempts: number;
   last_check_error: string | null;
   rts_until?: number | null;
+  adsb_last_airborne?: number | null;
+  gap_pulled_at?: number | null;
 }
 
 // ============ /fleet page data ============
@@ -161,6 +176,8 @@ export interface FleetFamily {
   total: number;
   starlink: number;
   tails: FleetTail[];
+  /** Shown on /fleet but omitted from every denominator. */
+  outsideProgramme?: { label: string };
 }
 
 export interface FleetCarrier {
@@ -203,6 +220,9 @@ export interface FleetPageData {
   allTails: FleetTail[];
   totalFleet: number;
   totalStarlink: number;
+  /** The same two figures per airline, so a page over several airlines can
+   * keep those known by aircraft type out of its total. */
+  byAirline: Array<{ code: string; starlink: number; total: number }>;
   /** null on the hub site — install pace is a single-airline narrative. */
   installPace: InstallPace | null;
   /** Per-type install pipeline rows (empty until the fleet-progress job has run). */
@@ -213,6 +233,10 @@ export interface FleetPageData {
   progressTails: FleetProgressTailRow[];
   /** Recent pipeline transitions + confirmed-live installs, newest first. */
   movements: FleetMovement[];
+  /** Sheet-listed tails no count includes, with the reason (United's page only). */
+  sheetReported: ReportedInstall[];
+  /** The sheet's Starlink hangar notes for tails that are not equipped. */
+  sheetFitting: SheetModNote[];
 }
 
 /** One per-type row of the install pipeline (United Fleet Site progress workbooks). */
@@ -242,6 +266,25 @@ export interface FleetProgressTailRow {
   mod_location: string | null;
   sheet_updated: string | null;
   fetched_at: number;
+}
+
+/**
+ * A Starlink hangar note from the mainline fleet sheet, parsed strictly
+ * (utils/sheet-mod-note.ts). Dates are YYYY-MM-DD and the sheet's own.
+ */
+export interface SheetModNote {
+  airline: string;
+  tail: string;
+  /** Three-letter station code as the sheet types it. */
+  station: string;
+  started: string;
+  /** The sheet's estimated return to service; null when it gives none. */
+  due_back: string | null;
+  /** The sheet itself doubts this is a Starlink fit ("SL?", "STC"). */
+  unsure: boolean;
+  /** The last day the note speaks for the tail. */
+  holds_until: string;
+  read_at: number;
 }
 
 export type PipelineEventKind = "entered_mod" | "to_verification" | "queued";
@@ -336,6 +379,9 @@ export interface AdsbObservationRecord {
   /** match | mismatch | no_assignment | no_callsign | non_revenue | low_speed; null on-ground. */
   shadow_result: string | null;
   assigned_flight: string | null;
+  /** Airport the aircraft was reported on the ground at; absent or null when
+   * airborne, unplaced, or written before the column existed. */
+  ground_airport?: string | null;
 }
 
 /** One tracked tail's slice of the FAA Releasable Aircraft Registry. */
@@ -400,6 +446,7 @@ export type AircraftVerdictKind =
   | "installing"
   | "none"
   | "official_none"
+  | "not_in_programme"
   | "unknown";
 
 export interface AircraftTypeVariant {
@@ -492,4 +539,6 @@ export interface AircraftTypePageData {
   lastmodIso?: string;
   /** Newest verifier check for the airline (unix sec) — the page's own clock. */
   dataClock: number | null;
+  /** The type is outside the airline's Starlink programme. */
+  outsideProgramme?: { label: string };
 }

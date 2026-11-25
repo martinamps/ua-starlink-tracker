@@ -279,7 +279,9 @@ export function addQatarRow(
     departureAirport = "DOH",
     arrivalAirport = "LHR",
     flightStatus = "Scheduled",
-    equipmentCode = "77W",
+    // A fully fitted type: the 777-300ER and 787-8 have held-back aircraft,
+    // so their answers are odds, not the plain yes these fixtures stand for.
+    equipmentCode = "359",
   } = opts;
   db.query(
     `INSERT INTO qatar_schedule (flight_number, scheduled_date, departure_airport, arrival_airport, departure_time, arrival_time, equipment_code, wifi_verdict, flight_status, last_updated)

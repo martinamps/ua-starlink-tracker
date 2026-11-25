@@ -1,9 +1,15 @@
 import { aircraftName } from "../../airlines/aircraft-families";
 import { TYPE_DISPLAY } from "../../airlines/aircraft-pages";
 import { AIRLINES } from "../../airlines/registry";
-import type { FleetMovement, FleetProgressRow, FleetProgressTailRow } from "../../types";
+import type {
+  FleetMovement,
+  FleetProgressRow,
+  FleetProgressTailRow,
+  SheetModNote,
+} from "../../types";
+import { utcToday } from "../../utils/sheet-mod-note";
 import { EYEBROW, H2, LINK, PANEL, SECTION_WIDE, StatValue } from "../layout";
-import { fmt, monthDay, pct, shortDate } from "../ui/format";
+import { capitalize, fmt, monthDay, pct, shortDate } from "../ui/format";
 import { Meter } from "../ui/meter";
 
 export type PipelineMap = Map<string, FleetProgressTailRow>;
@@ -42,6 +48,7 @@ const STATION_NAMES: Record<string, string> = {
   AMA: "Amarillo, TX",
   VCV: "Victorville, CA",
   CWF: "Lake Charles, LA",
+  SAT: "San Antonio, TX",
 };
 
 // "MLB (Melbourne, FL)" — the code stays first so the vocabulary gets taught,
@@ -74,6 +81,21 @@ const PIPELINE_LABEL: Record<FleetProgressTailRow["state"], string> = {
 
 export function pipelinePhrase(state: FleetProgressTailRow["state"], loc: string | null): string {
   return `${PIPELINE_LABEL[state]}${loc ? ` at ${stationPhrase(loc)}` : ""}`;
+}
+
+/**
+ * The fleet sheet's hangar note as a phrase: "being fitted with Starlink at
+ * MIA (Miami, FL), due back about Dec 17". The date is the sheet's own month
+ * and day; with none, the phrase carries none. A note the sheet itself doubts
+ * says so and claims no fit.
+ */
+export function fittingPhrase(n: SheetModNote, today = utcToday()): string {
+  const where = `at ${stationPhrase(n.station)}`;
+  const lead = n.unsure
+    ? `in a hangar ${where}, possibly for Starlink`
+    : `being fitted with Starlink ${where}`;
+  if (!n.due_back) return lead;
+  return `${lead}, ${n.due_back < today ? "was due" : "due"} back about ${monthDay(n.due_back)}`;
 }
 
 // anchorBase lets a type page point chips at the /fleet registry rows, the
@@ -207,6 +229,44 @@ export function MovementsPanel({
   );
 }
 
+/** The fleet sheet's hangar notes, one line per jet: what a square's hover
+ * says, readable without one. */
+export function FittingPanel({
+  fitting,
+  anchorBase = "",
+}: { fitting: SheetModNote[]; anchorBase?: string }) {
+  if (fitting.length === 0) return null;
+  return (
+    <div className={`${PANEL} mt-4`}>
+      <div className={EYEBROW}>In the hangar, per the fleet sheet's notes</div>
+      <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-1">
+        {fitting.map((n) => (
+          <li key={n.tail}>
+            <a
+              href={`${anchorBase}#t-${n.tail}`}
+              className="flex items-baseline gap-2 px-2 py-1 rounded text-sm hover:bg-surface-elevated transition-colors group"
+            >
+              <span
+                aria-hidden="true"
+                className={`w-4 text-center shrink-0 ${n.unsure ? "text-muted" : "dot-mod"}`}
+              >
+                {n.unsure ? "◌" : "○"}
+              </span>
+              <span className="font-mono text-xs text-primary group-hover:text-accent transition-colors w-16 shrink-0">
+                {n.tail}
+              </span>
+              <span className="text-secondary min-w-0 flex-1">{capitalize(fittingPhrase(n))}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-muted mt-2 text-pretty">
+        Dates are the sheet's own estimates. None of these aircraft is in our count.
+      </p>
+    </div>
+  );
+}
+
 const SEGMENT_LABELS: Record<string, string> = {
   mainline_nb: "Mainline narrowbody",
   mainline_wb: "Mainline widebody",
@@ -291,13 +351,25 @@ export function InstallPipelineSection({
   progress,
   tails,
   movements,
+  fitting = [],
 }: {
   progress: FleetProgressRow[];
   tails: FleetProgressTailRow[];
   movements: FleetMovement[];
+  fitting?: SheetModNote[];
 }) {
   const totals = progress.filter((r) => r.type_code === "Totals");
-  if (totals.length === 0) return null;
+  if (totals.length === 0) {
+    // The hangar notes come from the fleet sheet, not the progress workbook,
+    // so they stand without it.
+    if (fitting.length === 0) return null;
+    return (
+      <section className={SECTION_WIDE}>
+        <h2 className={H2}>Install pipeline</h2>
+        <FittingPanel fitting={fitting} />
+      </section>
+    );
+  }
   const tracker = AIRLINES[totals[0].airline]?.officialTracker;
   if (tracker) return <OfficialTrackerSection progress={progress} tracker={tracker} />;
   const updated = totals.find((r) => r.sheet_updated)?.sheet_updated;
@@ -310,7 +382,10 @@ export function InstallPipelineSection({
     bySegment.get(t.segment)?.push(t);
   }
   const scheduled = tails.filter((t) => t.state === "scheduled");
-  const stations = stationKey(tails.map((t) => t.mod_location));
+  const stations = stationKey([
+    ...tails.map((t) => t.mod_location),
+    ...fitting.map((n) => n.station),
+  ]);
 
   return (
     <section className={SECTION_WIDE}>
@@ -405,6 +480,7 @@ export function InstallPipelineSection({
           )}
         </div>
       )}
+      <FittingPanel fitting={fitting} />
       {tails.length > 0 && <MovementsPanel movements={movements} />}
       {stations && <p className="text-xs text-muted mt-3">Install stations: {stations}</p>}
     </section>

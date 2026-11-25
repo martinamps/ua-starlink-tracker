@@ -1,4 +1,5 @@
 import type { CheckFlightBody } from "../../client/flight-answer";
+import type { TypeOutlookRef } from "../outlook-copy";
 
 export interface FlightRouteFact {
   departure_airport: string;
@@ -27,6 +28,25 @@ export interface FlightUpcomingDeparture {
   wifiLabel: string;
 }
 
+/** The next departure our own rows name an aircraft for, with that aircraft's
+ * settled answer: what the undated page opens with instead of odds. */
+export interface AssignedDeparture {
+  hasStarlink: boolean;
+  /** Observed on Starlink, as against listed and not yet observed. Always true on a no. */
+  verified: boolean;
+  tail: string;
+  aircraft: string | null;
+  /** The Wi-Fi a no names ("Panasonic", "no", "non-Starlink"); null on a yes. */
+  wifi: string | null;
+  origin: string;
+  destination: string;
+  departure: number;
+  /** IANA zone of the departure airport: the date printed is the traveller's. */
+  departureZone: string;
+  /** When our schedule data last showed this aircraft on the departure (unix seconds). */
+  seenAt: number;
+}
+
 /** Server-assembled facts for a /check-flight/{fn} permalink — the page's
  * unique crawlable substance; the client lookup flow layers on top. */
 export interface FlightFacts {
@@ -53,6 +73,8 @@ export interface FlightFacts {
   lastStarlink: { tail: string; checked_at: number } | null;
   routes: FlightRouteFact[];
   upcoming: FlightUpcomingDeparture[];
+  /** The first of `upcoming`, when its aircraft's status is settled. */
+  nextAssigned?: AssignedDeparture | null;
   /** Other marketing flight numbers on this flight's primary route — sibling
    * permalinks, so the corpus links laterally instead of only via /routes. */
   siblings: string[];
@@ -61,6 +83,9 @@ export interface FlightFacts {
   notObservedSince?: number | null;
   /** aircraftTypes with their /fleet/{slug} page, each page linked once. */
   aircraftTypeLinks?: Array<{ label: string; href: string | null }>;
+  /** The rollout outlook of the type seen on this number most recently, where
+   * that type is still being fitted and its pace was backtested. */
+  typeOutlook?: TypeOutlookRef | null;
 }
 
 /** A permalink segment that is not a flight number this site can answer for.

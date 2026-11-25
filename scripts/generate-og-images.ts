@@ -8,6 +8,7 @@
 import "../src/playwright-env";
 import path from "node:path";
 import { type Page, chromium } from "playwright";
+import { BY_TYPE_CARD_CAPTION, trackingMethod } from "../src/airlines/published-count";
 import { AIRLINES, SITES, siteForAirline } from "../src/airlines/registry";
 import { isBulkGid } from "../src/database/database";
 import { denominatorIsPublishable, shareCardFile } from "../src/utils/share-cards";
@@ -167,7 +168,8 @@ export async function buildCardSpecs(
         domain: host,
         accent: cfg.brand.accentColor.replace("#", ""),
         count: String(a.installed),
-        sub: "AIRCRAFT WITH STARLINK",
+        // Known by aircraft type: the number is a sum of fleet-list rows.
+        sub: trackingMethod(cfg) === "type" ? BY_TYPE_CARD_CAPTION : "AIRCRAFT WITH STARLINK",
         series: series.join(","),
         date: cardDate(data?.lastUpdated),
       }),
@@ -227,9 +229,12 @@ export function buildShareCardSpecs(
         // Same rule as /badge.svg — both hand this ratio to somebody else's
         // page. Publishing "OF 61 AIRCRAFT" here while the badge deliberately
         // withheld it made two surfaces in one branch disagree on one number.
-        sub: denominatorIsPublishable(a.installed, a.total, cfg.rollout.rosterIsProgramScope)
-          ? `OF ${a.total} AIRCRAFT HAVE STARLINK`
-          : "AIRCRAFT WITH STARLINK",
+        sub:
+          trackingMethod(cfg) === "type"
+            ? BY_TYPE_CARD_CAPTION
+            : denominatorIsPublishable(a.installed, a.total, cfg.rollout.rosterIsProgramScope)
+              ? `OF ${a.total} AIRCRAFT HAVE STARLINK`
+              : "AIRCRAFT WITH STARLINK",
         date: cardDate(lastUpdatedOf(a.code)),
       }),
       desc: `share ${a.code} ${a.installed}/${a.total}`,

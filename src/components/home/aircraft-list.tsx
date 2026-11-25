@@ -6,6 +6,7 @@
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
 import { ensureAirlinePrefix } from "../../airlines/flight-number";
+import { BY_TYPE_TAB_NOTE, trackingMethod } from "../../airlines/published-count";
 import { AIRLINES, type AirlineConfig } from "../../airlines/registry";
 import { FILTER_ACTIVE, FILTER_BUTTON, FILTER_INACTIVE } from "../../client/aircraft-list";
 import type { Aircraft, Flight } from "../../types";
@@ -175,6 +176,7 @@ export function AircraftList({
   permalinkAirline,
   showFleetLink,
   fleetTotal,
+  tailPages = false,
   title = "Aircraft with Starlink",
 }: {
   /** Every equipped tail, freshest flight data first. */
@@ -187,6 +189,8 @@ export function AircraftList({
   showFleetLink: boolean;
   /** Every aircraft /fleet lists, equipped or not: where a missed search falls back to. */
   fleetTotal: number;
+  /** /fleet/{tail} serves for the permalink airline's planes. */
+  tailPages?: boolean;
   /** Names the scope where it is narrower than the page's headline count. */
   title?: string;
 }) {
@@ -196,6 +200,14 @@ export function AircraftList({
   const capped = aircraft.length > shown.length;
   const subfleetCount = (key: string) =>
     shown.filter((p) => p.fleet === key || airlineOf(p) === key).length;
+  // A list over several airlines may hold one known by aircraft type: its tab
+  // says so, and no figure adds its rows to the aircraft counted one by one.
+  const byTypeKeys = new Set(
+    content.subfleetFilters
+      .map((f) => f.key)
+      .filter((key) => AIRLINES[key] && trackingMethod(AIRLINES[key]) === "type")
+  );
+  const mixed = byTypeKeys.size > 0 && byTypeKeys.size < content.subfleetFilters.length;
 
   return (
     <Panel pad="none" className={`${SECTION_WIDE} overflow-hidden`}>
@@ -217,8 +229,7 @@ export function AircraftList({
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
-              role="img"
-              aria-label="Search icon"
+              aria-hidden="true"
             >
               <path
                 strokeLinecap="round"
@@ -233,13 +244,7 @@ export function AircraftList({
               className="absolute right-2 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted hover:text-primary transition-colors hidden"
               aria-label="Clear search"
             >
-              <svg
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                role="img"
-                aria-label="Clear"
-              >
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -262,10 +267,11 @@ export function AircraftList({
               type="button"
               id="filter-all"
               className={`${FILTER_BUTTON} ${FILTER_ACTIVE}`}
+              aria-pressed="true"
               data-filter="all"
               data-count={shown.length}
             >
-              ALL <span className="hidden sm:inline">({fmt(shown.length)})</span>
+              ALL{mixed ? null : <span className="hidden sm:inline"> ({fmt(shown.length)})</span>}
             </button>
             {content.subfleetFilters.length > 1 &&
               content.subfleetFilters.map((card) => (
@@ -274,10 +280,14 @@ export function AircraftList({
                   type="button"
                   id={`filter-${card.key}`}
                   className={`${FILTER_BUTTON} ${FILTER_INACTIVE}`}
+                  aria-pressed="false"
                   data-filter={card.key}
                 >
                   {card.label.toUpperCase()}{" "}
-                  <span className="hidden sm:inline">({fmt(subfleetCount(card.key))})</span>
+                  <span className="hidden sm:inline">
+                    ({fmt(subfleetCount(card.key))}
+                    {byTypeKeys.has(card.key) ? ` ${BY_TYPE_TAB_NOTE}` : ""})
+                  </span>
                 </button>
               ))}
           </div>
@@ -321,7 +331,13 @@ export function AircraftList({
                         <div className="status-dot flex-shrink-0" />
                         <div>
                           <div className="font-mono text-base md:text-sm font-bold md:font-semibold text-primary group-hover:text-accent transition-colors">
-                            {plane.TailNumber}
+                            {tailPages && airline === permalinkAirline?.code ? (
+                              <a href={`/fleet/${plane.TailNumber}`} className="hover:underline">
+                                {plane.TailNumber}
+                              </a>
+                            ) : (
+                              plane.TailNumber
+                            )}
                           </div>
                           <div className="md:hidden font-mono text-xs text-secondary">
                             {aircraftName(plane.Aircraft)}

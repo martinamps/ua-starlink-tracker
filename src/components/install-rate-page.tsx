@@ -1,4 +1,4 @@
-import type { SiteConfig } from "../airlines/registry";
+import { type SiteConfig, programmeExclusionCaveat } from "../airlines/registry";
 import { formatFactDate, rolloutTimeline } from "../airlines/rollout-facts";
 import type { InstallRateStats, TargetProjection, TargetVerdict } from "../utils/install-rate";
 import {
@@ -6,7 +6,12 @@ import {
   MonthlyInstallsBars,
   PaceBullets,
 } from "./charts/cumulative-installs";
-import { nearestPaceGap, paceWindowSpan, paceWindowText } from "./charts/rollout-math";
+import {
+  measuredPaceText,
+  nearestPaceGap,
+  paceWindowSpan,
+  paceWindowText,
+} from "./charts/rollout-math";
 import { type CiteStat, CiteThis } from "./cite-this";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline } from "./layout";
@@ -26,12 +31,19 @@ export interface AirlineInstallRate {
   /** What the count is of: "United Airlines aircraft", "Alaska and Hawaiian
    * Airbus aircraft", "Alaska-operated aircraft". */
   noun: string;
+  /** The tenant's own page, where the count spans a partner known by aircraft
+   * type: the count's two parts, each named for what it is. */
+  headlineParts?: string | null;
   stats: InstallRateStats;
 }
 
 interface InstallRatePageProps {
   site: SiteConfig;
   airlines: AirlineInstallRate[];
+  /** Hub: the airlines the sections cover, "United and Alaska". */
+  pacedNames?: string;
+  /** Hub: the by-type airlines that get no section, and why, as one sentence. */
+  leftOut?: string | null;
   pageLinks?: Link[];
   currentPath?: string;
   cite?: CiteStat | null;
@@ -44,19 +56,36 @@ const VERDICT_TONE: Record<TargetVerdict, { label: string; tone: Tone }> = {
   no_data: { label: "Too early to call", tone: "warn" },
 };
 
-function targetStatus(p: TargetProjection): string {
+/** A month of ours is never stated flat: it is the measured pace carried
+ * forward, so the pace and the months it was measured over sit beside it. */
+function targetStatus(p: TargetProjection, stats: InstallRateStats): string {
   const due = `Due ${formatFactDate(p.target.deadline)}`;
   // equipped is a live row count and total a separately scraped meta value;
   // mid-reconcile they can disagree, and nothing is projected from that.
   if (p.rosterDisagrees) return `${due} · no projection (fleet counts out of sync)`;
   if (p.verdict === "reached") return `${due} · reached`;
   const parts = [due, `${fmt(p.remaining)} to go`];
-  if (p.projectedMonth) parts.push(`at current pace: ${monthYear(p.projectedMonth)}`);
-  else if (p.verdict === "behind") parts.push("more than four years out at current pace");
+  const pace = measuredPaceText(stats);
+  if (p.projectedMonth && pace) {
+    parts.push(`reached in ${monthYear(p.projectedMonth)} if ${pace} holds`);
+  } else if (p.verdict === "behind" && pace) {
+    parts.push(`more than four years out at ${pace}`);
+  }
   return parts.join(" · ");
 }
 
-function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string }) {
+function TargetRow({
+  p,
+  shortName,
+  stats,
+  exclusionNote,
+}: {
+  p: TargetProjection;
+  shortName: string;
+  stats: InstallRateStats;
+  /** Which types a whole-fleet target's count leaves out, where any are. */
+  exclusionNote: string | null;
+}) {
   const verdict = VERDICT_TONE[p.verdict];
   return (
     <li className="border-b border-subtle py-3 last:border-0">
@@ -67,12 +96,16 @@ function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string })
         </span>
         <Pill tone={verdict.tone}>{verdict.label}</Pill>
       </div>
-      <p className="mt-1 text-sm text-secondary">{targetStatus(p)}</p>
+      <p className="mt-1 text-sm text-secondary">{targetStatus(p, stats)}</p>
       {/* A target stated over two carriers is measured over those two, both
-          halves of the ratio, so the page names the roster. */}
+          halves of the ratio, so the page names the roster. Where one of the
+          two is known only by aircraft type, the sum is no count of aircraft
+          that have Starlink: each part is said for what it is. */}
       {p.scope.label && (
         <p className="mt-1 text-sm text-secondary">
-          {p.scope.label}: {fmt(p.scope.equipped)} of {fmt(p.scope.total)} have Starlink.
+          {p.scope.parts
+            ? `Measured over ${p.scope.label}, ${fmt(p.scope.total)} on our fleet list: ${p.scope.parts}.`
+            : `${p.scope.label}: ${fmt(p.scope.equipped)} of ${fmt(p.scope.total)} have Starlink.`}
         </p>
       )}
       {/* The count under a share-of-fleet target is our arithmetic, so it must
@@ -82,7 +115,7 @@ function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string })
           {p.derivedFromStated && p.target.statedFleet
             ? `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of the ${fmt(p.derivedFrom)} aircraft ${shortName}'s ${p.target.statedFleet.basis} implies.`
             : p.target.fractionOfTracked === 1
-              ? `Fleet size is our count, not ${shortName}'s.`
+              ? `Fleet size is our count, not ${shortName}'s.${exclusionNote ? ` ${exclusionNote}` : ""}`
               : `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of our count of ${fmt(p.derivedFrom)}, not ${shortName}'s figure.`}
         </p>
       )}
@@ -124,7 +157,10 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
       <p id={statId} className="mb-4 text-sm text-secondary">
         As of {a.asOfDate}, <StatInline n={stats.equipped} /> of <StatInline n={stats.total} />{" "}
         {a.noun}
-        {stats.rosterDisagrees ? "" : ` (${pct(stats.equipped, stats.total)})`} have Starlink.
+        {/* No share over a count that adds a by-type partner's aircraft. */}
+        {stats.rosterDisagrees || a.headlineParts ? "" : ` (${pct(stats.equipped, stats.total)})`}{" "}
+        have Starlink.
+        {a.headlineParts && ` That is ${a.headlineParts}.`}
         {/* With a target, the pace sits in the bullets below; say it once. */}
         {stats.paceMonthly !== null && !gap && (
           <>
@@ -147,6 +183,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
             stats={stats}
             accent={a.accentColor}
             airlineName={a.name}
+            combined={a.headlineParts ? { noun: a.noun, parts: a.headlineParts } : null}
             milestones={rolloutTimeline(a.code)?.milestones}
           />
           {gap && (
@@ -185,6 +222,8 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
                 key={`${p.target.label}-${p.target.deadline}`}
                 p={p}
                 shortName={a.shortName}
+                stats={stats}
+                exclusionNote={programmeExclusionCaveat(a.code)?.short ?? null}
               />
             ))}
           </ul>
@@ -208,6 +247,8 @@ function singleDek(a: AirlineInstallRate): string {
 export default function InstallRatePage({
   site,
   airlines,
+  pacedNames,
+  leftOut,
   pageLinks,
   currentPath,
   cite,
@@ -220,7 +261,7 @@ export default function InstallRatePage({
         dek={
           single
             ? singleDek(single)
-            : "Installs per month for each tracked airline, against the targets each has stated."
+            : `Installs per month for ${pacedNames || "each tracked airline"}, against the targets each has stated.`
         }
       />
 
@@ -228,11 +269,14 @@ export default function InstallRatePage({
         {airlines.map((a) => (
           <AirlineSection key={a.code} a={a} />
         ))}
+        {leftOut && <p className="text-sm text-secondary">{leftOut}</p>}
       </section>
 
       <section className={SECTION}>
         <p className="text-center text-xs text-muted">
-          Pace is the average of the last three full months; projections assume it holds.
+          Pace is the average of the last full months, named beside each figure. A month given for a
+          target is that pace carried forward unchanged, not a forecast: no finish date of ours has
+          been tested against past installs.
           {site.features.methodologyPage && (
             <>
               {" "}

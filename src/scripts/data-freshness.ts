@@ -13,6 +13,7 @@ import {
   getFleetGuideTails,
 } from "../database/database";
 import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
+import { countZombieChildren } from "../observability/zombies";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 import { type ProgressRollup, emitFleetProgressCounts } from "./fleet-progress";
@@ -192,6 +193,16 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
   emitConsensusHealth(db);
   emitStoredFleetProgress(db);
   emitCommunityGuides(db);
+  emitZombies();
+}
+
+function emitZombies(): void {
+  if (process.platform !== "linux") return;
+  try {
+    metrics.gauge(GAUGES.PROCESS_ZOMBIES, countZombieChildren(), { airline: "all" });
+  } catch (err) {
+    logError("Zombie count failed", err);
+  }
 }
 
 export type CommunityGuideTailState =

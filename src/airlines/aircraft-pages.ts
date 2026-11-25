@@ -443,6 +443,7 @@ type AnswerInput = Pick<
   | "listedAwaitingVerification"
   | "pipeline"
   | "dataClock"
+  | "outsideProgramme"
 >;
 
 const INDEXABLE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
@@ -452,6 +453,7 @@ const INDEXABLE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
   "some",
   "verifying",
   "installing",
+  "not_in_programme",
 ]);
 
 export const SHARE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
@@ -524,6 +526,16 @@ export function answerFor(
     official: O,
     rosterShort,
   });
+
+  if (data.outsideProgramme) {
+    return build(
+      "not_in_programme",
+      "Not in the Starlink rollout.",
+      // Attributed on purpose: the exclusion rests on press reports, not on
+      // the airline's own statement (registry programExclusions).
+      `${copy.possessive} ${T} ${shorts} are not expected to get Starlink: reports say the type is not part of the rollout.`
+    );
+  }
 
   if (O && rosterShort) {
     const connected = `${O.count} ${plural(O.count, short, shorts)} connected`;
@@ -725,6 +737,10 @@ export function aircraftTypeTitle(
       ladder.push(`Does the ${airline} ${s} Have Starlink? Not Yet`);
       ladder.push(`${airline} ${s} Starlink: Not Yet`);
       break;
+    case "not_in_programme":
+      ladder.push(`Does the ${airline} ${s} Have Starlink? No`);
+      ladder.push(`${airline} ${s} Starlink: Not in the Rollout`);
+      break;
     case "unknown":
       break;
   }
@@ -807,7 +823,10 @@ export function aircraftTypeFaq(
     });
   }
 
-  const target = answer.kind === "all" ? null : targetFact(facts, def.slug);
+  const target =
+    answer.kind === "all" || answer.kind === "not_in_programme"
+      ? null
+      : targetFact(facts, def.slug);
   if (target?.asOf) {
     const scope = target.aircraftPages?.includes(def.slug)
       ? `${copy.possessive} stated target for the ${short}`

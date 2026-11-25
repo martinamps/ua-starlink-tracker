@@ -27,13 +27,18 @@ import {
   programTypeOf,
   publicAirlines,
 } from "../airlines/registry";
-import type { FlightAssignmentRow, UnequippedAssignment } from "../database/database";
+import type {
+  DepartureSlot,
+  FlightAssignmentRow,
+  UnequippedAssignment,
+} from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
 import { rowEvidence } from "../database/sql/equipped";
 import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   DISTRIBUTIONS,
+  type LookupCaller,
   type Tags,
   bucketDaysOut,
   metrics,
@@ -57,6 +62,7 @@ import { AIRPORT_COORDS } from "../utils/airport-geo";
 import {
   AIRPORT_TZ,
   type FlightDateWindow,
+  airportLocalDate,
   flightDateWindow,
   matchesLocalDate,
 } from "../utils/airport-tz";
@@ -348,6 +354,7 @@ export function verdictTelemetry(
       return { outcome: "no_data", confidence: "none" };
     case "qatar":
       if (verdict.qclass === "yes") return { outcome: "type_yes", confidence: "medium" };
+      if (verdict.qclass === "partly") return { outcome: "predicted", confidence: "medium" };
       if (verdict.qclass === "no") return { outcome: "type_no", confidence: "medium" };
       if (verdict.qclass === "cancelled") return { outcome: "no_data", confidence: "none" };
       return { outcome: "predicted", confidence: "low" };
@@ -461,7 +468,14 @@ export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
         observations: verdict.pred.n_observations,
       };
     case "qatar":
-      return { ...none, hasStarlink: verdict.hasStarlink, confidence: "type" };
+      return {
+        ...none,
+        hasStarlink: verdict.hasStarlink,
+        confidence: "type",
+        ...(verdict.probability !== undefined
+          ? { probability: verdict.probability, observations: 0 }
+          : {}),
+      };
     case "qatar_no_data":
       return { ...none, hasStarlink: null, confidence: "no_data" };
     case "qatar_history":
@@ -472,6 +486,56 @@ export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
         probability: verdict.probability,
       };
   }
+}
+
+/**
+ * The verdict for one departure slot whose aircraft our own rows already name,
+ * or null when they hold no settled answer for it. The undated flight page
+ * leads with this; it classifies the slot's row exactly as the dated lookup
+ * does, and answers only where the slot's own equipped test agrees, so the
+ * page's opening, its departures list and the lookup cannot contradict.
+ */
+export function slotVerdict(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  slot: DepartureSlot,
+  now: number = unixNow()
+): AssignedVerdict | null {
+  // Qatar answers per aircraft type; its rows never name a tail.
+  if (cfg.code === "QR") return null;
+  const date = airportLocalDate(slot.departure_airport, slot.departure_time);
+  const window = date ? flightDateWindow(date, now) : null;
+  if (!window) return null;
+  const normalized = ensureAirlinePrefix(cfg, flightNumber);
+  // Newest first, so a swap's stale row can't answer for the slot's current tail.
+  const row = reader
+    .getFlightAssignments(
+      buildAirlineFlightNumberVariants(cfg, normalized),
+      slot.departure_time,
+      slot.departure_time + 1
+    )
+    .find((r) => r.departure_airport === slot.departure_airport);
+  if (!row || row.tail_number !== slot.tail_number) return null;
+  const c = classifyRow(row);
+  if (c === "settled" || c === "verified_other") {
+    if (slot.equipped === 1) return null;
+    return {
+      kind: "scheduled_no",
+      window,
+      normalized,
+      flights: [{ ...row, negativeReason: c }],
+      fr24Error: false,
+    };
+  }
+  if (slot.equipped !== 1) return null;
+  return {
+    kind: "scheduled",
+    window,
+    normalized,
+    verified: c === "verified" ? [row] : [],
+    unverified: c === "verified" ? [] : [row],
+  };
 }
 
 function rowAssignment(f: FlightAssignmentRow, wifi: string | null): VerdictAssignment {
@@ -546,6 +610,8 @@ export interface ResolveDeps {
   leg?: LegQuery;
   /** A leg was asked for but can't be used: answer unscoped and say why. */
   unscoped?: UnscopedLeg;
+  /** Who is asking; tags a shed live lookup. Absent = other. */
+  caller?: LookupCaller;
 }
 
 export async function resolveFlightVerdict(
@@ -882,7 +948,7 @@ async function verdictFromRows(
   if (deps.lookupTail !== null) {
     const lookup = deps.lookupTail ?? lookupFlightTailVerdict;
     try {
-      raw = await lookup(reader, normalized, date, window.start, window.end, now);
+      raw = await lookup(reader, normalized, date, window.start, window.end, now, deps.caller);
     } catch (err) {
       // FR24 outage ≠ "no assignment published" — never a confident no.
       // Anything else (e.g. a DB error) must not masquerade as an outage.

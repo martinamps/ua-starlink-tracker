@@ -17,23 +17,28 @@ import {
   slotFlightKey,
   slotFlightPrefixes,
 } from "../airlines/flight-number";
+import { trackingMethod } from "../airlines/published-count";
 import {
   AIRLINES,
   type AirlineCode,
   type AirlineConfig,
   type LastUpdatedOwner,
   OBSERVED_WIFI_SOURCES,
+  type ProgrammeExclusionReason,
   VERIFICATION_SOURCES,
   enabledAirlines,
   isOutsideProgramme,
   lastUpdatedOwner,
   looksLikeValidTailNumber,
   programTypeOf,
+  programmeExclusionLabel,
+  programmeExclusionReason,
   verifierSourceTag,
 } from "../airlines/registry";
 import { instrumentDatabase } from "../observability/db-timing";
 import {
   COUNTERS,
+  DISTRIBUTIONS,
   GAUGES,
   type SettleRule,
   metrics,
@@ -70,6 +75,7 @@ import type {
   InstallPaceWeek,
   PipelineEventRow,
   RecentInstall,
+  ReportedInstall,
   RouteSchedule,
   RouteScheduleRow,
   SecFilingRow,
@@ -83,12 +89,26 @@ import { excludeMassWriteDays } from "../utils/install-rate";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
+import {
+  BASELINE_RECHECK_DAYS,
+  type CadenceGroup,
+  GROUND_GAP_SECS,
+  INTERVAL_BUDGET_SHARE,
+  SHEET_LISTING_BUMPS_PER_DAY,
+  SHEET_LISTING_BUMPS_PER_SYNC,
+  SHEET_LISTING_NOTED_SECS,
+  gapChecksPerDay,
+  solveRecheckDays,
+  sweepsCoverGap,
+} from "./discovery-cadence";
 import { fleetRejectReason, recordFleetRejection } from "./fleet-admission";
 import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
+import { type TailModNote, getSheetModNotes, replaceSheetModNotes } from "./sheet-mod-notes";
 import {
   equippedSql,
   fleetStatusFromWifi,
   isStarlinkProvider,
+  modHoldSql,
   rowEvidence,
   settledNegativeJoin,
   verifiedEquippedSql,
@@ -107,9 +127,16 @@ import {
   placeholders,
   prefixGlob,
   sheetSaysStarlink,
+  tailAircraftTypeSql,
   tailHash,
   withAirline,
 } from "./sql/fragments";
+import {
+  UNITED_STARLINK_READ_WHERE,
+  independentListingSql,
+  listedNotCountedSql,
+  uncountedReason,
+} from "./sql/listed-not-counted";
 import {
   DAY_SEC,
   DEPARTURE_WINDOW_HOURS,
@@ -349,6 +376,14 @@ export function setupTables(db: Database) {
     }
   }
   addColumn(db, "united_fleet", "rts_until", "INTEGER");
+  // Ground-gap returns (discovery-cadence.ts): the last airborne ADS-B
+  // sighting, and when a return last pulled this tail's check forward.
+  addColumn(db, "united_fleet", "adsb_last_airborne", "INTEGER");
+  addColumn(db, "united_fleet", "gap_pulled_at", "INTEGER");
+  // A sheet listing of a tail our checks hold as not Starlink (updateDatabase):
+  // when it was last noted, and when it last moved the tail's check forward.
+  addColumn(db, "united_fleet", "sheet_listed_at", "INTEGER");
+  addColumn(db, "united_fleet", "sheet_bumped_at", "INTEGER");
 
   if (!tableExists(db, "upcoming_flights")) {
     db.query(
@@ -520,6 +555,22 @@ export function setupTables(db: Database) {
     `).run();
   }
 
+  // The mainline sheet's Starlink hangar notes, strictly parsed
+  // (utils/sheet-mod-note.ts); replaced whole on every accepted sheet read.
+  db.query(`
+    CREATE TABLE IF NOT EXISTS sheet_mod_notes (
+      airline TEXT NOT NULL,
+      tail_number TEXT NOT NULL,
+      station TEXT NOT NULL,
+      started TEXT NOT NULL,
+      due_back TEXT,
+      unsure INTEGER NOT NULL DEFAULT 0,
+      holds_until TEXT NOT NULL,
+      read_at INTEGER NOT NULL,
+      PRIMARY KEY (airline, tail_number)
+    );
+  `).run();
+
   // Observed pipeline transitions (diffed between daily grid reads) — the
   // spine of the movements feed.
   if (!tableExists(db, "pipeline_events")) {
@@ -664,6 +715,9 @@ export function setupTables(db: Database) {
   }
   addColumn(db, "adsb_sweeps", "non_revenue", "INTEGER NOT NULL DEFAULT 0");
   addColumn(db, "adsb_sweeps", "low_speed", "INTEGER NOT NULL DEFAULT 0");
+  // The route-network airport an aircraft was reported on the ground at; what
+  // puts a flight draw on its airport pair (adsb-flight-draws.ts).
+  addColumn(db, "adsb_observations", "ground_airport", "TEXT");
   ensureAdsbFlightDrawsTable(db);
 
   // Starlink RFC 8805 geofeed prefixes — backs isStarlinkIp().
@@ -679,8 +733,11 @@ export function setupTables(db: Database) {
     `);
   }
 
-  // Passenger-verify dark-launch probe results. Everything except ip / in_geofeed
-  // is client-asserted; trust filtering happens at read time.
+  // Passenger-verify dark-launch probe results. Everything except in_geofeed is
+  // client-asserted; trust filtering happens at read time. ip, router_id and
+  // ua_hash are no longer written (rows before that change still carry them),
+  // and ip_prefix now holds a keyed hash that is blanked after the dedupe
+  // window: src/server/passenger-report-fields.ts says what each column holds.
   if (!tableExists(db, "passenger_reports")) {
     db.exec(`
       CREATE TABLE passenger_reports (
@@ -998,7 +1055,9 @@ export function updateDatabase(
   totalAircraftCount: number,
   starlinkAircraft: Partial<Aircraft>[],
   fleetStats: FleetStats,
-  airline: string
+  airline: string,
+  /** This read's hangar notes; omitted, the stored ones are left as they are. */
+  modNotes?: TailModNote[]
 ): string | null {
   const existingSheetRows = (
     db
@@ -1013,6 +1072,8 @@ export function updateDatabase(
     return refusal;
   }
 
+  const listedBefore = new Set<string>();
+  const newlyListed: Array<{ tail: string; fleet: string }> = [];
   db.transaction(() => {
     // Get existing data before clearing the table
     const existingDates = new Map<string, string>();
@@ -1043,6 +1104,7 @@ export function updateDatabase(
 
     for (const plane of existingPlanes) {
       if (plane.TailNumber) {
+        listedBefore.add(plane.TailNumber);
         if (plane.DateFound) {
           existingDates.set(plane.TailNumber, plane.DateFound);
         }
@@ -1073,6 +1135,8 @@ export function updateDatabase(
       .all(airline) as Array<{ tail_number: string; aircraft_type: string }>) {
       fleetAircraftTypes.set(row.tail_number, row.aircraft_type);
     }
+
+    if (modNotes) replaceSheetModNotes(db, airline, modNotes);
 
     // Update meta data
     // Only delete spreadsheet planes, preserve discovered ones (sheet_gid = 'discovery')
@@ -1127,12 +1191,23 @@ export function updateDatabase(
       WHERE TailNumber = ? AND sheet_gid = 'discovery' AND airline = ?
     `);
 
+    // The sheet can carry one tail on two rows (N89349 sat on two E175 rows,
+    // typed "ERJ-175" and "E175SC"). One listing per tail, first row wins:
+    // a second row made every count over starlink_planes one higher than the
+    // roster's count of the same aircraft.
+    const written = new Set<string>();
+
     for (const aircraft of starlinkAircraft) {
       const tailNumber = aircraft.TailNumber || "";
       if (!looksLikeValidTailNumber(tailNumber)) {
         warn(`skipping invalid tail '${tailNumber}' from sheet ${aircraft.sheet_gid}`);
         continue;
       }
+      if (written.has(tailNumber)) {
+        warn(`skipping second sheet row for tail '${tailNumber}' (sheet ${aircraft.sheet_gid})`);
+        continue;
+      }
+      written.add(tailNumber);
 
       // Sheet value wins if present; otherwise preserve what we had; otherwise
       // fall back to united_fleet (FR24-sourced). Prevents blank sheet cells
@@ -1176,6 +1251,10 @@ export function updateDatabase(
         verified_at: null,
       };
 
+      if (!listedBefore.has(tailNumber)) {
+        newlyListed.push({ tail: tailNumber, fleet: aircraft.fleet ?? "express" });
+      }
+
       insertStmt.run(
         aircraftType,
         aircraft.WiFi ?? "",
@@ -1207,6 +1286,66 @@ export function updateDatabase(
   // FR24 sync keep the sheet tallies. lastUpdated is safe: stampLastUpdated is
   // ownership-gated and UA's owner is the scrape itself.
   refreshFleetMeta(db, airline);
+
+  // The sheet got to these first. After the commit, and only for tails our own
+  // checks still hold as something other than Starlink: the lag point, and the
+  // tail's next discovery check moved to the front of the queue. A listing on
+  // such a tail is shown nowhere until our own reads agree, and left alone it
+  // is read at the verifier's pace of two to four days between readings;
+  // discovery's is a day and a half. It is the same check, sooner: it claims
+  // its slot from the check budget like any other, and the readings a
+  // contradicted listing needs are unchanged. A look already due inside that
+  // day and a half stays where it is (moving it would only reset the pace).
+  // `listedBefore` makes it once per listing, not once per hourly read, and
+  // the stamp on the fleet row makes a tail dropped and listed again the same
+  // listing. Strangers edit the sheet, so the moves are also capped over a
+  // rolling day; both stamps are in the table, so a restart forgets neither.
+  // A stamp ahead of the clock counts as recent: the cap can only err shut.
+  const fleetStatus = db.query(
+    "SELECT starlink_status, sheet_listed_at FROM united_fleet WHERE tail_number = ? AND airline = ?"
+  );
+  const noteListing = db.query(
+    "UPDATE united_fleet SET sheet_listed_at = ? WHERE tail_number = ? AND airline = ?"
+  );
+  const moveToFront = db.query(
+    `UPDATE united_fleet
+     SET next_check_after = CASE WHEN COALESCE(next_check_after, 0) > ? THEN ? ELSE next_check_after END,
+         discovery_priority = 1.0,
+         sheet_bumped_at = ?
+     WHERE tail_number = ? AND airline = ?`
+  );
+  const now = unixNow();
+  const movedToday = (
+    db
+      .query("SELECT COUNT(*) AS n FROM united_fleet WHERE airline = ? AND sheet_bumped_at > ?")
+      .get(airline, now - 24 * 3600) as { n: number }
+  ).n;
+  const movesLeft = Math.min(
+    SHEET_LISTING_BUMPS_PER_SYNC,
+    Math.max(0, SHEET_LISTING_BUMPS_PER_DAY - movedToday)
+  );
+  const movedToFront: string[] = [];
+  for (const n of newlyListed) {
+    const row = fleetStatus.get(n.tail, airline) as {
+      starlink_status: string | null;
+      sheet_listed_at: number | null;
+    } | null;
+    if (!row || row.starlink_status === "confirmed") continue;
+    if (row.sheet_listed_at !== null && row.sheet_listed_at > now - SHEET_LISTING_NOTED_SECS) {
+      continue;
+    }
+    noteListing.run(now, n.tail, airline);
+    recordDiscoveryLag(db, n.tail, airline, "sheet", n.fleet);
+    if (movedToFront.length < movesLeft) {
+      moveToFront.run(now + UNSETTLED_RECHECK_SECS, now, now, n.tail, airline);
+      movedToFront.push(n.tail);
+    }
+  }
+  if (movedToFront.length > 0) {
+    info("Sheet listed tails our checks hold as not Starlink, discovery re-check moved up", {
+      tails: movedToFront,
+    });
+  }
   return null;
 }
 
@@ -1250,10 +1389,11 @@ export function stampLastUpdatedAt(
 }
 
 /**
- * Recompute meta totals for an airline from united_fleet rows. UA's meta is
- * owned by the hourly spreadsheet scrape (updateDatabase); for HA/AS this is
- * the only periodic writer — without it their meta freezes at seed time.
- * lastUpdated goes through stampLastUpdated as the "fleet-meta" writer.
+ * Recompute meta totals for an airline from its programme roster: the one
+ * writer of the published totals. Callers: the sheet scrape (updateDatabase),
+ * the fleet sync, the seeds, and boot (refreshSheetOwnedFleetMeta).
+ * lastUpdated goes through stampLastUpdated as the "fleet-meta" writer, so it
+ * moves only for airlines that writer owns.
  */
 export function refreshFleetMeta(db: Database, airline: string): void {
   // Two-bucket meta shape: every non-mainline subfleet reports as express.
@@ -1278,6 +1418,20 @@ export function refreshFleetMeta(db: Database, airline: string): void {
   // owner is "fleet-meta" (the default). For UA the scrape owns the stamp, so
   // the updateDatabase call below can never steal it.
   stampLastUpdated(db, airline, "fleet-meta");
+}
+
+/**
+ * Boot-time refresh for airlines whose totals otherwise move only when the
+ * sheet scrape succeeds. A deploy can change the programme (a new exclusion),
+ * and /fleet reads the roster live; without this the cached headline would
+ * disagree with it until Google Sheets next answers. Limited to sheet-owned
+ * airlines because for the rest refreshFleetMeta also stamps lastUpdated, and
+ * a restart is not fresh data.
+ */
+export function refreshSheetOwnedFleetMeta(db: Database): void {
+  for (const a of enabledAirlines()) {
+    if (lastUpdatedOwner(a.code) === "sheet-scrape") refreshFleetMeta(db, a.code);
+  }
 }
 
 export function getTotalCount(db: Database, airline: string): number {
@@ -1370,6 +1524,20 @@ export function getRecentInstalls(
     .all(...q.params, limit) as RecentInstall[];
 }
 
+/** Every equipped tail of one airline with its listed aircraft type, one row per tail. */
+export function getEquippedTails(
+  db: Database,
+  airline: string
+): Array<{ tail: string; aircraft: string | null }> {
+  return db
+    .query(
+      `SELECT TailNumber AS tail, MAX(aircraft) AS aircraft FROM starlink_planes
+       WHERE airline = ? AND ${equippedSql("starlink_planes")}
+       GROUP BY TailNumber ORDER BY TailNumber`
+    )
+    .all(airline) as Array<{ tail: string; aircraft: string | null }>;
+}
+
 /**
  * Organic installs bucketed by calendar DAY (bulk writers excluded via
  * INSTALL_FILTER). Day, not month, because INSTALL_FILTER only knows the bulk
@@ -1378,6 +1546,11 @@ export function getRecentInstalls(
  * predicate and would chart as a real install spike. Only a per-day series can
  * see that shape, so the Install Rate Index detects it downstream
  * (excludeMassWriteDays) before it rolls up to months.
+ *
+ * A DateFound that is not a real calendar day is left out of the series (the
+ * tail stays counted): one such row once took down every page that charts or
+ * paces installs, and an empty one most of the site, since it sorts first and
+ * becomes the series' opening month.
  */
 export function getDailyInstalls(
   db: Database,
@@ -1387,7 +1560,8 @@ export function getDailyInstalls(
     `SELECT substr(DateFound, 1, 10) AS day, COUNT(*) AS installs
      FROM starlink_planes
      WHERE ${equippedSql("starlink_planes")}
-       AND ${INSTALL_FILTER}`,
+       AND ${INSTALL_FILTER}
+       AND substr(DateFound, 1, 10) = date(substr(DateFound, 1, 10))`,
     airline
   );
   return db.query(`${q.sql} GROUP BY day ORDER BY day`).all(...q.params) as {
@@ -1907,7 +2081,9 @@ export type FlightAssignmentRow = Flight & {
  * and ordered by last_updated DESC (for swap dedup). `settled_negative`
  * mirrors equippedSql's NOT EXISTS clause (the canonical negative-settle
  * rule) so callers don't re-derive it per row; the LEFT JOIN can't fan out
- * because united_fleet.tail_number is UNIQUE.
+ * because united_fleet.tail_number is UNIQUE. An unobserved listing held by a
+ * hangar note (evidence "in_mod") is left out like an unlisted tail: the core
+ * reads every row it gets with no verdict as listed.
  */
 export function getFlightAssignments(
   db: Database,
@@ -1925,7 +2101,9 @@ export function getFlightAssignments(
      INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
      ${settledNegativeJoin("_neg", "sp.TailNumber", "sp.airline")}
      WHERE uf.flight_number IN (${ph})
-       AND uf.departure_time >= ? AND uf.departure_time < ?`,
+       AND uf.departure_time >= ? AND uf.departure_time < ?
+       AND NOT (sp.verified_wifi IS NULL AND _neg.tail_number IS NULL
+         AND ${modHoldSql("sp.TailNumber", "sp.airline")})`,
     airline,
     "uf",
     [...flightNumberVariants, startOfDay, endOfDay]
@@ -3503,6 +3681,8 @@ export interface TypeProgress {
   notInGuide: number;
   /** A programExclusions family: shown, never summed into a denominator. */
   excluded: boolean;
+  /** Why an excluded type is out; unset when `excluded` is false. */
+  exclusionReason?: ProgrammeExclusionReason;
 }
 
 /** Equipped/total per programme type from the full roster. Freighters are
@@ -3524,13 +3704,15 @@ export function getTypeProgress(db: Database, airline: string): TypeProgress[] {
   for (const t of fleetRoster(db, airline)) {
     if (isFreighterFamily(t.family)) continue;
     const { key, label } = programTypeOf(cfg, t.aircraft_type);
+    const excluded = isOutsideProgramme(airline, t.family);
     const acc = byKey.get(key) ?? {
       key,
       label,
       equipped: 0,
       total: 0,
       notInGuide: 0,
-      excluded: isOutsideProgramme(airline, t.family),
+      excluded,
+      ...(excluded ? { exclusionReason: programmeExclusionReason(airline) } : {}),
     };
     acc.total++;
     if (t.equipped) acc.equipped++;
@@ -3728,18 +3910,15 @@ export function touchFleetVerifiedAt(db: Database, tail: string): void {
 }
 
 /**
- * Check if a plane needs verification from a specific source
- * Uses jittered thresholds to distribute checks over time:
- * - United: 48-96 hours (centered on 72)
- * - FR24: 18-30 hours (centered on 24)
- * - Spreadsheet: 0.5-1.5 hours (centered on 1)
+ * How long a check of `tailNumber` from `source` stays current, in hours: the
+ * source's base window (or `hoursThreshold`), spread ±33% by tail so checks
+ * do not bunch.
  */
-export function needsVerification(
-  db: Database,
+export function verificationWindowHours(
   tailNumber: string,
   source: VerificationSource,
   hoursThreshold?: number
-): boolean {
+): number {
   // Base thresholds by source (will be jittered ±33%)
   const baseThresholds: Record<VerificationSource, number> = {
     united: 72, // 3 days for United (to avoid spam)
@@ -3755,7 +3934,23 @@ export function needsVerification(
   // This distributes checks evenly across planes
   const jitter = (tailHash(tailNumber) % 1000) / 1000;
   const jitterRange = baseThreshold * 0.33; // ±33%
-  const threshold = baseThreshold - jitterRange + jitter * 2 * jitterRange;
+  return baseThreshold - jitterRange + jitter * 2 * jitterRange;
+}
+
+/**
+ * Check if a plane needs verification from a specific source
+ * Uses jittered thresholds to distribute checks over time:
+ * - United: 48-96 hours (centered on 72)
+ * - FR24: 18-30 hours (centered on 24)
+ * - Spreadsheet: 0.5-1.5 hours (centered on 1)
+ */
+export function needsVerification(
+  db: Database,
+  tailNumber: string,
+  source: VerificationSource,
+  hoursThreshold?: number
+): boolean {
+  const threshold = verificationWindowHours(tailNumber, source, hoursThreshold);
 
   const now = unixNow();
   const cutoff = now - threshold * 3600;
@@ -3776,6 +3971,64 @@ export function needsVerification(
     .get(tailNumber, source, cutoff) as { checked_at: number } | null;
 
   return !lastCheck;
+}
+
+/**
+ * The tail's newest check from `source` read Starlink cleanly: no error, and
+ * the page did not name another aircraft. An older positive behind a newer
+ * failure or negative does not count.
+ */
+export function lastCheckConfirmedStarlink(
+  db: Database,
+  tailNumber: string,
+  source: VerificationSource
+): boolean {
+  const last = db
+    .query(`
+    SELECT has_starlink, error, tail_confirmed FROM starlink_verification_log
+    WHERE tail_number = ? AND source = ?
+    ORDER BY checked_at DESC, id DESC
+    LIMIT 1
+  `)
+    .get(tailNumber, source) as {
+    has_starlink: number | null;
+    error: string | null;
+    tail_confirmed: number | null;
+  } | null;
+  return last?.has_starlink === 1 && last.error === null && last.tail_confirmed !== 0;
+}
+
+/**
+ * Each UA tail's newest check from `source` since `sinceSec` (unix seconds).
+ * A tail that is absent had none in that time. One query for a whole fleet's
+ * worth of needsVerification answers, and the order to take the due ones in.
+ */
+export function getLastCheckTimes(
+  db: Database,
+  source: VerificationSource,
+  sinceSec: number
+): Map<string, number> {
+  const rows = db
+    .query(
+      `SELECT tail_number, MAX(checked_at) AS last FROM starlink_verification_log
+       WHERE airline = 'UA' AND source = ? AND checked_at > ?
+       GROUP BY tail_number`
+    )
+    .all(source, sinceSec) as { tail_number: string; last: number }[];
+  return new Map(rows.map((r) => [r.tail_number, r.last]));
+}
+
+/** When each united.com check logged since `sinceSec` was made (unix seconds, oldest first). */
+export function getRecentUnitedCheckTimes(db: Database, sinceSec: number): number[] {
+  return (
+    db
+      .query(
+        `SELECT checked_at FROM starlink_verification_log
+         WHERE airline = 'UA' AND source = 'united' AND checked_at > ?
+         ORDER BY checked_at`
+      )
+      .all(sinceSec) as { checked_at: number }[]
+  ).map((r) => r.checked_at);
 }
 
 /**
@@ -3871,13 +4124,9 @@ function isUnitedNoneObservation(o: {
 }
 
 function hasPriorUnitedStarlink(db: Database, tailNumber: string, airline: AirlineFilter): boolean {
-  const q = withAirline(
-    `tail_number = ? AND tail_confirmed = 1 AND has_starlink = 1 AND source = 'united'
-     AND error IS NULL`,
-    airline,
-    "",
-    [tailNumber]
-  );
+  const q = withAirline(`tail_number = ? AND ${UNITED_STARLINK_READ_WHERE}`, airline, "", [
+    tailNumber,
+  ]);
   return (
     db.query(`SELECT 1 FROM starlink_verification_log WHERE ${q.sql} LIMIT 1`).get(...q.params) !=
     null
@@ -4053,9 +4302,7 @@ function starlinkHistorySql(
   };
 }
 
-/** A Starlink listing we didn't derive ourselves: not discovery, not a type rule. */
-const INDEPENDENT_LISTING_WHERE = `COALESCE(sheet_gid, '') NOT IN ('discovery', 'type_deterministic')
-  AND ${sheetSaysStarlink("wifi")}`;
+const INDEPENDENT_LISTING_WHERE = independentListingSql();
 
 function starlinkHistory(
   db: Database,
@@ -4292,10 +4539,26 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
     const update = db.query(
       "UPDATE united_fleet SET starlink_status = ? WHERE tail_number = ? AND airline = ?"
     );
+    // A tail the rule names as an exception ("unknown") must not stay listed:
+    // a listing is what every count reads as equipped. Whatever wrote the
+    // listing, the named exception outranks it; nothing observes these tails.
+    const unsettle = db.query(
+      "UPDATE united_fleet SET starlink_status = 'unknown', verified_wifi = NULL, verified_at = NULL WHERE tail_number = ? AND airline = ?"
+    );
+    const unlist = db.query("DELETE FROM starlink_planes WHERE TailNumber = ? AND airline = ?");
     let changed = 0;
     const apply = db.transaction(
       (pending: Array<(typeof rows)[number] & { next: StarlinkStatus }>) => {
         for (const r of pending) {
+          if (r.next === "unknown") {
+            const unlisted = unlist.run(r.tail_number, a.code).changes;
+            if (r.starlink_status !== "unknown") {
+              unsettle.run(r.tail_number, a.code);
+              emitFleetStatusChange(r, "unknown");
+            }
+            if (unlisted > 0 || r.starlink_status !== "unknown") changed++;
+            continue;
+          }
           update.run(r.next, r.tail_number, a.code);
           emitFleetStatusChange(r, r.next);
           if (r.next === "confirmed") {
@@ -4314,8 +4577,11 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
       }
     );
     apply(
-      rows.flatMap((r) => {
-        const next = a.typeDeterministicWifi?.(r.aircraft_type) ?? null;
+      rows.flatMap((r): Array<(typeof rows)[number] & { next: StarlinkStatus }> => {
+        const next = a.typeDeterministicWifi?.(r.aircraft_type, r.tail_number) ?? null;
+        // A held-back tail is always passed on: its status may already read
+        // "unknown" while a listing from before the exception still stands.
+        if (next === "unknown") return [{ ...r, next }];
         return next === null || next === r.starlink_status ? [] : [{ ...r, next }];
       })
     );
@@ -4691,6 +4957,116 @@ const WIFI_MISMATCH_PREDICATE = `verified_wifi IS NOT NULL
          (NOT ${sheetSaysStarlink("wifi")} AND verified_wifi = 'Starlink')
        )`;
 
+/** A reported listing drops off the log after this long without our check
+ * agreeing: a sheet row that never confirms is more likely a wrong listing
+ * than a slow one (N77426 sat at 31 of 31 Viasat reads before the sheet
+ * withdrew it), and a parked plane we cannot check is not news for months. */
+export const REPORTED_MAX_AGE_DAYS = 30;
+
+type ListedNotCountedRow = Omit<ReportedInstall, "reason" | "observed_wifi" | "observed_at"> & {
+  listing_wifi: string | null;
+  listing_at: number | null;
+  settled_wifi: string | null;
+  settled_at: number | null;
+  ever_starlink: number;
+  dated: number;
+};
+
+/**
+ * Every tail the community sheet lists as Starlink and no count includes, with
+ * the reason (sql/listed-not-counted.ts). One row per tail. Never equipped, so
+ * a tail is here or in the equipped set, never both. Independent listings
+ * only: a row our own discovery wrote is not a sheet listing, and it outlives
+ * a contrary check until the next good scrape purges it, which in November
+ * 2026 was three weeks away. Sheet-fed airlines only: United today.
+ *
+ * `scope` narrows it. "log" is what the dated install log shows: organically
+ * dated rows inside REPORTED_MAX_AGE_DAYS. "tail" is what a tail's own page
+ * calls reported: the log's rows, plus any listing still awaiting our check,
+ * since nothing we read has contradicted it however old it is.
+ */
+export function getListedNotCounted(
+  db: Database,
+  airline: AirlineFilter,
+  opts: { scope?: "log" | "tail"; limit?: number; now?: number } = {}
+): ReportedInstall[] {
+  const sp = "starlink_planes";
+  const ofTail = `tail_number = ${sp}.TailNumber AND airline = ${sp}.airline`;
+  const settled = (column: string) =>
+    `(SELECT uf.${column} FROM united_fleet uf
+      WHERE uf.tail_number = ${sp}.TailNumber AND uf.airline = ${sp}.airline
+        AND uf.starlink_status = 'negative')`;
+  const q = withAirline(
+    `SELECT airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound,
+            verified_wifi AS listing_wifi, verified_at AS listing_at,
+            ${settled("verified_wifi")} AS settled_wifi,
+            ${settled("verified_at")} AS settled_at,
+            EXISTS (SELECT 1 FROM starlink_verification_log
+                    WHERE ${ofTail} AND ${UNITED_STARLINK_READ_WHERE}) AS ever_starlink,
+            (SELECT COUNT(*) FROM starlink_verification_log
+             WHERE ${ofTail} AND tail_confirmed = 1 AND ${CLEAN_OBSERVATION_WHERE}
+               AND checked_at >= COALESCE(
+                 CAST(strftime('%s', substr(${sp}.DateFound, 1, 10)) AS INTEGER), 0)
+            ) AS checks_since_listed,
+            (${INSTALL_FILTER}) AS dated
+     FROM ${sp}
+     WHERE ${listedNotCountedSql(sp)}`,
+    // Only a sheet-fed airline has a sheet to disagree with.
+    airlineCodes(airline).filter((code) => AIRLINES[code]?.lastUpdatedOwner === "sheet-scrape")
+  );
+  // A tail listed twice speaks through the row that carries a verdict.
+  const rows = db
+    .query(`${q.sql} ORDER BY airline, TailNumber, verified_wifi IS NULL, id`)
+    .all(...q.params) as ListedNotCountedRow[];
+  const cutoff = new Date(((opts.now ?? unixNow()) - REPORTED_MAX_AGE_DAYS * DAY_SEC) * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const seen = new Set<string>();
+  const out: ReportedInstall[] = [];
+  for (const r of rows) {
+    const key = `${r.airline}:${r.TailNumber}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const why = uncountedReason({
+      listingWifi: r.listing_wifi,
+      settledWifi: r.settled_wifi,
+      everReadStarlink: r.ever_starlink === 1,
+    });
+    if (!why) continue;
+    const inLog = r.dated === 1 && (r.DateFound ?? "").slice(0, 10) >= cutoff;
+    if (opts.scope === "log" && !inLog) continue;
+    if (opts.scope === "tail" && !inLog && why.reason !== "awaiting_check") continue;
+    const fromListing = why.observedWifi !== null && why.observedWifi === r.listing_wifi;
+    out.push({
+      airline: r.airline,
+      TailNumber: r.TailNumber,
+      Aircraft: r.Aircraft,
+      OperatedBy: r.OperatedBy,
+      DateFound: r.DateFound,
+      reason: why.reason,
+      observed_wifi: why.observedWifi,
+      observed_at: why.observedWifi === null ? null : fromListing ? r.listing_at : r.settled_at,
+      checks_since_listed: r.checks_since_listed,
+    });
+  }
+  out.sort(
+    (a, b) =>
+      (b.DateFound ?? "").localeCompare(a.DateFound ?? "") ||
+      a.TailNumber.localeCompare(b.TailNumber)
+  );
+  return opts.limit === undefined ? out : out.slice(0, opts.limit);
+}
+
+/** The install log's second list: getListedNotCounted, narrowed to the log. */
+export function getReportedInstalls(
+  db: Database,
+  airline: AirlineFilter,
+  limit = 25,
+  now = unixNow()
+): ReportedInstall[] {
+  return getListedNotCounted(db, airline, { scope: "log", limit, now });
+}
+
 export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMismatch[] {
   const q = withAirline(
     `SELECT
@@ -4777,6 +5153,143 @@ function calculateDiscoveryPriority(
   priority += (tailHash(tailNumber) % 100) / 1000;
 
   return Math.min(1.0, priority);
+}
+
+/** A pipeline read older than this has stopped; its rows no longer say "in mod". */
+const PIPELINE_FRESH_SECS = 3 * DAY_SEC;
+const PIPELINE_GROUP = "pipeline";
+
+export interface NegativeRecheckPlan {
+  /** Days until a negative tail of this airline is looked at again. */
+  daysFor(tailNumber: string, aircraftType: string | null): number;
+  /** The tail's family had an install found in the window, or the pipeline names the tail. */
+  retrofitting(tailNumber: string, aircraftType: string | null): boolean;
+  negativeTails: number;
+  groups: CadenceGroup[];
+  days: Map<string, number>;
+}
+
+/**
+ * The re-check plan for an airline's negative tails (discovery-cadence.ts),
+ * from what the database already holds: negatives per aircraft family, the
+ * installs found in each family over the trailing window, and the tails the
+ * install pipeline names as in mod or awaiting verification. Pipeline tails
+ * form their own group weighted at an install a day each, which pins them to
+ * the shortest interval while still paying for it out of the same budget.
+ * The plan spends INTERVAL_BUDGET_SHARE of the old budget; the rest is the
+ * ground-gap allowance (recordAirborneSightings).
+ */
+export function negativeRecheckPlan(
+  db: Database,
+  airline: string,
+  now = unixNow()
+): NegativeRecheckPlan {
+  const pipeline = new Set(
+    (
+      db
+        .query(
+          `SELECT tail FROM fleet_progress_tails
+           WHERE airline = ? AND state IN ('in_mod', 'verification_needed') AND fetched_at >= ?`
+        )
+        .all(airline, now - PIPELINE_FRESH_SECS) as { tail: string }[]
+    ).map((r) => r.tail)
+  );
+  const groupOf = (tail: string, type: string | null) =>
+    pipeline.has(tail) ? PIPELINE_GROUP : normalizeAircraftType(type);
+
+  const tally = new Map<string, CadenceGroup>();
+  const group = (key: string) => {
+    let g = tally.get(key);
+    if (!g) {
+      g = { key, tails: 0, installs: 0 };
+      tally.set(key, g);
+    }
+    return g;
+  };
+  const negatives = db
+    .query(
+      "SELECT tail_number, aircraft_type FROM united_fleet WHERE airline = ? AND starlink_status = 'negative'"
+    )
+    .all(airline) as { tail_number: string; aircraft_type: string | null }[];
+  for (const n of negatives) group(groupOf(n.tail_number, n.aircraft_type)).tails++;
+
+  const installs = db
+    .query(
+      `SELECT ${tailAircraftTypeSql("sp.TailNumber", "sp.airline")} AS aircraft_type
+       FROM starlink_planes sp
+       WHERE sp.airline = ? AND sp.DateFound >= ?
+         AND ${equippedSql("sp")} AND ${INSTALL_FILTER}`
+    )
+    .all(airline, isoDateDaysAgo(TRAILING_WINDOW_DAYS, now)) as { aircraft_type: string | null }[];
+  for (const i of installs) group(normalizeAircraftType(i.aircraft_type)).installs++;
+
+  const pipelineGroup = tally.get(PIPELINE_GROUP);
+  if (pipelineGroup) pipelineGroup.installs = pipelineGroup.tails * TRAILING_WINDOW_DAYS;
+
+  const groups = [...tally.values()];
+  const days = solveRecheckDays(groups, INTERVAL_BUDGET_SHARE);
+  return {
+    groups,
+    days,
+    negativeTails: negatives.length,
+    daysFor: (tail, type) =>
+      days.get(groupOf(tail, type)) ?? BASELINE_RECHECK_DAYS / INTERVAL_BUDGET_SHARE,
+    retrofitting: (tail, type) => (tally.get(groupOf(tail, type))?.installs ?? 0) > 0,
+  };
+}
+
+/** A find this soon after a ground-gap pull is credited to it: the pulled
+ * check, the second reading ~36h later that settles it, and some slack. */
+const GAP_CREDIT_SECS = 4 * DAY_SEC;
+
+/**
+ * Emit discovery.lag_hours for a tail that has just become known as Starlink:
+ * the hours since our own checks last read it as something else. `own` is a
+ * discovery check that got there before the sheet listed the tail; `sheet` is
+ * the sheet listing a tail our checks had as negative. Returns the hours, or
+ * null (nothing emitted) when no negative reading exists to measure from, as
+ * with a new delivery.
+ */
+export function recordDiscoveryLag(
+  db: Database,
+  tailNumber: string,
+  airline: string,
+  firstSource: "own" | "sheet",
+  fleet: string | null,
+  now = unixNow()
+): number | null {
+  const pulledAt =
+    firstSource === "own"
+      ? (
+          db
+            .query(
+              "SELECT gap_pulled_at AS at FROM united_fleet WHERE tail_number = ? AND airline = ?"
+            )
+            .get(tailNumber, airline) as { at: number | null } | null
+        )?.at
+      : null;
+  const trigger =
+    firstSource === "sheet"
+      ? "sheet"
+      : pulledAt && now - pulledAt <= GAP_CREDIT_SECS
+        ? "ground_gap"
+        : "scheduled";
+  const last = db
+    .query(
+      `SELECT MAX(checked_at) AS at FROM starlink_verification_log
+       WHERE tail_number = ? AND airline = ? AND tail_confirmed = 1 AND has_starlink = 0
+         AND ${CLEAN_OBSERVATION_WHERE}`
+    )
+    .get(tailNumber, airline) as { at: number | null } | null;
+  if (!last?.at || last.at > now) return null;
+  const hours = (now - last.at) / 3600;
+  metrics.distribution(DISTRIBUTIONS.DISCOVERY_LAG_HOURS, hours, {
+    first_source: firstSource,
+    trigger,
+    fleet: normalizeFleet(fleet),
+    airline: normalizeAirlineTag(airline),
+  });
+  return hours;
 }
 
 /**
@@ -4893,31 +5406,162 @@ export function upsertFleetAircraft(
   return true;
 }
 
+/** A cascade, a ground-gap return or a user lookup asked for this tail by name. */
+const BUMPED_PRIORITY = 0.9;
+const STATUS_RANK: Record<string, number> = { unknown: 0, negative: 1, confirmed: 2 };
+
 /**
- * Get next planes to verify based on priority and scheduling
+ * SQL: the united_fleet row aliased `uf` is settled Starlink, on the roster
+ * and by the listing's consensus-gated verified_wifi. Looking at such a tail
+ * again re-confirms it; every other tail is one a check could still settle.
+ * Scheduling only: what counts as equipped is sql/equipped.ts.
+ */
+function settledStarlinkSql(uf: string): string {
+  return `(${uf}.starlink_status = 'confirmed' AND EXISTS (
+      SELECT 1 FROM starlink_planes _settled
+      WHERE _settled.TailNumber = ${uf}.tail_number AND _settled.airline = ${uf}.airline
+        AND _settled.verified_wifi = 'Starlink'
+    ))`;
+}
+
+/** The airline's settled-Starlink tails (settledStarlinkSql). */
+export function getSettledStarlinkTails(db: Database, airline: string): Set<string> {
+  const rows = db
+    .query(
+      `SELECT uf.tail_number FROM united_fleet uf WHERE uf.airline = ? AND ${settledStarlinkSql("uf")}`
+    )
+    .all(airline) as { tail_number: string }[];
+  return new Set(rows.map((r) => r.tail_number));
+}
+
+export function isSettledStarlink(db: Database, tailNumber: string, airline: string): boolean {
+  return (
+    db
+      .query(
+        `SELECT 1 FROM united_fleet uf
+         WHERE uf.tail_number = ? AND uf.airline = ? AND ${settledStarlinkSql("uf")}`
+      )
+      .get(tailNumber, airline) !== null
+  );
+}
+
+/** Discovery's pace between readings of a tail whose consensus has not settled (±10%). */
+const UNSETTLED_RECHECK_SECS = 36 * 3600;
+
+/**
+ * Two readings of united.com minutes apart are one look at the same page, but
+ * the consensus counts each. A tail still being settled can be read by the
+ * verifier (it is listed) and by discovery (it was moved to the front of the
+ * queue) inside the same few minutes, and those two rows could carry a
+ * listing past the reads-in-a-row rule a day and a half early.
+ *
+ * Returns when discovery may next read the tail, if its newest `source` row is
+ * a clean reading of the tail itself younger than `withinSecs`; null when a
+ * read now is in order. The time returned is that reading plus the pace
+ * discovery already keeps between readings of an unsettled tail, so whichever
+ * job read first, the readings that follow are as far apart as they always
+ * were. A reading that already changed the consensus away from the roster's
+ * status never waits: that discovery check is what writes the change to the
+ * roster.
+ */
+export function settleReadNotBefore(
+  db: Database,
+  plane: { tail_number: string; starlink_status: string | null },
+  source: VerificationSource,
+  withinSecs: number,
+  now = unixNow()
+): number | null {
+  const last = db
+    .query(
+      `SELECT checked_at, tail_confirmed, (${CLEAN_OBSERVATION_WHERE}) AS clean
+       FROM starlink_verification_log
+       WHERE tail_number = ? AND source = ?
+       ORDER BY checked_at DESC, id DESC LIMIT 1`
+    )
+    .get(plane.tail_number, source) as {
+    checked_at: number;
+    tail_confirmed: number | null;
+    clean: number;
+  } | null;
+  if (!last || !last.clean || last.tail_confirmed !== 1) return null;
+  if (last.checked_at > now || last.checked_at <= now - withinSecs) return null;
+  const settled = consensusToFleetStatus(
+    computeWifiConsensus(db, plane.tail_number, { sources: OBSERVED_WIFI_SOURCES, airline: "UA" })
+      .verdict
+  );
+  if (settled !== null && settled !== plane.starlink_status) return null;
+  return last.checked_at + UNSETTLED_RECHECK_SECS;
+}
+
+/** Put a tail's discovery turn off until `at`. Only the due time moves. */
+export function postponeDiscoveryCheck(db: Database, tailNumber: string, at: number): void {
+  db.query("UPDATE united_fleet SET next_check_after = ? WHERE tail_number = ?").run(
+    at,
+    tailNumber
+  );
+}
+
+// How long discovery leaves a confirmed tail before looking again (±10%):
+// updateFleetVerificationResult's own figure for a clean confirmed check.
+const CONFIRMED_RECHECK_SECS = 7 * 24 * 3600;
+
+/**
+ * Put a confirmed tail's discovery re-check off by the interval a clean check
+ * would have set, without making one: somebody else's check already answered
+ * it. Only the due time moves; the row's verdict and stamps are untouched.
+ */
+export function deferConfirmedRecheck(db: Database, tailNumber: string): void {
+  const jitter = (Math.random() - 0.5) * 0.2 * CONFIRMED_RECHECK_SECS;
+  db.query("UPDATE united_fleet SET next_check_after = ? WHERE tail_number = ?").run(
+    unixNow() + CONFIRMED_RECHECK_SECS + jitter,
+    tailNumber
+  );
+}
+
+/**
+ * The due tails, in the order discovery should spend its next checks.
+ *
+ * Never-checked tails first, then negatives, then confirmed ones. Among due
+ * negatives a tail bumped by name leads, then the family with the shortest
+ * re-check interval: when the loop is behind (after an outage or a deploy)
+ * the checks go where an install is likeliest instead of in sync order. The
+ * loop is usually idle, so what mostly decides lag is next_check_after.
+ *
+ * `unsettledOnly` leaves out settled-Starlink tails, for a tick where the
+ * check budget is closed to re-confirmations.
  */
 export function getNextPlanesToVerify(
   db: Database,
   limit: number,
-  airline: string
+  airline: string,
+  now = unixNow(),
+  opts: { unsettledOnly?: boolean } = {}
 ): FleetAircraft[] {
-  const now = unixNow();
+  const scope = opts.unsettledOnly ? `AND NOT ${settledStarlinkSql("united_fleet")}` : "";
+  const due = db
+    .query(`SELECT * FROM united_fleet WHERE next_check_after <= ? AND airline = ? ${scope}`)
+    .all(now, airline) as FleetAircraft[];
+  if (due.length <= 1) return due.slice(0, limit);
 
-  return db
-    .query(`
-    SELECT * FROM united_fleet
-    WHERE next_check_after <= ? AND airline = ?
-    ORDER BY
-      CASE starlink_status
-        WHEN 'unknown' THEN 0
-        WHEN 'negative' THEN 1
-        WHEN 'confirmed' THEN 2
-      END,
-      discovery_priority DESC,
-      last_seen_at DESC
-    LIMIT ?
-  `)
-    .all(now, airline, limit) as FleetAircraft[];
+  const plan = due.some((p) => p.starlink_status === "negative")
+    ? negativeRecheckPlan(db, airline, now)
+    : null;
+  const key = (p: FleetAircraft) => ({
+    rank: STATUS_RANK[p.starlink_status] ?? -1,
+    bumped: p.discovery_priority >= BUMPED_PRIORITY ? 0 : 1,
+    days:
+      plan && p.starlink_status === "negative" ? plan.daysFor(p.tail_number, p.aircraft_type) : 0,
+  });
+  const keyed = due.map((p) => ({ p, k: key(p) }));
+  keyed.sort(
+    (a, b) =>
+      a.k.rank - b.k.rank ||
+      a.k.bumped - b.k.bumped ||
+      a.k.days - b.k.days ||
+      b.p.discovery_priority - a.p.discovery_priority ||
+      b.p.last_seen_at - a.p.last_seen_at
+  );
+  return keyed.slice(0, limit).map((x) => x.p);
 }
 
 // 10 consecutive errors with the 1h→24h backoff is ~6 days off the schedule —
@@ -4936,10 +5580,9 @@ export function updateFleetVerificationResult(
     verifiedWifi: string | null;
     error?: string | null;
     needsMoreObs?: boolean;
-  }
+  },
+  now = unixNow()
 ): void {
-  const now = unixNow();
-
   const prev = db
     .query(
       "SELECT aircraft_type, check_attempts, rts_until, starlink_status, fleet, airline FROM united_fleet WHERE tail_number = ?"
@@ -4968,11 +5611,14 @@ export function updateFleetVerificationResult(
   } else if (result.needsMoreObs) {
     // Consensus is ambiguous/insufficient — re-check in ~36h so it converges
     // within a few days instead of waiting 7-14 days between observations.
-    nextCheckDelay = 36 * 3600;
+    nextCheckDelay = UNSETTLED_RECHECK_SECS;
   } else if (result.starlinkStatus === "confirmed") {
     nextCheckDelay = 7 * 24 * 3600;
+  } else if (result.starlinkStatus === "negative" && prev?.airline) {
+    nextCheckDelay =
+      negativeRecheckPlan(db, prev.airline, now).daysFor(tailNumber, prev.aircraft_type) * DAY_SEC;
   } else {
-    nextCheckDelay = 14 * 24 * 3600;
+    nextCheckDelay = BASELINE_RECHECK_DAYS * DAY_SEC;
   }
   if (!result.error && result.starlinkStatus !== "confirmed" && rtsUntil && rtsUntil > now)
     nextCheckDelay = Math.min(nextCheckDelay, 24 * 3600);
@@ -5631,39 +6277,53 @@ export function getStarlinkPrefixes(
 }
 
 export interface PassengerReportInsert {
-  ip: string;
-  ip_prefix: string;
+  dedupe_key: string;
   in_geofeed: boolean;
   source: string;
   outcome: string;
   claimed_flight: string | null;
   claimed_tail: string | null;
   claimed_date: string | null;
-  router_id: string | null;
-  ua_hash: string | null;
   airborne_match: boolean;
 }
 
+/** `ip` is NOT NULL from the original schema, so it gets "" rather than the
+ * address; router_id and ua_hash are left NULL. */
 export function recordPassengerReport(db: Database, r: PassengerReportInsert): void {
   db.query(`
     INSERT INTO passenger_reports
       (reported_at, ip, ip_prefix, in_geofeed, source, outcome,
-       claimed_flight, claimed_tail, claimed_date, router_id, ua_hash, airborne_match)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       claimed_flight, claimed_tail, claimed_date, airborne_match)
+    VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     unixNow(),
-    r.ip,
-    r.ip_prefix,
+    r.dedupe_key,
     r.in_geofeed ? 1 : 0,
     r.source,
     r.outcome,
     r.claimed_flight,
     r.claimed_tail,
     r.claimed_date,
-    r.router_id,
-    r.ua_hash,
     r.airborne_match ? 1 : 0
   );
+}
+
+/**
+ * Blanks dedupe keys that have outlived the window they exist for. The range
+ * matches only the keyed hashes ("h:…"), so rows written before hashing, whose
+ * ip_prefix is a readable "v4:…"/"v6:…" prefix, are left exactly as they are.
+ */
+export function expirePassengerDedupeKeys(
+  db: Database,
+  windowSec: number,
+  nowSec = unixNow()
+): number {
+  return db
+    .query(
+      `UPDATE passenger_reports SET ip_prefix = ''
+       WHERE ip_prefix >= 'h:' AND ip_prefix < 'h;' AND reported_at <= ?`
+    )
+    .run(nowSec - windowSec).changes;
 }
 
 export function isFlightAirborne(
@@ -5689,7 +6349,7 @@ export function isFlightAirborne(
  * submission from the same client. */
 export function passengerReportSeenRecently(
   db: Database,
-  ipPrefix: string,
+  dedupeKey: string,
   source: string,
   tail: string | null,
   windowSec: number
@@ -5701,7 +6361,7 @@ export function passengerReportSeenRecently(
        WHERE ip_prefix = ? AND reported_at > ? AND source = ? AND claimed_tail IS ?
        LIMIT 1`
     )
-    .get(ipPrefix, since, source, tail);
+    .get(dedupeKey, since, source, tail);
   return row !== null;
 }
 
@@ -5812,6 +6472,94 @@ export function getFleetTailsWithStatus(
     .all(airline) as Array<{ tail_number: string; starlink_status: string }>;
 }
 
+/** A regular check this close is not worth a ground-gap check. */
+const GAP_PULL_MIN_LEAD_SECS = DAY_SEC;
+
+/**
+ * Stamp the tails an ADS-B sweep saw airborne, and pull forward the discovery
+ * check of a negative tail seen again after a ground gap (the stretch a
+ * retrofit needs). Returns the tails pulled forward.
+ *
+ * This is scheduling only: the sweep still decides nothing about wifi. Pulls
+ * are capped per rolling day at the share of the budget the interval plan
+ * leaves unspent, and go only to tails whose family is being retrofitted or
+ * that the pipeline names, so the allowance is not used up on maintenance
+ * visits of families with no programme. A silence the sweeps did not cover is
+ * ignored, so an aggregator outage cannot queue the fleet, and a tail's first
+ * sighting only sets the stamp.
+ */
+export function recordAirborneSightings(
+  db: Database,
+  airline: string,
+  airborneTails: readonly string[],
+  now: number,
+  sweepIntervalSecs: number
+): string[] {
+  if (airborneTails.length === 0) return [];
+  const seen = new Set(airborneTails);
+  const rows = (
+    db
+      .query(
+        `SELECT tail_number, aircraft_type, starlink_status, next_check_after, adsb_last_airborne
+         FROM united_fleet WHERE airline = ?`
+      )
+      .all(airline) as Array<{
+      tail_number: string;
+      aircraft_type: string | null;
+      starlink_status: string | null;
+      next_check_after: number;
+      adsb_last_airborne: number | null;
+    }>
+  ).filter((r) => seen.has(r.tail_number));
+
+  const returned = rows
+    .filter(
+      (r) =>
+        r.starlink_status === "negative" &&
+        r.adsb_last_airborne !== null &&
+        now - r.adsb_last_airborne >= GROUND_GAP_SECS &&
+        r.next_check_after - now >= GAP_PULL_MIN_LEAD_SECS
+    )
+    // Longest silence first when one sweep brings back more than the allowance.
+    .sort((a, b) => (a.adsb_last_airborne as number) - (b.adsb_last_airborne as number));
+  const pulled: string[] = [];
+  db.transaction(() => {
+    if (returned.length > 0) {
+      const plan = negativeRecheckPlan(db, airline, now);
+      const spent = (
+        db
+          .query("SELECT COUNT(*) AS n FROM united_fleet WHERE airline = ? AND gap_pulled_at > ?")
+          .get(airline, now - DAY_SEC) as { n: number }
+      ).n;
+      let left = gapChecksPerDay(plan.negativeTails) - spent;
+      const sweepsBetween = db.query(
+        "SELECT COUNT(*) AS n FROM adsb_sweeps WHERE swept_at > ? AND swept_at < ? AND airborne > 0"
+      );
+      const pull = db.query(
+        `UPDATE united_fleet
+         SET next_check_after = ?, gap_pulled_at = ?,
+             discovery_priority = MAX(discovery_priority, ?)
+         WHERE tail_number = ? AND airline = ?`
+      );
+      for (const r of returned) {
+        if (left <= 0) break;
+        if (!plan.retrofitting(r.tail_number, r.aircraft_type)) continue;
+        const lastSeen = r.adsb_last_airborne as number;
+        const sweeps = (sweepsBetween.get(lastSeen, now) as { n: number }).n;
+        if (!sweepsCoverGap(sweeps, now - lastSeen, sweepIntervalSecs)) continue;
+        pull.run(now, now, BUMPED_PRIORITY, r.tail_number, airline);
+        pulled.push(r.tail_number);
+        left--;
+      }
+    }
+    const stamp = db.query(
+      "UPDATE united_fleet SET adsb_last_airborne = ? WHERE tail_number = ? AND airline = ?"
+    );
+    for (const r of rows) stamp.run(now, r.tail_number, airline);
+  })();
+  return pulled;
+}
+
 /**
  * 90 days, matching the sweep aggregates.
  *
@@ -5859,8 +6607,8 @@ export function recordAdsbSweep(
       db.query(`
         INSERT INTO adsb_observations
           (observed_at, tail_number, callsign, hex, airborne, ground_speed, lat, lon,
-           aircraft_type, provider, shadow_result, assigned_flight)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           aircraft_type, provider, shadow_result, assigned_flight, ground_airport)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         o.observed_at,
         o.tail_number,
@@ -5873,7 +6621,8 @@ export function recordAdsbSweep(
         o.aircraft_type,
         o.provider,
         o.shadow_result,
-        o.assigned_flight
+        o.assigned_flight,
+        o.ground_airport ?? null
       );
     }
     db.query("DELETE FROM adsb_observations WHERE observed_at < ?").run(obsCutoff);
@@ -6009,6 +6758,8 @@ export interface DepartureSlotQuery {
   /** Restrict to one airport pair (route pages). */
   origin?: string;
   destination?: string;
+  /** Restrict to one aircraft (tail pages). */
+  tail?: string;
 }
 
 /** departureSlotsSql bound to a scope, as a derived table plus its params. */
@@ -6030,6 +6781,10 @@ function departureSlots(
   if (q.destination) {
     clause = `${clause} AND uf.arrival_airport = ?`;
     params.push(q.destination);
+  }
+  if (q.tail) {
+    clause = `${clause} AND uf.tail_number = ?`;
+    params.push(q.tail);
   }
   return { sql: `(${departureSlotsSql(clause)})`, params: [...params, q.from, q.to] };
 }
@@ -6160,6 +6915,17 @@ export function getRouteStarlinkSchedule(
   return { rows, totalDepartures: total, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
 
+/** Every equipped route pair in the live window, uncapped: the /routes map
+ * draws the whole network, where the table only ranks the busiest. */
+export function getRouteNetworkRows(
+  db: Database,
+  airline?: AirlineFilter,
+  nowSec = unixNow()
+): RouteSchedule {
+  const { rows, total } = rankedEquippedRoutes(db, airline, nowSec, -1, 0);
+  return { rows, totalDepartures: total, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
+}
+
 // Ten charted weeks plus the partial current one.
 const INSTALL_PACE_LOOKBACK_DAYS = 77;
 
@@ -6278,19 +7044,29 @@ function computeFleetPageData(
   } as Record<BodyClass, Record<WifiProvider, number>>;
 
   let totalStarlink = 0;
+  const airlineMap = new Map<string, { code: string; starlink: number; total: number }>();
 
   for (const r of rows) {
     const family = r.family === "other" ? "unknown" : r.family;
     const { equipped } = r;
+    const own = airlineMap.get(r.airline) ?? { code: r.airline, starlink: 0, total: 0 };
+    own.total++;
+    if (equipped) own.starlink++;
+    airlineMap.set(r.airline, own);
     // The observed provider. A Starlink observation on a tail the one
     // definition doesn't count (a settle or listing says otherwise) is a
     // conflict, shown as unchecked rather than as a second Starlink count.
     const rawProvider = normalizeWifiProvider(r.verified_wifi);
+    // On a page over several airlines, an airline known by aircraft type keeps
+    // out of the squares counted one by one, whatever a single row carries.
+    // The same on an airline's own page for a programme partner's aircraft.
+    const byTypeAmongOthers =
+      r.airline !== sole && AIRLINES[r.airline] && trackingMethod(AIRLINES[r.airline]) === "type";
     const provider: WifiProvider = equipped
       ? // Every equipped tail lands in a Starlink bucket, so the squares always
         // add up to the count the header, the type bars and MCP report. Without
         // an observation of its own it is "reported, not confirmed".
-        rawProvider === "starlink" || r.listedVerified
+        (rawProvider === "starlink" || r.listedVerified) && !byTypeAmongOthers
         ? "starlink"
         : "starlink_listed"
       : rawProvider === "other" || rawProvider === "starlink"
@@ -6332,10 +7108,54 @@ function computeFleetPageData(
     }
   }
 
+  // Excluded types stay visible (labelled) but never enter totals, pulse,
+  // carriers, or the tail registry.
+  if (sole) {
+    const excludedFamilies = AIRLINES[sole]?.programExclusions?.families ?? [];
+    const inProgramme = new Set(rows.map((r) => r.tail_number));
+    const exclusionLabel = programmeExclusionLabel(sole);
+    for (const r of fleetRoster(db, sole)) {
+      // Freighters are also outside the programme; they stay off this page.
+      if (inProgramme.has(r.tail_number) || !excludedFamilies.includes(r.family)) continue;
+      const family = r.family === "other" ? "unknown" : r.family;
+      const rawProvider = normalizeWifiProvider(r.verified_wifi);
+      const provider: WifiProvider =
+        rawProvider === "other" || rawProvider === "starlink"
+          ? "unknown"
+          : (rawProvider as WifiProvider);
+      const tail: FleetTail = {
+        tail: r.tail_number,
+        type: r.aircraft_type || "",
+        family,
+        provider,
+        fleet: normalizeFleet(r.fleet) as FleetTail["fleet"],
+        verified_at: r.verified_at,
+      };
+      let fam = familyMap.get(family);
+      if (!fam) {
+        fam = {
+          family,
+          body: bodyClassOf(family),
+          total: 0,
+          starlink: 0,
+          tails: [],
+          outsideProgramme: { label: exclusionLabel },
+        };
+        familyMap.set(family, fam);
+      }
+      fam.total++;
+      fam.tails.push(tail);
+    }
+  }
+
   const families = [...familyMap.values()].sort((a, b) => {
     if (a.family === "unknown") return 1;
     if (b.family === "unknown") return -1;
-    return b.starlink / b.total - a.starlink / a.total || b.total - a.total;
+    return (
+      Number(!!a.outsideProgramme) - Number(!!b.outsideProgramme) ||
+      b.starlink / b.total - a.starlink / a.total ||
+      b.total - a.total
+    );
   });
 
   const carriers: FleetCarrier[] = [...carrierMap.entries()]
@@ -6368,6 +7188,7 @@ function computeFleetPageData(
     allTails,
     totalFleet: allTails.length,
     totalStarlink,
+    byAirline: [...airlineMap.values()],
     installPace,
     // Single-airline narrative like installPace — the hub page must not show
     // one airline's pipeline as if it covered every tracked fleet.
@@ -6381,6 +7202,10 @@ function computeFleetPageData(
       ? getFleetProgressTails(db, airline).filter((r) => !equippedTails.has(r.tail))
       : [],
     movements: soleAirline ? computeFleetMovements(db, airline) : [],
+    sheetReported: soleAirline ? getListedNotCounted(db, soleAirline) : [],
+    sheetFitting: soleAirline
+      ? getSheetModNotes(db, soleAirline).filter((n) => !equippedTails.has(n.tail))
+      : [],
   };
 }
 
@@ -7015,7 +7840,9 @@ function computeAircraftTypePages(
 
   const fleet = getFleetPageData(db, [airline]);
   const families = new Map(fleet.families.map((f) => [f.family, f]));
-  const tailFamily = new Map(fleet.allTails.map((t) => [t.tail, t.family]));
+  const tailFamily = new Map(
+    fleet.families.flatMap((f) => f.tails.map((t) => [t.tail, t.family] as const))
+  );
   const dataClock = maxOf(
     db,
     "SELECT MAX(checked_at) AS t FROM starlink_verification_log WHERE airline = ?",
@@ -7262,6 +8089,7 @@ function computeAircraftTypePages(
       flightNumbersScope,
       lastmodIso: lastmod > 0 ? new Date(lastmod).toISOString() : undefined,
       dataClock,
+      ...(fam.outsideProgramme ? { outsideProgramme: fam.outsideProgramme } : {}),
     });
   }
   return out;

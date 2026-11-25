@@ -10,6 +10,7 @@
 
 import type { Database } from "bun:sqlite";
 import { getFleetAnchors, recordSecFilings, seedFleetAnchors } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { FleetAnchorRow, SecFilingRow } from "../types";
 import { type JobHandle, startJob } from "../utils/job-runner";
@@ -189,6 +190,7 @@ export async function runSecAnchorsSync(
       });
       span.setTag("result", outcome);
       span.setTag("new_filings", newFilings);
+      recordSyncOutcome(db, "sec_filings", "UA", outcome);
 
       const anchors = getFleetAnchors(db, "UA").length;
       if (newFilings > 0 || outcome !== "success") {

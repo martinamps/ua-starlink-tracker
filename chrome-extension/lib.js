@@ -263,7 +263,10 @@ const StarlinkTrackerLib = (() => {
    * A probability with a non-prediction grade (`confidence: "type"` — the
    * registry-derived subfleet answer for carriers with no flight-history
    * model) stays on the predicted rung with a null grade: the number is real,
-   * but it is not a history grade and must not be dressed up as one.
+   * but it is not a history grade and must not be dressed up as one. It is
+   * marked `typeShare` for the tooltip: the number is the fitted share of the
+   * aircraft that fly such a flight, which says nothing about this flight's
+   * past departures or about when an aircraft gets assigned.
    */
   function normalizeClaim(payload) {
     const claim = unknownClaim();
@@ -299,6 +302,7 @@ const StarlinkTrackerLib = (() => {
       claim.probability = Math.min(1, Math.max(0, probability));
       const grade = prediction ? prediction.confidence : payload.confidence;
       if (PREDICTION_CONFIDENCES.includes(grade)) claim.predictionConfidence = grade;
+      else if (!prediction && grade === "type") claim.typeShare = true;
       if (prediction && typeof prediction.n_observations === "number") {
         claim.nObservations = prediction.n_observations;
       } else if (claim.basis && typeof payload.n_recent_observations === "number") {
@@ -401,25 +405,60 @@ const StarlinkTrackerLib = (() => {
     );
   }
 
+  // Below a badge, odds that are still better than even are a "maybe": the
+  // answer most often there is a sound number held off the badge on purpose
+  // (a "low" grade for a date in the next schedule season, or a type share
+  // just under the bar), and it is not the same answer as a no.
+  const MAYBE_THRESHOLD = 0.5;
+
   /**
-   * "Starlink only" dims a card only on an answer that falls short of a badge:
-   * a verified no, or a prediction below the bar. Unknown (untracked carrier,
-   * outage, no data yet) is never dimmed — we have no answer to filter on.
+   * Where "Starlink only" puts a card:
+   *   "starlink": badged, left alone
+   *   "maybe":    odds of at least MAYBE_THRESHOLD and no badge, dimmed lightly
+   *   "no":       a verified no or lower odds, dimmed
+   *   null:       unknown (untracked carrier, outage, no data yet); never
+   *               dimmed, because there is no answer to filter on
    */
-  function shouldDim(claim) {
-    if (!claim || shouldBadge(claim)) return false;
-    return claim.status === "no_starlink" || claim.status === "predicted";
+  function filterTier(claim) {
+    if (!claim) return null;
+    if (shouldBadge(claim)) return "starlink";
+    if (claim.status === "no_starlink") return "no";
+    if (claim.status !== "predicted") return null;
+    return typeof claim.probability === "number" && claim.probability >= MAYBE_THRESHOLD
+      ? "maybe"
+      : "no";
   }
 
   // ── badge copy ─────────────────────────────────────────────────────────────
 
-  // A prediction is never a certainty, so it never reads as 100%.
-  function roundPct(probability) {
-    return Math.min(99, Math.round(probability * 100));
+  // The site prints a percentage by two rules, and the badge follows whichever
+  // one the site uses for the same answer, so a traveller reads one number in
+  // both places. Equipment-type answers (`basis`, Qatar) are rounded down, as
+  // the server's sentence is: a lower bound must not be rounded past itself.
+  // Everything else (United's history odds, an Alaska subfleet's share) is
+  // rounded to the nearest whole number, as the site's pages do. Only a share
+  // that is exactly the whole subfleet reads 100; odds never do.
+  function wholePct(claim) {
+    const p = claim.probability;
+    if (p >= 1) return claim.typeShare ? 100 : 99;
+    if (claim.basis) return Math.floor(p * 100);
+    return Math.min(99, Math.round(p * 100));
+  }
+
+  // A share of aircraft, in words, with the site's edges: "all" only for a
+  // whole subfleet, and "over 99%" where the site prints ">99%".
+  function shareWords(claim) {
+    if (claim.probability >= 1) return "all";
+    if (!claim.basis && claim.probability > 0.99) return "over 99%";
+    return `about ${wholePct(claim)}%`;
+  }
+
+  function capitalize(text) {
+    return text.charAt(0).toUpperCase() + text.slice(1);
   }
 
   function badgeLabel(claim) {
-    if (claim.status === "predicted") return `Starlink ~${roundPct(claim.probability)}%`;
+    if (claim.status === "predicted") return `Starlink ~${wholePct(claim)}%`;
     if (claim.status === "installed") return "Starlink (installed)";
     return "Starlink";
   }
@@ -432,6 +471,15 @@ const StarlinkTrackerLib = (() => {
       const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
       return `Scheduled aircraft${type} is a type ${airline} reports fully fitted with Starlink. A last-minute swap can change this.`;
     }
+    if (claim.status === "predicted" && claim.typeShare) {
+      if (claim.basis !== "schedule") return null;
+      const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
+      const fleet = claim.airline ? `the ${claim.airline} fleet` : "the airline's fleet";
+      return (
+        `Scheduled aircraft type${type}: ${shareWords(claim)} of that type in ${fleet} ` +
+        `counts as fitted with Starlink. ${airline} doesn't say which aircraft flies, and a swap can change the type.`
+      );
+    }
     if (claim.status === "predicted") {
       const days =
         typeof claim.nObservations === "number" && claim.nObservations > 0
@@ -440,12 +488,12 @@ const StarlinkTrackerLib = (() => {
       if (claim.basis === "schedule") {
         const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
         return (
-          `At least ~${roundPct(claim.probability)}% — scheduled on a fitted type${type}, ` +
+          `At least ~${wholePct(claim)}% — scheduled on a fitted type${type}, ` +
           `but this flight has flown other aircraft on some of its ${days}. A swap can change this.`
         );
       }
       return (
-        `At least ~${roundPct(claim.probability)}% — based on the aircraft types on ${days} ` +
+        `At least ~${wholePct(claim)}% — based on the aircraft types on ${days} ` +
         `of this flight. ${airline} publishes the actual aircraft about a week before departure.`
       );
     }
@@ -456,13 +504,20 @@ const StarlinkTrackerLib = (() => {
     const typeTitle = claim.basis ? typeBasisTitle(claim) : null;
     if (typeTitle) return typeTitle;
     const airline = claim.airline ? ` (${claim.airline})` : "";
+    if (claim.status === "predicted" && claim.typeShare) {
+      // True at any distance from departure: the hub gives this answer
+      // whenever it has no aircraft on file for the flight, the day before too.
+      const share = capitalize(shareWords(claim));
+      const whose = claim.airline || "airline's";
+      return `${share} of the ${whose} aircraft that fly flights like this one have Starlink. The tracker has no specific aircraft on file for this flight.`;
+    }
     if (claim.status === "predicted") {
       const obs =
         typeof claim.nObservations === "number" && claim.nObservations > 0
           ? ` (${claim.nObservations} observed departure${claim.nObservations === 1 ? "" : "s"})`
           : "";
       return (
-        `~${roundPct(claim.probability)}% chance this flight gets a Starlink-equipped ` +
+        `~${wholePct(claim)}% chance this flight gets a Starlink-equipped ` +
         `aircraft${obs}${airline}. Airlines assign the actual aircraft ~2 days before departure.`
       );
     }
@@ -703,7 +758,7 @@ const StarlinkTrackerLib = (() => {
     claimFromResponse,
     combineClaims,
     shouldBadge,
-    shouldDim,
+    filterTier,
     badgeLabel,
     badgeTitle,
     cardBadgeTitle,

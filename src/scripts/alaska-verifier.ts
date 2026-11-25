@@ -22,6 +22,7 @@ import {
   setFleetVerified,
   touchFleetVerifiedAt,
 } from "../database/database";
+import { recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import {
   COUNTERS,
   metrics,
@@ -150,6 +151,11 @@ export async function checkOne(
         ? "success"
         : "aircraft_mismatch"
       : "not_published";
+  // not_published = alaskaair.com answered with no flight on any date we
+  // tried; one is routine, days of nothing else is the site serving blanks.
+  if (result === "error") recordSourceFailure(db, "alaska_site", airline, "error");
+  else if (result === "not_published") recordSourceFailure(db, "alaska_site", airline, "empty");
+  else recordSourceSuccess(db, "alaska_site", airline);
   metrics.increment(COUNTERS.VERIFICATION_CHECK, {
     fleet: normalizeFleet(target.fleet),
     aircraft_type: normalizeAircraftType(equipmentType),

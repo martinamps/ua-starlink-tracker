@@ -1,14 +1,27 @@
-// CIDR matching, geofeed parsing, and the passenger-probe trust model
-// (server records its own IP/geofeed verdict, never trusts client claims).
+// CIDR matching, geofeed parsing, the passenger-probe trust model (server
+// records its own geofeed verdict, never trusts client claims), and the
+// contract between the banner's privacy sentence and what a report stores.
 
 import { describe, expect, test } from "bun:test";
-import { replaceStarlinkPrefixes } from "../src/database/database";
+import { renderToStaticMarkup } from "react-dom/server";
+import { SITES } from "../src/airlines/registry";
+import { PassengerBanner } from "../src/components/passenger-banner";
+import { expirePassengerDedupeKeys, replaceStarlinkPrefixes } from "../src/database/database";
 import { parseGeofeed, runGeofeedSync } from "../src/scripts/starlink-geofeed";
+import { createApp } from "../src/server/app";
 import {
+  DEDUPE_KEY_PREFIX,
   PROBE_SNIPPET,
   StarlinkIpDetector,
   handlePassengerProbe,
 } from "../src/server/passenger-detect";
+import {
+  DEDUPE_KEY_MAX_LIFE_SEC,
+  DEDUPE_KEY_SWEEP_INTERVAL_SEC,
+  DEDUPE_WINDOW_SEC,
+  PASSENGER_REPORT_COLUMNS,
+  PASSENGER_REPORT_PRIVACY_NOTE,
+} from "../src/server/passenger-report-fields";
 import { PrefixSet, dedupePrefix, ipToBigint, parseCidr } from "../src/utils/ip-prefix";
 import { makeSyntheticDb } from "./helpers";
 
@@ -91,9 +104,9 @@ describe("passenger-probe trust model", () => {
     return { db, detect: new StarlinkIpDetector(db) };
   }
 
-  test("records server-seen IP/geofeed verdict and normalizes claims", () => {
+  test("records server-seen geofeed verdict and normalizes claims", () => {
     const { db, detect } = seeded();
-    const result = handlePassengerProbe(db, ONBOARD_IP_V4, detect.match(ONBOARD_IP_V4), "Mozilla", {
+    const result = handlePassengerProbe(db, ONBOARD_IP_V4, detect.match(ONBOARD_IP_V4), {
       source: "probe",
       outcome: "onboard_api",
       claimed_flight: "UAL2019",
@@ -105,12 +118,12 @@ describe("passenger-probe trust model", () => {
     expect(row.in_geofeed).toBe(1);
     expect(row.claimed_flight).toBe("UA2019");
     expect(row.claimed_tail).toBe("N73275");
-    expect(row.ip).toBe(ONBOARD_IP_V4);
+    expect(row.ip).toBe("");
   });
 
   test("off-geofeed forged report is stored with in_geofeed=0", () => {
     const { db, detect } = seeded();
-    handlePassengerProbe(db, "8.8.8.8", detect.match("8.8.8.8"), "curl", {
+    handlePassengerProbe(db, "8.8.8.8", detect.match("8.8.8.8"), {
       outcome: "onboard_api",
       claimed_flight: "UA2019",
       claimed_tail: "N73275",
@@ -125,11 +138,11 @@ describe("passenger-probe trust model", () => {
   test("dedupes by /56 prefix + source + tail; auto-probe never swallows manual", () => {
     const { db } = seeded();
     const probe = { source: "probe", outcome: "onboard_unreachable" };
-    handlePassengerProbe(db, ONBOARD_IP_V6, true, null, probe);
-    expect(handlePassengerProbe(db, "2605:59ca:8015:b40::1", true, null, probe)).toBe("duplicate");
+    handlePassengerProbe(db, ONBOARD_IP_V6, true, probe);
+    expect(handlePassengerProbe(db, "2605:59ca:8015:b40::1", true, probe)).toBe("duplicate");
     // The page-load probe row must NOT dedupe out a manual banner submission
     // seconds later (both have claimed_tail=null but different source).
-    const manual = handlePassengerProbe(db, ONBOARD_IP_V6, true, null, {
+    const manual = handlePassengerProbe(db, ONBOARD_IP_V6, true, {
       source: "manual",
       outcome: "manual_report",
       claimed_flight: "UA2019",
@@ -143,7 +156,7 @@ describe("passenger-probe trust model", () => {
 
   test("rejects malformed claims by clamping to null, not erroring", () => {
     const { db } = seeded();
-    handlePassengerProbe(db, ONBOARD_IP_V4, true, null, {
+    handlePassengerProbe(db, ONBOARD_IP_V4, true, {
       outcome: "Made; DROP--",
       claimed_flight: "<script>alert(1)</script>",
       claimed_tail: "DROP TABLE",
@@ -159,5 +172,120 @@ describe("passenger-probe trust model", () => {
   test("probe snippet beacons to /api/passenger-probe and the CSP-allowed origin", () => {
     expect(PROBE_SNIPPET).toContain("/api/passenger-probe");
     expect(PROBE_SNIPPET).toContain("onboard.united.com");
+  });
+});
+
+// The banner tells a reporting visitor what we keep. These tests are the tie
+// between that sentence and the row: change one without the other and they fail.
+describe("banner privacy sentence matches what a report stores", () => {
+  const UA_HOST = "unitedstarlinktracker.com";
+  const USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0) Safari/605.1.15";
+  const ROUTER_ID = "router-0123456789";
+  type Row = Record<string, unknown>;
+
+  /** The banner's own request, plus the identifying extras a browser or a
+   * forged client could add, sent through the real route. */
+  async function report(ip: string): Promise<{ row: Row; db: ReturnType<typeof makeSyntheticDb> }> {
+    const db = makeSyntheticDb();
+    replaceStarlinkPrefixes(db, parseGeofeed(FEED));
+    const res = await createApp(db).dispatch(
+      new Request(`https://${UA_HOST}/api/passenger-probe`, {
+        method: "POST",
+        headers: { host: UA_HOST, "cf-connecting-ip": ip, "user-agent": USER_AGENT },
+        body: JSON.stringify({
+          source: "manual",
+          outcome: "manual_report",
+          claimed_flight: "UA2019",
+          router_id: ROUTER_ID,
+        }),
+      })
+    );
+    expect(res.status).toBe(202);
+    const rows = db.query("SELECT * FROM passenger_reports").all() as Row[];
+    expect(rows).toHaveLength(1);
+    return { row: rows[0], db };
+  }
+
+  const columnsOf = (kind: string) =>
+    Object.entries(PASSENGER_REPORT_COLUMNS)
+      .filter(([, use]) => use.kind === kind)
+      .map(([name]) => name);
+
+  test("every column of the table is classified, so a new one cannot be added silently", () => {
+    const db = makeSyntheticDb();
+    const actual = (db.query("PRAGMA table_info(passenger_reports)").all() as { name: string }[])
+      .map((c) => c.name)
+      .sort();
+    expect(actual).toEqual(Object.keys(PASSENGER_REPORT_COLUMNS).sort());
+  });
+
+  test("the banner shows the sentence, and the sentence names every disclosed column", () => {
+    const html = renderToStaticMarkup(PassengerBanner({ site: SITES.united }));
+    const text = html.replaceAll("&#x27;", "'");
+    expect(text).toContain(PASSENGER_REPORT_PRIVACY_NOTE);
+    for (const use of Object.values(PASSENGER_REPORT_COLUMNS)) {
+      if (use.kind === "disclosed") expect(PASSENGER_REPORT_PRIVACY_NOTE).toContain(use.says);
+      if (use.kind === "derived") {
+        for (const from of use.from) expect(PASSENGER_REPORT_COLUMNS[from].kind).toBe("disclosed");
+      }
+    }
+  });
+
+  for (const ip of [ONBOARD_IP_V4, ONBOARD_IP_V6]) {
+    test(`a report from ${ip.includes(":") ? "IPv6" : "IPv4"} stores what the sentence names and nothing else`, async () => {
+      const { row } = await report(ip);
+
+      for (const col of columnsOf("blank")) {
+        expect([col, row[col] ?? ""]).toEqual([col, ""]);
+      }
+      expect(row.source).toBe("manual");
+      expect(row.outcome).toBe("manual_report");
+      expect(row.claimed_flight).toBe("UA2019");
+      expect(row.in_geofeed).toBe(1);
+      expect(typeof row.reported_at).toBe("number");
+      expect([0, 1]).toContain(row.airborne_match as number);
+
+      // The dedupe key is a keyed hash: no part of the row reads back as the
+      // address, its readable prefix, the browser or the router.
+      expect(row.ip_prefix).toMatch(/^h:[0-9a-f]{32}$/);
+      const stored = JSON.stringify(row);
+      for (const secret of [ip, dedupePrefix(ip)!, USER_AGENT, "Mozilla", ROUTER_ID]) {
+        expect(stored).not.toContain(secret);
+      }
+    });
+  }
+
+  test("the scrambled network code still blocks a repeat, then is erased on time", async () => {
+    const { row, db } = await report(ONBOARD_IP_V4);
+    const body = { source: "manual", outcome: "manual_report", claimed_flight: "UA2019" };
+    // Another seat on the same plane shares the /24, so it is one report.
+    expect(handlePassengerProbe(db, "74.244.242.7", true, body)).toBe("duplicate");
+
+    const at = row.reported_at as number;
+    expect(expirePassengerDedupeKeys(db, DEDUPE_WINDOW_SEC, at + DEDUPE_WINDOW_SEC - 1)).toBe(0);
+    expect(expirePassengerDedupeKeys(db, DEDUPE_WINDOW_SEC, at + DEDUPE_WINDOW_SEC)).toBe(1);
+    const after = db.query("SELECT * FROM passenger_reports").get() as Row;
+    expect(after).toEqual({ ...row, ip_prefix: "" });
+
+    // "Within a day" is the sentence's promise: the window plus the longest
+    // wait for the sweep (server.ts) has to fit inside it.
+    expect(PASSENGER_REPORT_PRIVACY_NOTE).toContain("erase it within a day");
+    expect(DEDUPE_KEY_MAX_LIFE_SEC).toBe(24 * 3600);
+    expect(DEDUPE_WINDOW_SEC + DEDUPE_KEY_SWEEP_INTERVAL_SEC).toBeLessThanOrEqual(
+      DEDUPE_KEY_MAX_LIFE_SEC
+    );
+  });
+
+  test("the sweep leaves rows from before this change exactly as they were", () => {
+    const db = makeSyntheticDb();
+    db.query(
+      `INSERT INTO passenger_reports
+         (reported_at, ip, ip_prefix, in_geofeed, source, outcome, ua_hash)
+       VALUES (1, ?, ?, 1, 'probe', 'onboard_reachable', 'abcdef0123456789')`
+    ).run(ONBOARD_IP_V4, dedupePrefix(ONBOARD_IP_V4));
+    const before = db.query("SELECT * FROM passenger_reports").all();
+    expect(expirePassengerDedupeKeys(db, DEDUPE_WINDOW_SEC)).toBe(0);
+    expect(db.query("SELECT * FROM passenger_reports").all()).toEqual(before);
+    expect(DEDUPE_KEY_PREFIX).toBe("h:");
   });
 });

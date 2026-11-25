@@ -180,7 +180,7 @@ function PlotLegend({ model, accent }: { model: ChartModel; accent: string }) {
         <span className="block h-0.5 w-5 rounded-full" style={{ background: accent }} />
       </LegendItem>
       {model.projection && (
-        <LegendItem label="At the current pace">
+        <LegendItem label="The measured pace, carried forward">
           <span className="block w-5 border-t-2 border-dashed" style={{ borderColor: accent }} />
         </LegendItem>
       )}
@@ -213,17 +213,20 @@ export function CumulativeInstallsChart({
   stats,
   accent,
   airlineName,
+  combined,
   milestones = [],
 }: {
   stats: InstallRateStats;
   accent: string;
   airlineName: string;
+  /** For the spoken summary, where the count spans a by-type partner. */
+  combined?: { noun: string; parts: string } | null;
   milestones?: TimelineMilestone[];
 }) {
   const model = chartModel(stats, milestones);
   if (!model) return null;
   return (
-    <figure className="m-0" role="img" aria-label={chartDescription(model, airlineName)}>
+    <figure className="m-0" role="img" aria-label={chartDescription(model, airlineName, combined)}>
       <div className="relative ml-11 mr-1 mt-5 h-56 sm:h-72">
         <PlotLines model={model} accent={accent} />
         <PlotOverlay model={model} accent={accent} />

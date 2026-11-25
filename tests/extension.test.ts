@@ -13,7 +13,8 @@ import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import extLib from "../chrome-extension/lib.js";
 import { dohDateISO } from "../src/api/qatar-status";
-import { addDaysISO } from "../src/api/qatar-verdict";
+import { type QatarVerdict, addDaysISO, qatarHistoryReason } from "../src/api/qatar-verdict";
+import { probLabel, probPhrase } from "../src/components/ui/format";
 import { upsertQatarEquipmentHistory, upsertQatarSchedule } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { airportLocalDate } from "../src/utils/airport-tz";
@@ -296,16 +297,20 @@ describe("badging policy", () => {
     expect(extLib.shouldBadge(predicted(0.95, "low"))).toBe(false);
   });
 
-  test("Starlink only dims settled answers that fall short of a badge, never unknowns", () => {
+  test("Starlink only sorts settled answers into three tiers, never unknowns", () => {
     const claim = (status: string) => ({ ...extLib.unknownClaim(), status });
-    expect(extLib.shouldDim(claim("verified"))).toBe(false);
-    expect(extLib.shouldDim(claim("installed"))).toBe(false);
-    expect(extLib.shouldDim(predicted(0.92))).toBe(false);
-    expect(extLib.shouldDim(claim("no_starlink"))).toBe(true);
-    expect(extLib.shouldDim(predicted(0.4))).toBe(true);
-    expect(extLib.shouldDim(predicted(0.95, "low"))).toBe(true);
-    expect(extLib.shouldDim(extLib.unknownClaim())).toBe(false);
-    expect(extLib.shouldDim(null)).toBe(false);
+    expect(extLib.filterTier(claim("verified"))).toBe("starlink");
+    expect(extLib.filterTier(claim("installed"))).toBe("starlink");
+    expect(extLib.filterTier(predicted(0.92))).toBe("starlink");
+    expect(extLib.filterTier(claim("no_starlink"))).toBe("no");
+    expect(extLib.filterTier(predicted(0.4))).toBe("no");
+    // Odds held off the badge are not a no: a low grade, or just under the bar.
+    expect(extLib.filterTier(predicted(0.95, "low"))).toBe("maybe");
+    expect(extLib.filterTier(predicted(0.74))).toBe("maybe");
+    expect(extLib.filterTier(predicted(0.5))).toBe("maybe");
+    expect(extLib.filterTier(predicted(0.49))).toBe("no");
+    expect(extLib.filterTier(extLib.unknownClaim())).toBeNull();
+    expect(extLib.filterTier(null)).toBeNull();
   });
 
   test("multi-leg combine: the weakest leg wins", () => {
@@ -543,8 +548,10 @@ describe("Qatar claims", () => {
         await jsonOf(app, `/api/check-any-flight?flight_number=${fn}&date=${date}`, HUB_HOST)
       );
 
-    test("in-window 777 → installed; A380 → no_starlink", async () => {
-      expect((await claimFor("QR1", day(1))).status).toBe("installed");
+    // A 777-300ER is never "installed": nine of the type are held back by name
+    // (tests/qatar-held-back.test.ts covers the odds it gets instead).
+    test("in-window 777-300ER is not installed; A380 → no_starlink", async () => {
+      expect((await claimFor("QR1", day(1))).status).not.toBe("installed");
       expect((await claimFor("QR3", day(1))).status).toBe("no_starlink");
     });
 
@@ -885,8 +892,8 @@ describe("extension release guardrails", () => {
     expect(parseListingVersion("<html>no version here</html>")).toBeNull();
   });
 
-  test("2.2.0 adds the Starlink-only toggle", () => {
-    expect(manifest.version).toBe("2.2.0");
+  test("2.3.0 adds the maybe tier and the type-share tooltips", () => {
+    expect(manifest.version).toBe("2.3.0");
   });
 });
 
@@ -1075,5 +1082,373 @@ describe("leg-scoped lookups", () => {
     );
     expect(body.leg.origin).toBe("SFO");
     expect(CLAIM_STATUSES).toContain(extLib.normalizeClaim(body).status);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v2.3: type-share tooltips and the "maybe" tier, on the hub's answers as they
+// are today and as the open Qatar changes will make them
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("type-share odds and the Starlink-only tiers", () => {
+  const SWAP_WORDING = "has flown other aircraft";
+  const ASSIGN_WORDING = "~2 days before departure";
+
+  const qatarLeg = (type: string) => [
+    { tail_number: null, aircraft_type: type, starlink: "yes", departure_airport: "DOH" },
+  ];
+
+  // The hub's answer for a scheduled 777-300ER today: a yes by type.
+  const scheduleYes = {
+    hasStarlink: true,
+    airline: "Qatar Airways",
+    confidence: "type",
+    basis: "schedule",
+    reason: "Scheduled Boeing 777-300ER DOH→LHR.",
+    flights: qatarLeg("Boeing 777-300ER"),
+  };
+  // The same flight once some aircraft of the type are held back: no yes, the
+  // type's fitted share as `probability`, still `confidence: "type"`.
+  const scheduleShare = (probability: number, type: string) => ({
+    hasStarlink: null,
+    airline: "Qatar Airways",
+    probability,
+    confidence: "type",
+    basis: "schedule",
+    reason: `Scheduled ${type} DOH→LHR.`,
+    flights: qatarLeg(type),
+  });
+  const history = (probability: number, confidence: string, basis = "history") => ({
+    hasStarlink: null,
+    airline: "Qatar Airways",
+    probability,
+    confidence,
+    basis,
+    n_recent_observations: 35,
+    n_flown: 28,
+    n_scheduled: 7,
+    window_days: 60,
+    type_mix: [],
+    season_shift: confidence === "low",
+    reason: "x",
+    flights: basis === "schedule" ? qatarLeg("Boeing 777-300ER") : [],
+  });
+  // Alaska, any date with no aircraft on file: the subfleet's equipped share.
+  const alaskaShare = {
+    hasStarlink: null,
+    airline: "Alaska Airlines",
+    confidence: "type",
+    probability: 0.994,
+    reason: "~99% Starlink probability",
+    flights: [],
+  };
+
+  test("a scheduled type's fitted share says what the number is, not a swap history", () => {
+    for (const [p, type, pct] of [
+      [0.8421052631578947, "Boeing 777-300ER", "84%"],
+      [0.9375, "Boeing 787-8", "93%"],
+    ] as const) {
+      const claim = extLib.normalizeClaim(scheduleShare(p, type));
+      expect(claim.status).toBe("predicted");
+      expect(claim.typeShare).toBe(true);
+      expect(claim.predictionConfidence).toBeNull();
+      expect(extLib.shouldBadge(claim)).toBe(true);
+      expect(extLib.badgeLabel(claim)).toBe(`Starlink ~${pct}`);
+      const title = extLib.badgeTitle(claim);
+      expect(title).toBe(
+        `Scheduled aircraft type (${type}): about ${pct} of that type in the Qatar Airways fleet counts as fitted with Starlink. Qatar Airways doesn't say which aircraft flies, and a swap can change the type.`
+      );
+      expect(title).not.toContain(SWAP_WORDING);
+      expect(title).not.toContain("verified");
+    }
+  });
+
+  test("answers that are not a type share keep their wording", () => {
+    const yes = extLib.normalizeClaim(scheduleYes);
+    expect(yes.status).toBe("installed");
+    expect(yes.typeShare).toBeUndefined();
+    expect(extLib.badgeTitle(yes)).toContain("Scheduled aircraft (Boeing 777-300ER) is a type");
+
+    // Swap risk: graded, on the schedule basis. This one has flown other aircraft.
+    const swap = extLib.normalizeClaim(history(0.84, "high", "schedule"));
+    expect(swap.typeShare).toBeUndefined();
+    expect(extLib.badgeTitle(swap)).toContain(SWAP_WORDING);
+
+    const far = extLib.normalizeClaim(history(0.928, "medium"));
+    expect(far.typeShare).toBeUndefined();
+    expect(extLib.badgeTitle(far)).toContain("35 recent and scheduled operating days");
+
+    // United's frozen shape carries its grade inside `prediction`.
+    const ua = extLib.normalizeClaim({
+      hasStarlink: null,
+      confidence: "predicted",
+      prediction: { probability: 0.9, confidence: "high", n_observations: 8 },
+      flights: [],
+    });
+    expect(ua.status).toBe("predicted");
+    expect(ua.typeShare).toBeUndefined();
+    expect(extLib.badgeTitle(ua)).toContain(ASSIGN_WORDING);
+  });
+
+  test("an Alaska share never speaks of the two-day assignment, at any distance", () => {
+    const claim = extLib.normalizeClaim(alaskaShare);
+    expect(claim.status).toBe("predicted");
+    expect(claim.typeShare).toBe(true);
+    expect(extLib.shouldBadge(claim)).toBe(true);
+    const title = extLib.badgeTitle(claim);
+    expect(title).toBe(
+      "Over 99% of the Alaska Airlines aircraft that fly flights like this one have Starlink. The tracker has no specific aircraft on file for this flight."
+    );
+    expect(extLib.badgeLabel(claim)).toBe("Starlink ~99%");
+    expect(title).not.toContain(ASSIGN_WORDING);
+    // A whole subfleet is sent as 1, and is the one share that reads 100.
+    const all = extLib.normalizeClaim({ ...alaskaShare, probability: 1 });
+    expect(extLib.badgeLabel(all)).toBe("Starlink ~100%");
+    expect(extLib.badgeTitle(all)).toStartWith("All of the Alaska Airlines aircraft");
+    // No airline name on the payload still reads as a sentence.
+    const { airline: _airline, ...anonymous } = alaskaShare;
+    expect(extLib.badgeTitle(extLib.normalizeClaim(anonymous))).toContain(
+      "of the airline's aircraft that fly"
+    );
+  });
+
+  test("a type share that is the weakest leg keeps its wording on the card", () => {
+    const share = { ...extLib.normalizeClaim(alaskaShare), flightNumber: "AS801" };
+    const verified = {
+      ...extLib.normalizeClaim({ hasStarlink: true, confidence: "verified", flights: [] }),
+      flightNumber: "AS2100",
+    };
+    const combined = extLib.combineClaims([verified, share]);
+    expect(combined.typeShare).toBe(true);
+    const title = extLib.cardBadgeTitle(combined, [verified, share]);
+    expect(title).toStartWith("AS801: Over 99% of the Alaska Airlines aircraft");
+    expect(title).not.toContain(ASSIGN_WORDING);
+  });
+
+  test("next-season odds graded low: no badge, and not dimmed like a no", () => {
+    // QR7 on a date in the next schedule season: "medium" today, "low" once
+    // next-season dates are graded down. The number is the same either way.
+    const today = extLib.normalizeClaim(history(0.928, "medium"));
+    expect(extLib.shouldBadge(today)).toBe(true);
+    expect(extLib.filterTier(today)).toBe("starlink");
+
+    const graded = extLib.normalizeClaim(history(0.928, "low"));
+    expect(extLib.shouldBadge(graded)).toBe(false);
+    expect(extLib.filterTier(graded)).toBe("maybe");
+
+    const a380 = extLib.normalizeClaim({ ...scheduleYes, hasStarlink: false });
+    expect(extLib.filterTier(a380)).toBe("no");
+    expect(extLib.filterTier(extLib.normalizeClaim(history(0, "high")))).toBe("no");
+    // Two seasons out the hub sends no number: unknown, never dimmed.
+    const { probability: _p, ...tooFar } = history(0, "none");
+    expect(extLib.filterTier(extLib.normalizeClaim(tooFar))).toBeNull();
+  });
+
+  test("a far-out 777-300ER under the bar is a maybe, not a no", () => {
+    const claim = extLib.normalizeClaim(history(0.7417460899984867, "high"));
+    expect(extLib.shouldBadge(claim)).toBe(false);
+    expect(extLib.filterTier(claim)).toBe("maybe");
+  });
+
+  test("an itinerary is filtered by its weakest leg", () => {
+    const verified = extLib.normalizeClaim({ hasStarlink: true, confidence: "verified" });
+    const maybe = extLib.normalizeClaim(history(0.928, "low"));
+    const no = extLib.normalizeClaim({ hasStarlink: false, confidence: "verified" });
+    expect(extLib.filterTier(extLib.combineClaims([verified, maybe]))).toBe("maybe");
+    expect(extLib.filterTier(extLib.combineClaims([verified, maybe, no]))).toBe("no");
+    expect(extLib.filterTier(extLib.combineClaims([verified, extLib.unknownClaim()]))).toBeNull();
+  });
+
+  test("the content script and stylesheet carry both dim tiers", async () => {
+    const dir = `${import.meta.dir}/../chrome-extension`;
+    const [content, css] = await Promise.all([
+      Bun.file(`${dir}/content.js`).text(),
+      Bun.file(`${dir}/styles.css`).text(),
+    ]);
+    for (const cls of ["starlink-only-dim", "starlink-only-maybe"]) {
+      expect(content).toContain(`"${cls}"`);
+      expect(css).toContain(`.${cls} {`);
+    }
+    expect(content).toContain("lib.filterTier(");
+    expect(content).not.toContain("shouldDim");
+  });
+
+  describe("against the hub handler", () => {
+    let app: ReturnType<typeof createApp>;
+
+    beforeAll(() => {
+      app = createApp(openSnapshot());
+    });
+
+    // Tomorrow and three weeks out get the same registry answer whenever no
+    // aircraft is on file, so the tooltip must be true for both.
+    test("Alaska registry odds read the same one day out and three weeks out", async () => {
+      const today = extLib.localTodayIso();
+      for (const fn of ["AS850", "AS2402"]) {
+        const titles: string[] = [];
+        for (const offset of [1, 21]) {
+          const body = await jsonOf(
+            app,
+            `/api/check-any-flight?flight_number=${fn}&date=${addDaysISO(today, offset)}`,
+            HUB_HOST
+          );
+          const claim = extLib.normalizeClaim(body);
+          if (claim.status !== "predicted") continue;
+          expect(body.confidence, fn).toBe("type");
+          expect(claim.typeShare, fn).toBe(true);
+          const title = extLib.badgeTitle(claim);
+          expect(title, fn).toContain("aircraft that fly flights like this one");
+          expect(title, fn).not.toContain(ASSIGN_WORDING);
+          titles.push(title);
+        }
+        expect(new Set(titles).size, fn).toBeLessThanOrEqual(1);
+      }
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One number on the badge and on the site
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("the badge prints the whole percentage the site prints", () => {
+  // Thirds, sixteenths and nineteenths are real fleet shares (15 of 16 787-8s,
+  // 16 of 19 777-300ERs); the hundredths include 0.29 and 0.57, where
+  // p * 100 lands just under the whole number in floating point.
+  const SHARES = [
+    ...Array.from({ length: 101 }, (_, i) => i / 100),
+    ...Array.from({ length: 17 }, (_, i) => i / 16),
+    ...Array.from({ length: 20 }, (_, i) => i / 19),
+    1 / 3,
+    2 / 3,
+    0.8421052631578947,
+    0.9375,
+    0.985,
+    0.9899,
+    0.99,
+    0.9901,
+    0.994,
+    0.995,
+    0.9999,
+    0.999999,
+  ];
+  const digits = (text: string) => Number(/(\d+)%/.exec(text)?.[1]);
+
+  // The server's own sentence for a Qatar history answer, which is where its
+  // round-down rule is printed.
+  const serverQatarPct = (probability: number) => {
+    const verdict: Extract<QatarVerdict, { kind: "qatar_history" }> = {
+      kind: "qatar_history",
+      window: { from: 0, to: 0 } as never,
+      normalized: "QR7",
+      daysOut: 30,
+      basis: "history",
+      nDays: 20,
+      nFlown: 20,
+      nScheduled: 0,
+      yesDays: 19,
+      rollingDays: 0,
+      noDays: 1,
+      unknownDays: 0,
+      probability,
+      grade: "high",
+      mix: [],
+      season: { query: null, used: "W26", shifted: false, tooFar: false },
+      mostlyRolling: false,
+    };
+    const stated = /\(at least (\d+)%\)/.exec(qatarHistoryReason(verdict));
+    // The server leaves the number out when it rounds down to 0.
+    return stated ? Number(stated[1]) : 0;
+  };
+
+  const qatar = (probability: number, extra: Record<string, unknown>) =>
+    extLib.normalizeClaim({
+      hasStarlink: null,
+      airline: "Qatar Airways",
+      probability,
+      flights: [{ aircraft_type: "Boeing 787-8" }],
+      ...extra,
+    });
+  const alaska = (probability: number) =>
+    extLib.normalizeClaim({
+      hasStarlink: null,
+      airline: "Alaska Airlines",
+      confidence: "type",
+      probability,
+      flights: [],
+    });
+  const united = (probability: number) =>
+    extLib.normalizeClaim({
+      hasStarlink: null,
+      confidence: "predicted",
+      prediction: { probability, confidence: "high", n_observations: 8 },
+      flights: [],
+    });
+
+  test("Qatar answers round down, as the server's sentence does", () => {
+    for (const p of SHARES.filter((s) => s < 1)) {
+      const want = serverQatarPct(p);
+      const share = qatar(p, { confidence: "type", basis: "schedule" });
+      const swap = qatar(p, { confidence: "high", basis: "schedule" });
+      const history = qatar(p, { confidence: "high", basis: "history" });
+      expect(share.typeShare).toBe(true);
+      for (const claim of [share, swap, history]) {
+        expect(digits(extLib.badgeLabel(claim))).toBe(want);
+        expect(digits(extLib.badgeTitle(claim))).toBe(want);
+      }
+    }
+    expect(extLib.badgeLabel(qatar(0.9375, { confidence: "type", basis: "schedule" }))).toBe(
+      "Starlink ~93%"
+    );
+  });
+
+  test("an Alaska share reads the number the site's pages print for it", () => {
+    for (const p of SHARES.filter((s) => s > 0)) {
+      const claim = alaska(p);
+      expect(claim.typeShare).toBe(true);
+      const site = digits(probLabel(p));
+      expect(digits(extLib.badgeLabel(claim))).toBe(site);
+      const title = extLib.badgeTitle(claim);
+      if (p >= 1) expect(title).toStartWith("All of the Alaska Airlines aircraft");
+      else {
+        expect(title.toLowerCase()).toStartWith(`${probPhrase(p)} of the alaska airlines aircraft`);
+      }
+    }
+  });
+
+  test("United's history odds keep the site's nearest-whole rounding, short of 100", () => {
+    for (const p of SHARES.filter((s) => s > 0 && s < 1)) {
+      expect(digits(extLib.badgeLabel(united(p)))).toBe(digits(probLabel(p)));
+    }
+    // Odds are never a certainty, even when the model says 1.
+    expect(extLib.badgeLabel(united(1))).toBe("Starlink ~99%");
+  });
+
+  test("100 is read only for a whole subfleet", () => {
+    for (const p of [0.995, 0.9999, 0.999999]) {
+      expect(extLib.badgeLabel(alaska(p))).toBe("Starlink ~99%");
+      expect(extLib.badgeTitle(alaska(p))).toStartWith("Over 99% of");
+      const q = qatar(p, { confidence: "type", basis: "schedule" });
+      expect(extLib.badgeLabel(q)).toBe("Starlink ~99%");
+      expect(extLib.badgeTitle(q)).toContain("about 99% of that type");
+    }
+    expect(extLib.badgeLabel(alaska(1))).toBe("Starlink ~100%");
+    expect(extLib.badgeLabel(alaska(1.5))).toBe("Starlink ~100%");
+    expect(extLib.badgeLabel(qatar(1, { confidence: "type", basis: "schedule" }))).toBe(
+      "Starlink ~100%"
+    );
+    // No share, no percentage: nothing to print and nothing to badge.
+    for (const probability of [undefined, null, Number.NaN, "0.9"]) {
+      const claim = extLib.normalizeClaim({
+        hasStarlink: null,
+        airline: "Alaska Airlines",
+        confidence: "type",
+        probability,
+        flights: [],
+      });
+      expect(claim.status).toBe("unknown");
+      expect(extLib.shouldBadge(claim)).toBe(false);
+    }
+    expect(extLib.shouldBadge(alaska(0))).toBe(false);
   });
 });

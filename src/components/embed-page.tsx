@@ -1,3 +1,4 @@
+import { trackingMethod } from "../airlines/published-count";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { Link } from "./layout";
 import { EYEBROW, Eyebrow, PANEL, PageHeader, PageShell, SECTION } from "./layout";
@@ -47,10 +48,17 @@ export default function EmbedPage({
       <PageHeader
         title="Embed the Live Starlink Badge"
         dek={
-          <>
-            A small SVG badge with the live count of {subject} aircraft that have Starlink, updated
-            hourly.
-          </>
+          scopeCode && trackingMethod(AIRLINES[scopeCode]) === "type" ? (
+            <>
+              A small SVG badge with this site's sum of {subject} aircraft of Starlink types,
+              counted by aircraft type, updated hourly.
+            </>
+          ) : (
+            <>
+              A small SVG badge with the live count of {subject} aircraft that have Starlink,
+              updated hourly.
+            </>
+          )
         }
       />
 

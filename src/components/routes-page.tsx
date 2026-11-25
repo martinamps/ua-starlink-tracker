@@ -6,6 +6,8 @@ import { PopularFlightsLinks } from "./atoms";
 import { AirportBars } from "./home/rollout";
 import type { Link } from "./layout";
 import { PageHeader, PageShell, Panel, Section, SectionTitle, Td, Th } from "./layout";
+import type { RouteNetwork } from "./routes-map/network";
+import { RoutesMap, showRouteMap } from "./routes-map/routes-map";
 import { fmt, utcDateTime, zonedDeparture } from "./ui/format";
 import { Meter } from "./ui/meter";
 
@@ -153,6 +155,8 @@ interface RoutesPageProps {
   currentPath?: string;
   /** The data's own freshness stamp, never request time. */
   updatedAt?: string | null;
+  network?: RouteNetwork;
+  basemapHref?: string;
 }
 
 export default function RoutesPage({
@@ -163,6 +167,8 @@ export default function RoutesPage({
   popularFlights = [],
   pageLinks,
   currentPath,
+  network,
+  basemapHref,
 }: RoutesPageProps) {
   const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
   const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
@@ -181,6 +187,17 @@ export default function RoutesPage({
             : `No ${airlineName} Starlink departures are assigned in the ${schedule.windowLabel} yet.`
         }
       />
+
+      {network && basemapHref && showRouteMap(network) && (
+        <RoutesMap
+          net={network}
+          basemapHref={basemapHref}
+          windowLabel={schedule.windowLabel}
+          updatedAt={updatedAt}
+          airportLinks={site.features.airportPages}
+          airlineLabel={shortName ? `${shortName} ` : ""}
+        />
+      )}
 
       {routes.length > 0 && (
         <section className="relative mx-auto mb-8 grid w-full max-w-6xl gap-8 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -202,7 +219,7 @@ export default function RoutesPage({
               <SectionTitle>Busiest airports</SectionTitle>
               <p className="mt-1 text-sm text-secondary">By departure airport.</p>
               <Panel pad="sm" className="mt-4">
-                <AirportBars rows={airports.rows} columns={1} />
+                <AirportBars rows={airports.rows} columns={1} linked={site.features.airportPages} />
               </Panel>
             </div>
           )}

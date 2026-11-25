@@ -47,8 +47,9 @@ export function InstallPaceSection({
   projectionHref,
 }: {
   pace: FleetPageData["installPace"];
-  /** /install-rate when this host serves it. Its 3-month whole-fleet pace is
-   * the site's one projection, so this page links there instead of making its own. */
+  /** /install-rate when this host serves it: the monthly pace against the
+   * airline's stated targets. The link promises no more than that page gives,
+   * and that page states no finish date of ours. */
   projectionHref?: string | null;
 }) {
   if (!pace || pace.weeks.length === 0) return null;
@@ -97,7 +98,7 @@ export function InstallPaceSection({
       {projectionHref && (
         <p className="text-sm text-secondary mt-4 text-pretty">
           <a href={projectionHref} className="text-accent hover:underline">
-            Monthly pace and projected finish against stated targets →
+            Monthly pace against stated targets →
           </a>
         </p>
       )}

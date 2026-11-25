@@ -36,7 +36,9 @@
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
-/* "Starlink only" toggle: dims settled non-Starlink cards, never hides them. */
+/* "Starlink only" toggle: dims settled cards, never hides them. A no dims
+ * fully; a maybe (better-than-even odds, no badge) dims lightly, so it is
+ * never mistaken for a flight without Starlink. */
 .starlink-only-dim {
   opacity: 0.35;
   transition: opacity 0.2s;
@@ -44,6 +46,15 @@
 
 .starlink-only-dim:hover {
   opacity: 0.8;
+}
+
+.starlink-only-maybe {
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.starlink-only-maybe:hover {
+  opacity: 1;
 }
 
 .starlink-only-toggle {
