@@ -43,8 +43,9 @@
  *                    carriers | other (~26)
  *   client_class:    classifyRequest: extension | other-extension, else
  *                    classifyUserAgent: claude | googleother | googlebot |
- *                    bingbot | gptbot | perplexity | seo-crawler | social |
- *                    extension | bot | browser | unknown; mcp for /mcp  (14)
+ *                    bingbot | gptbot | perplexity | seo-crawler | meta-ai |
+ *                    social | scraper | extension | bot | browser |
+ *                    unknown; mcp for /mcp                           (16)
  *                    mcp.tool_call/tool_duration_ms use classifyMcpClient:
  *                    claude | chatgpt | cursor | vscode | bot | other |
  *                    unknown                                         (+3 new)
@@ -165,12 +166,31 @@ const NAMED_CRAWLERS: ReadonlyArray<readonly [string, RegExp]> = [
   ["gptbot", /GPTBot|OAI-SearchBot|ChatGPT-User/i],
   ["perplexity", /PerplexityBot|Perplexity-User/i],
   ["seo-crawler", /AhrefsBot|SemrushBot|DotBot|MJ12bot|PetalBot|DataForSeoBot|BLEXBot/i],
-  ["social", /facebookexternalhit|meta-externalagent|Twitterbot|Slackbot|Discordbot/i],
+  // Meta's AI crawlers (training, Meta AI search, Meta AI's live fetcher) sat
+  // in `social` and were nearly all of it; `social` is now link previews only.
+  ["meta-ai", /meta-externalagent|meta-externalfetcher|meta-webindexer/i],
+  ["social", /facebookexternalhit|Twitterbot|Slackbot|Discordbot/i],
 ];
 
-export function classifyUserAgent(ua: string | null | undefined): string {
-  if (!ua) return "unknown";
+// Agents that dress as a browser but are one known scraper, matched as the
+// whole string so a real browser on the same version is never caught by a
+// looser pattern. The first: ~20,000 flight and route pages a week from ~1,600
+// addresses, all with this exact Chrome 139 agent (Nov 2026). It undercounts by
+// design: the scraper leaves `scraper` the day it changes one character, and
+// the few people still on that exact Chrome build are counted here with it.
+const KNOWN_SCRAPER_AGENTS: ReadonlySet<string> = new Set([
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+]);
+
+// The header is a stranger's text. Real agents run under ~300 characters;
+// past this cap the rest is never read, so a huge value costs nothing to class.
+const MAX_UA_LENGTH = 512;
+
+export function classifyUserAgent(raw: string | null | undefined): string {
+  if (!raw) return "unknown";
+  const ua = raw.length > MAX_UA_LENGTH ? raw.slice(0, MAX_UA_LENGTH) : raw;
   if (/UA-Starlink-Extension|starlink-tracker-ext/i.test(ua)) return "extension";
+  if (KNOWN_SCRAPER_AGENTS.has(ua)) return "scraper";
   for (const [bucket, re] of NAMED_CRAWLERS) {
     if (re.test(ua)) return bucket;
   }

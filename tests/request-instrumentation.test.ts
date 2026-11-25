@@ -55,6 +55,102 @@ describe("classifyUserAgent", () => {
     }
   });
 
+  test("Meta's AI crawlers are their own class, link previews stay social", () => {
+    const docs = "(+https://developers.facebook.com/docs/sharing/webmasters/crawler)";
+    expect(classifyUserAgent(`meta-externalagent/1.1 ${docs}`)).toBe("meta-ai");
+    expect(classifyUserAgent(`meta-webindexer/1.1 ${docs}`)).toBe("meta-ai");
+    expect(classifyUserAgent(`meta-externalfetcher/1.1 ${docs}`)).toBe("meta-ai");
+    expect(classifyUserAgent("facebookexternalhit/1.1 Facebot Twitterbot/1.0")).toBe("social");
+    expect(classifyUserAgent("Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)")).toBe(
+      "social"
+    );
+  });
+
+  describe("the known fixed-agent scraper", () => {
+    const SCRAPER =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36";
+
+    test("the exact agent is `scraper`", () => {
+      expect(classifyUserAgent(SCRAPER)).toBe("scraper");
+    });
+
+    test("anything that differs by a character is still `browser`", () => {
+      const near = [
+        SCRAPER.replace("139.0.0.0", "139.0.7258.66"),
+        SCRAPER.replace("139.0.0.0", "140.0.0.0"),
+        SCRAPER.replace("Macintosh; Intel Mac OS X 10_15_7", "Windows NT 10.0; Win64; x64"),
+        `${SCRAPER} Edg/139.0.0.0`,
+        ` ${SCRAPER}`,
+        `${SCRAPER} `,
+        SCRAPER.toLowerCase(),
+        SCRAPER.slice(0, -1),
+      ];
+      for (const ua of near) expect(classifyUserAgent(ua), ua).toBe("browser");
+    });
+
+    test("a declared robot that quotes the agent keeps its own class", () => {
+      expect(classifyUserAgent(`${SCRAPER} (compatible; bingbot/2.0)`)).toBe("bingbot");
+    });
+  });
+
+  describe("hostile agent strings", () => {
+    const CLASSES = new Set([
+      "claude",
+      "googleother",
+      "googlebot",
+      "bingbot",
+      "gptbot",
+      "perplexity",
+      "seo-crawler",
+      "meta-ai",
+      "social",
+      "scraper",
+      "extension",
+      "bot",
+      "browser",
+      "unknown",
+    ]);
+
+    test("every answer is one of the fixed words, never the input", () => {
+      const hostile = [
+        "\0",
+        "\u0000Mozilla",
+        "Mozilla\r\nX-Injected: 1",
+        "client_class:browser,tenant:ua",
+        "scraper",
+        "browser|social",
+        "<script>alert(1)</script>",
+        "\uD83D\uDE80".repeat(40),
+        "\uD800",
+        "\u202EtobelgooG",
+        "a".repeat(5_000_000),
+        " ".repeat(100_000),
+        `${"(".repeat(50_000)}bot`,
+        "%s%s%s%n",
+        "__proto__",
+        "constructor",
+      ];
+      for (const ua of hostile) {
+        const got = classifyUserAgent(ua);
+        expect(CLASSES.has(got), JSON.stringify(ua.slice(0, 40))).toBe(true);
+      }
+    });
+
+    test("only the first 512 characters are read", () => {
+      const pad = "x".repeat(600);
+      expect(classifyUserAgent(`${pad} Googlebot/2.1`)).toBe("unknown");
+      expect(classifyUserAgent(`Mozilla/5.0 ${pad} Googlebot/2.1`)).toBe("browser");
+      expect(classifyUserAgent(`Googlebot/2.1 ${pad}`)).toBe("googlebot");
+    });
+
+    test("a multi-megabyte agent is classed in bounded time", () => {
+      const huge = `Mozilla/5.0 ${"bot ".repeat(2_000_000)}`;
+      const start = performance.now();
+      for (let i = 0; i < 200; i++) classifyUserAgent(huge);
+      expect(performance.now() - start).toBeLessThan(1000);
+    });
+  });
+
   test("GoogleOther is not misread as Googlebot", () => {
     expect(classifyUserAgent("Mozilla/5.0 (compatible; GoogleOther)")).toBe("googleother");
     expect(classifyUserAgent("Mozilla/5.0 (compatible; Google-Extended)")).toBe("googleother");
@@ -77,7 +173,9 @@ describe("classifyUserAgent", () => {
       "gptbot",
       "perplexity",
       "seo-crawler",
+      "meta-ai",
       "social",
+      "scraper",
       "extension",
       "bot",
       "browser",
@@ -105,6 +203,24 @@ describe("http.request metric coverage", () => {
     expect(http.length).toBe(1);
     expect(http[0].tags.route).toBe("unmatched");
     expect(http[0].tags.status_code).toBe(404);
+  });
+
+  test("the known scraper is counted as `scraper` and served like anyone else", async () => {
+    const scraper =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36";
+    const { calls } = captureIncrements();
+    const asScraper = await app.dispatch(req("/fleet", UA, { headers: { "User-Agent": scraper } }));
+    const asBrowser = await app.dispatch(
+      req("/fleet", UA, { headers: { "User-Agent": scraper.replace("139.0.0.0", "140.0.0.0") } })
+    );
+    expect(asScraper.status).toBe(200);
+    expect(asScraper.status).toBe(asBrowser.status);
+    expect((await asScraper.text()).length).toBe((await asBrowser.text()).length);
+    const http = httpCalls(calls);
+    expect(http.map((c) => c.tags.client_class)).toEqual(["scraper", "browser"]);
+    for (const c of http) {
+      for (const v of Object.values(c.tags)) expect(String(v)).not.toContain("Mozilla");
+    }
   });
 
   test("a matched path still reports its own route, not the unmatched bucket", async () => {

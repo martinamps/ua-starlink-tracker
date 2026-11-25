@@ -87,7 +87,10 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 
 `client_class` is always a fixed enum, never the raw user agent:
 
-- **HTTP metrics** (`classifyRequest`): `extension`, `other-extension`, the named crawlers (`claude`, `googlebot`, `bingbot`, …), `bot`, `browser`, `unknown`.
+- **HTTP metrics** (`classifyRequest`): `extension`, `other-extension`, the named crawlers (`claude`, `googlebot`, `bingbot`, `meta-ai`, …), `social`, `scraper`, `bot`, `browser`, `unknown`.
+  - `meta-ai` is Meta's AI crawlers (`meta-externalagent`, `meta-externalfetcher`, `meta-webindexer`). They were counted as `social` (and `meta-webindexer` as `bot`) until this class shipped, so `social` drops to link previews (`facebookexternalhit`, X, Slack, Discord) on that day.
+  - `scraper` is a known scraper that sends a browser's agent, matched on the whole agent string (`KNOWN_SCRAPER_AGENTS`). Today that is one fixed Mac Chrome 139 agent. It was counted as `browser` until this class shipped. It only counts, nothing is blocked, and it is a floor: the scraper leaves the class when it changes its agent, other browser-dressed scrapers (rotating versions, proxies) are still `browser`, and a person on that exact Chrome build lands in `scraper`.
+  - `browser` therefore still means "sends a browser's agent and isn't a scraper we know by name", not "a person". `browser` and `social` counts from before and after the deploy of these two classes are not comparable.
 - **MCP tool metrics** (`classifyMcpClient`): `claude`, `chatgpt` (includes Codex), `cursor`, `vscode`, `bot`, `other`, `unknown`. MCP here is stateless, so tool calls carry no `clientInfo`; the user agent is the only signal.
 - **`ext_version`** rides along only with `client_class:extension`, from the extension's `client=ext-<version>` param: `1.x`, `2.0`, `2.1`, `2.x` (2.2+), `other`, `none` (pre-2.0.1 builds, which sent no param). Graph adoption with `sum:starlink.http.request{client_class:extension} by {ext_version}`.
 
