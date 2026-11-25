@@ -319,12 +319,16 @@ describe("pages", () => {
     expect(section(done.text, "type-outlook")).toBeNull();
   });
 
-  test("route page: months with their counts, then the types that fly it", async () => {
-    const trend = section((await bodyOf(app, "/route-planner/DEN/ORD", UA)).text, "trend")!;
-    expect(trend).toContain("The share of departures we saw on a Starlink aircraft.");
-    expect(trend).toMatch(/\d+% of \d+/);
-    expect(trend).toMatch(/737 MAX 9 ?, 100% of these departures: 24 of 60 have Starlink/);
-    expect(trend.replace(/[A-Z][a-z]{2} 20\d\d/g, "")).not.toMatch(DATED);
+  // DEN-ORD holds 88 days of draws under a number flight_routes shows on this
+  // pair alone, which is all the section ever asked for. A draw has no
+  // airports, so the same number's departures on a pair we never learned
+  // would be counted too: the page states no share (outlook.ts).
+  test("route page: no monthly share while a departure can't be placed on its pair", async () => {
+    const { status, text } = await bodyOf(app, "/route-planner/DEN/ORD", UA);
+    expect(status).toBe(200);
+    expect(section(text, "trend")).toBeNull();
+    expect(text).not.toContain("The share of departures we saw on a Starlink aircraft");
+    expect(createReaderFactory(db)("UA").getRouteOutlook("DEN", "ORD")).toBeNull();
   });
 
   test("route page: a route we saw no departures on shows nothing", async () => {

@@ -354,7 +354,8 @@ const FLOWN_SEQUENCE_BASE = 1000;
 
 /**
  * The record of a flown flight: on its first leg, the aircraft we last saw
- * assigned, with the Starlink flag stored beside it at the time. Nothing here
+ * assigned, with the Starlink flag stored beside it at the time; whether that
+ * aircraft flew it is flownConfirmed's to say. Nothing here
  * reads today's fleet tables, so a later install never rewrites the past.
  */
 export function flownRecord(history: readonly AssignmentLogRow[]): AssignmentLogRow | null {
@@ -378,9 +379,33 @@ export function flownFeedState(history: readonly AssignmentLogRow[]): WatchFeedS
   return flownRecord(history) ? "flown" : "flown_unknown";
 }
 
+/**
+ * The live feed names an aircraft only while its latest refresh still holds
+ * the flight, and says "Current aircraft not confirmed" once the row stops
+ * being refreshed: the log covers tracked tails only, so a swap onto an
+ * untracked one shows as silence. last_seen is that last refresh, frozen. A
+ * tail with a departure inside six hours is refreshed every 1 to 1.5 hours,
+ * every four at worst after failures (needsFlightCheck), so one still on the
+ * flight at departure was seen inside this window, and one last seen before it
+ * had moved off or was never re-read. Either way the final calendar may not
+ * say more than the live one did.
+ */
+const FLOWN_CONFIRMED_WITHIN_SEC = 6 * 3600;
+
+/** Was the record still the flight's assignment when it left, by the live feed's rule. */
+export function flownConfirmed(record: AssignmentLogRow): boolean {
+  return (
+    record.departure_time !== null &&
+    record.last_seen >= record.departure_time - FLOWN_CONFIRMED_WITHIN_SEC
+  );
+}
+
 export function flownSummary(fn: string, record: AssignmentLogRow | null): string {
   if (!record) return `Date passed: ${fn} · no aircraft record`;
   const { tail_number: tail, departure_airport: dep, arrival_airport: arr } = record;
+  if (!flownConfirmed(record)) {
+    return `Date passed: ${fn} · aircraft not confirmed (last seen assigned: ${tail})`;
+  }
   if (record.starlink === 1) {
     const route = arr ? ` ${toIata(dep)}→${toIata(arr)}` : "";
     return `Flown: ${fn}${route} · Starlink ✅ ${tail}`;
@@ -388,6 +413,14 @@ export function flownSummary(fn: string, record: AssignmentLogRow | null): strin
   return record.starlink === 0
     ? `Flown: ${fn} · No Starlink (${tail})`
     : `Flown: ${fn} · ${tail}, Starlink not recorded`;
+}
+
+/** "about 30 hours" / "about 3 days": how long before departure a row went quiet. */
+function gapBeforeDeparture(record: AssignmentLogRow): string | null {
+  if (record.departure_time === null) return null;
+  const hours = Math.round((record.departure_time - record.last_seen) / 3600);
+  if (hours < 48) return `about ${hours} hours`;
+  return `about ${Math.round(hours / 24)} days`;
 }
 
 export function flownDescription(input: FlownWatchInput): string[] {
@@ -406,10 +439,19 @@ export function flownDescription(input: FlownWatchInput): string[] {
         : record.starlink === 0
           ? "it was not a Starlink aircraft at the time"
           : "we stored no Starlink status for it";
-    lines.push(
-      "This flight's date has passed.",
-      `Last aircraft we saw assigned: ${record.tail_number}; ${had}.`
-    );
+    if (flownConfirmed(record)) {
+      lines.push(
+        "This flight's date has passed.",
+        `Last aircraft we saw assigned: ${record.tail_number}; ${had}.`
+      );
+    } else {
+      const gap = gapBeforeDeparture(record);
+      lines.push(
+        "This flight's date has passed.",
+        "We could not confirm which aircraft flew it, so we can't say whether it had Starlink.",
+        `Last aircraft we saw assigned: ${record.tail_number}${gap ? `, ${gap} before departure` : ""}; ${had}. Another aircraft may have flown the flight.`
+      );
+    }
     const legRows = history.filter((h) => h.departure_airport === record.departure_airport);
     lines.push("", "Assignment history:");
     for (const r of legRows) {

@@ -16,6 +16,9 @@ import {
   buildFlownWatchIcs,
   buildWatchIcs,
   escapeIcsText,
+  flownConfirmed,
+  flownDescription,
+  flownSummary,
   foldIcsLine,
   watchSummary,
 } from "../src/utils/ics";
@@ -650,7 +653,10 @@ describe("a past-dated feed answers from the stored record alone (synthetic)", (
     const date = isoDaysFromNow(-60);
     // Listed with Starlink today; the row stored at the time says it had none.
     addPlane(db, "N22222", "Starlink");
-    logRow(db, "flown_assignments", date, "N22222", 0, { first: 10, last: 20 });
+    logRow(db, "flown_assignments", date, "N22222", 0, {
+      first: dep(date) - 90000,
+      last: dep(date) - 3600,
+    });
     const { status, text: body } = await bodyOf(createApp(db), `/cal/UA123/${date}.ics`, UA_HOST);
     expect(status).toBe(200);
     expect(prop(body, "SUMMARY")).toBe("Flown: UA123 · No Starlink (N22222)");
@@ -660,14 +666,84 @@ describe("a past-dated feed answers from the stored record alone (synthetic)", (
   test("after a swap the last aircraft seen is the one named, and the history lists both", async () => {
     const db = makeSyntheticDb();
     const date = isoDaysFromNow(-60);
-    logRow(db, "flown_assignments", date, "N11111", 1, { first: 10, last: 500 });
-    logRow(db, "flown_assignments", date, "N33333", null, { first: 600, last: 900 });
+    logRow(db, "flown_assignments", date, "N11111", 1, {
+      first: dep(date) - 90000,
+      last: dep(date) - 40000,
+    });
+    logRow(db, "flown_assignments", date, "N33333", null, {
+      first: dep(date) - 30000,
+      last: dep(date) - 1800,
+    });
     const body = (await bodyOf(createApp(db), `/cal/UA123/${date}.ics`, UA_HOST)).text;
     expect(prop(body, "SUMMARY")).toBe("Flown: UA123 · N33333\\, Starlink not recorded");
     const flat = icsLines(body).join("");
     expect(flat).toContain("N11111 first seen assigned");
     expect(flat).toContain("N33333 first seen assigned");
     expect(flat).toContain("we stored no Starlink status for it");
+  });
+
+  // The reviewer's rows: a Starlink tail seen assigned from 60 to 30 hours
+  // before departure, then no more. The live feed says "Current aircraft not
+  // confirmed" for them; the final one may not turn that into a flown aircraft.
+  test("a tail that went quiet 30 hours before departure is named, never as flown", async () => {
+    const date = isoDaysFromNow(-3);
+    for (const [table, starlink] of [
+      ["flight_assignment_log", 1],
+      ["flown_assignments", 0],
+    ] as const) {
+      const db = makeSyntheticDb();
+      logRow(db, table, date, "N24508", starlink, {
+        first: dep(date) - 60 * 3600,
+        last: dep(date) - 30 * 3600,
+      });
+      const { status, text: body } = await bodyOf(createApp(db), `/cal/UA123/${date}.ics`, UA_HOST);
+      expect(status).toBe(200);
+      expectWellFormedIcs(body);
+      const summary = prop(body, "SUMMARY")!;
+      expect(summary).toBe(
+        "Date passed: UA123 · aircraft not confirmed (last seen assigned: N24508)"
+      );
+      expect(summary).not.toMatch(/Flown|Starlink|✅/);
+      const flat = icsLines(body).join("");
+      expect(flat).toContain("We could not confirm which aircraft flew it");
+      expect(flat).toContain(
+        "Last aircraft we saw assigned: N24508\\, about 30 hours before departure"
+      );
+      expect(flat).toContain("Another aircraft may have flown the flight.");
+    }
+  });
+
+  test("confirmed is the six hours before departure, and needs a departure time", () => {
+    const row = {
+      airline: "UA",
+      flight_number: "UA123",
+      dep_date: "2026-10-01",
+      departure_airport: "SFO",
+      arrival_airport: "EWR",
+      tail_number: "N24508",
+      starlink: 1,
+      departure_time: 1_790_870_400 as number | null,
+      arrival_time: 1_790_890_000,
+      first_seen: 1_790_700_000,
+      last_seen: 1_790_870_400 - 6 * 3600,
+    };
+    expect(flownConfirmed(row)).toBe(true);
+    expect(flownSummary("UA123", row)).toBe("Flown: UA123 SFO→EWR · Starlink ✅ N24508");
+    const quiet = { ...row, last_seen: row.last_seen - 1 };
+    expect(flownConfirmed(quiet)).toBe(false);
+    expect(flownSummary("UA123", quiet)).toContain("aircraft not confirmed");
+    expect(flownConfirmed({ ...row, departure_time: null })).toBe(false);
+    // Five days quiet reads in days, and the swap line holds for a no as well.
+    const lines = flownDescription({
+      canonicalHost: UA_HOST,
+      fn: "UA123",
+      date: "2026-10-01",
+      history: [{ ...row, starlink: 0, last_seen: 1_790_870_400 - 5 * 86400 }],
+      now: 1_791_200_000,
+    });
+    expect(lines.join(" ")).toContain(
+      "N24508, about 5 days before departure; it was not a Starlink"
+    );
   });
 
   test("a known number with no row for the date: 200 and no claim; an unknown number: 404", async () => {

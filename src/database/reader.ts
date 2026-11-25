@@ -153,6 +153,7 @@ import {
 } from "./database";
 import {
   type AirlineOutlook,
+  ROUTE_DEPARTURES_PLACED_BY_PAIR,
   type RouteOutlookResult,
   airlineOutlook,
   hasBacktestedOutlook,
@@ -636,6 +637,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getAircraftTypeGate: (slug) => (scope === "ALL" ? null : getAircraftTypeGate(db, scope, slug)),
     getRolloutOutlook: rolloutOutlook,
     getRouteOutlook: (origin, destination) => {
+      if (!ROUTE_DEPARTURES_PLACED_BY_PAIR) return null;
       const outlook = rolloutOutlook();
       if (scope === "ALL" || !outlook) return null;
       const key = `${origin}-${destination}`;

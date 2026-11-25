@@ -3,8 +3,8 @@
  * programmeRoster and the one equipped definition; install dates are the
  * listing dates (starlink_planes.DateFound) of the tails equipped today;
  * a route's departures are the ADS-B flight draws on the flight numbers that
- * fly only that pair. Every reader takes `now`, so the backtest and tests pin
- * the clock.
+ * fly only that pair, which no page shows yet (ROUTE_DEPARTURES_PLACED_BY_PAIR).
+ * Every reader takes `now`, so the backtest and tests pin the clock.
  */
 
 import type { Database } from "bun:sqlite";
@@ -80,6 +80,18 @@ export function airlineOutlook(db: Database, airline: string, now: number): Airl
   return { airline, now, fleet: build(FLEET, roster), families };
 }
 
+/**
+ * Whether a flight draw can be put on the airport pair it flew. It can't: a
+ * draw is a flight number and a tail, and flight_routes learns a pair only
+ * from a tracked (Starlink) tail or a lookup. United reuses a number on other
+ * pairs on other days; when untracked aircraft fly those, the number still
+ * looks single-pair and their departures are counted here, so the share reads
+ * low and the count high by an amount nothing stored can bound. Pages show no
+ * route share until draws carry their airports; routeOutlookFor stays for the
+ * backtest script, which is how the shares get checked against production.
+ */
+export const ROUTE_DEPARTURES_PLACED_BY_PAIR: boolean = false;
+
 /** Departures older than this many calendar months are not read. */
 const ROUTE_MONTHS = 4;
 
@@ -92,7 +104,9 @@ export interface RouteOutlookResult extends RouteOutlook {
 
 /**
  * The route's outlook, or null where we hold no unbiased departure history:
- * the ADS-B draws exist for UA flight numbers only.
+ * the ADS-B draws exist for UA flight numbers only. Not for a page while
+ * ROUTE_DEPARTURES_PLACED_BY_PAIR is false: readers go through
+ * ScopedReader.getRouteOutlook, which holds that gate.
  */
 export function routeOutlookFor(
   db: Database,

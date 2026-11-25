@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { ensureAdsbFlightDrawsTable } from "../src/database/adsb-flight-draws";
-import { airlineOutlook, listingTime, routeOutlookFor } from "../src/database/outlook";
+import {
+  ROUTE_DEPARTURES_PLACED_BY_PAIR,
+  airlineOutlook,
+  listingTime,
+  routeOutlookFor,
+} from "../src/database/outlook";
+import { createReaderFactory } from "../src/database/reader";
 import { programmeRoster } from "../src/database/roster";
 import { DAY_SEC } from "../src/database/sql/windows";
 import { backtestCases, backtestMixShare, cutoffs, summarize } from "../src/outlook/backtest";
@@ -362,6 +368,39 @@ describe("route reader", () => {
     expect(r.types.map((t) => t.family)).toEqual(["B787"]);
     expect(r.types[0].outlook?.total).toBe(2);
   });
+});
+
+// Why no page shows a route's share (ROUTE_DEPARTURES_PLACED_BY_PAIR). When
+// draws carry their airports, the count below becomes 1 and the gate can open;
+// neither changes without the other.
+test("a number's departures on a pair we never learned are counted as this route's", () => {
+  const db = makeFreshDb();
+  ensureAdsbFlightDrawsTable(db);
+  const seen = utc("2026-11-20T00:00:00Z");
+  db.exec(`
+    INSERT INTO united_fleet (tail_number, aircraft_type, fleet, starlink_status, first_seen_source, first_seen_at, last_seen_at, airline)
+    VALUES ('N1', 'Boeing 737-900', 'mainline', 'unknown', 't', 0, 0, 'UA'),
+           ('N2', 'Airbus A320', 'mainline', 'unknown', 't', 0, 0, 'UA');
+    INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, airline)
+    VALUES ('Boeing 737-900', 'Starlink', 't', 'UA-mainline', '2026-09-01', 'N1', 'United Airlines', 'mainline', 'UA');
+  `);
+  // The tracked tail taught us MCO-EWR. The untracked A320 flew the same
+  // number IAH-DEN two days later, and nothing stored says so.
+  db.query(
+    "INSERT INTO flight_routes (flight_number, origin, destination, first_seen_at, last_seen_at) VALUES ('UA700', 'MCO', 'EWR', ?, ?)"
+  ).run(seen, seen);
+  const draw = db.query(
+    "INSERT INTO adsb_flight_draws (flight_number, tail_number, first_seen, last_seen) VALUES ('UA700', ?, ?, ?)"
+  );
+  draw.run("N1", utc("2026-10-10T00:00:00Z"), utc("2026-10-10T03:00:00Z"));
+  draw.run("N2", utc("2026-10-12T00:00:00Z"), utc("2026-10-12T03:00:00Z"));
+
+  const oct = routeOutlookFor(db, "UA", "MCO", "EWR", NOW)!.months.find(
+    (m) => m.month === "2026-10"
+  )!;
+  expect(oct).toMatchObject({ departures: 2, starlink: 1 });
+  expect(ROUTE_DEPARTURES_PLACED_BY_PAIR).toBe(false);
+  expect(createReaderFactory(db)("UA").getRouteOutlook("MCO", "EWR")).toBeNull();
 });
 
 test("listing dates parse only as ISO days", () => {
