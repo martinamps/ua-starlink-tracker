@@ -11,6 +11,9 @@
  * The by-type table stays what it is: fleet sizes by type.
  */
 
+import { fmt } from "../components/ui/format";
+import type { AirlineChartCount } from "../database/roster";
+import { aircraftName } from "./aircraft-families";
 import { type AirlineConfig, wifiPhaseFamilies } from "./registry";
 import {
   type AirlineOwnCount,
@@ -70,10 +73,47 @@ export function byPublishedCount<T extends { published: PublishedCount }>(rows: 
 }
 
 /** "as of Aug 21, 2026": the date never leaves an airline's own figure. */
-export function ownCountAsOf(own: AirlineOwnCount): string {
+export function ownCountAsOf(own: Pick<AirlineOwnCount, "asOf">): string {
   return `as of ${formatFactDate(own.asOf)}`;
 }
 
 export function ownCountCredit(cfg: AirlineConfig, own: AirlineOwnCount): string {
   return `per ${cfg.name} ${ownCountAsOf(own)}`;
+}
+
+const listed = (parts: string[]) =>
+  parts.length > 2 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts.join(" and ");
+
+const typeCount = (n: number, family: string) =>
+  `${fmt(n)} ${aircraftName(family)}${n === 1 ? "" : "s"}`;
+
+/** The headline figure and whose it is: the airline's chart while it counts
+ * more than the named tails and is no older than them, else the named count. */
+export function leadCount(c: {
+  starlinkCount: number;
+  totalCount: number;
+  airlineCount?: AirlineChartCount | null;
+}): { n: number; total: number; own: AirlineChartCount | null } {
+  const own = c.airlineCount?.leads ? c.airlineCount : null;
+  return own
+    ? { n: own.connected, total: own.total, own }
+    : { n: c.starlinkCount, total: c.totalCount, own: null };
+}
+
+/** "Alaska counts 4 737 MAX 9s that no source names by tail yet." */
+export function unnamedSentence(cfg: AirlineConfig, c: AirlineChartCount): string | null {
+  if (c.unnamed.length === 0) return null;
+  return `${cfg.shortName} counts ${listed(c.unnamed.map((u) => typeCount(u.count, u.family)))} that no source names by tail yet.`;
+}
+
+/** Why the two denominators differ, from the two lists themselves: "Alaska's
+ * chart leaves out the 11 737-700s on our fleet list and counts 5 787s where
+ * we list 6." */
+export function rosterDiffSentence(cfg: AirlineConfig, c: AirlineChartCount): string | null {
+  const parts = c.rosterDiff.map((d) =>
+    d.chart === null
+      ? `leaves out the ${typeCount(d.ours, d.family)} on our fleet list`
+      : `counts ${typeCount(d.chart, d.family)} where we list ${d.ours === 0 ? "none" : fmt(d.ours)}`
+  );
+  return parts.length > 0 ? `${cfg.shortName}'s chart ${listed(parts)}.` : null;
 }

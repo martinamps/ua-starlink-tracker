@@ -4,6 +4,7 @@
  * flights and the FAQ. The pieces live in home/; this file orders them.
  */
 import type { AirlineContent, ContentStats, HubHomeLinks } from "../airlines/content";
+import { leadCount } from "../airlines/published-count";
 import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type { ProgrammeHeadline } from "../database/roster";
@@ -78,6 +79,7 @@ export function buildContentStats(input: {
     starlinkCount: programme?.equipped ?? input.starlinkCount,
     totalCount: programme?.total ?? input.totalCount,
     noun: programme?.noun,
+    airlineCount: programme?.airlineCount,
     partners: programme?.partners.map((p) => ({
       label: p.label,
       starlink: p.equipped,
@@ -140,7 +142,7 @@ function orderedAircraft(starlink: Aircraft[], flightsByTail: Record<string, Fli
 
 function HomeTitle({ site, stats }: { site: SiteConfig; stats: ContentStats }) {
   const cfg = site.scope === "ALL" ? undefined : AIRLINES[site.scope];
-  const headline = cfg && homeHeadline(cfg, stats.starlinkCount, stats.totalCount);
+  const headline = cfg && homeHeadline(cfg, leadCount(stats));
   if (!headline) return <>{site.brand.heading ?? site.brand.title}</>;
   return (
     <>

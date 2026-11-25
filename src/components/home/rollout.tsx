@@ -3,10 +3,17 @@
  * that splits it by fleet segment, and a 12-week install sparkline.
  */
 import type { ContentStats } from "../../airlines/content";
+import {
+  leadCount,
+  ownCountAsOf,
+  rosterDiffSentence,
+  unnamedSentence,
+} from "../../airlines/published-count";
+import type { AirlineConfig } from "../../airlines/registry";
 import { ROUTE_AIRPORT_RE } from "../../database/sql/fragments";
 import { excludeMassWriteDays } from "../../utils/install-rate";
 import { Sparkline } from "../charts/sparkline";
-import { Panel, SECTION_WIDE, StatInline } from "../layout";
+import { LINK, Panel, SECTION_WIDE, StatInline } from "../layout";
 import { fmt, pct } from "../ui/format";
 import { Meter } from "../ui/meter";
 
@@ -87,36 +94,77 @@ export function RolloutPanel({
   stats,
   segments,
   noun = "aircraft",
+  airline,
 }: {
   stats: ContentStats;
   segments: RolloutSegment[];
   /** "United aircraft" etc. */
   noun?: string;
+  /** Names the airline's own chart figure, where stats carries one. */
+  airline?: AirlineConfig;
 }) {
   const { starlinkCount: n, totalCount: total, installs30d, weeklyInstalls: weekly } = stats;
+  // Two honest numbers: the airline's own dated chart and the tails named
+  // here. Each is labelled with whose it is; neither is added to the other.
+  const chart = airline ? (stats.airlineCount ?? null) : null;
+  const lead = leadCount({ ...stats, airlineCount: chart });
+  const chartLink = chart && airline && (
+    <a href={chart.url} className={LINK} rel="noopener">
+      {airline.shortName}'s own count
+    </a>
+  );
+  const added = installs30d ? (
+    <>
+      {" · "}
+      <StatInline>+{fmt(installs30d)}</StatInline> in the last 30 days
+    </>
+  ) : null;
   return (
     <Panel as="section" aria-label="Rollout progress" className={SECTION_WIDE}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div id="starlink-stat">
           <p className="font-display text-4xl text-primary tabular-nums">
-            {fmt(n)}{" "}
+            {fmt(lead.n)}{" "}
             <span className="text-xl text-secondary">
-              of {fmt(total)} {noun}
+              of {fmt(lead.total)} {noun}
             </span>
           </p>
-          <p className="mt-1 text-sm text-secondary">
-            <StatInline>{pct(n, total)}</StatInline> have Starlink
-            {installs30d ? (
-              <>
-                {" · "}
-                <StatInline>+{fmt(installs30d)}</StatInline> in the last 30 days
-              </>
-            ) : null}
-          </p>
+          {lead.own ? (
+            <p className="mt-1 text-sm text-secondary">
+              have Starlink, by {chartLink} {ownCountAsOf(lead.own)}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-secondary">
+              <StatInline>{pct(n, total)}</StatInline> have Starlink{added}
+            </p>
+          )}
+          {chart && airline && (
+            <p className="mt-1 text-sm text-secondary text-pretty">
+              {lead.own ? (
+                <>
+                  We can name <StatInline n={n} /> of them by tail, out of {fmt(total)} on our fleet
+                  list{added}.
+                </>
+              ) : (
+                <>
+                  {chartLink} is <StatInline n={chart.connected} /> of {fmt(chart.total)}{" "}
+                  {ownCountAsOf(chart)}.
+                </>
+              )}{" "}
+              {[unnamedSentence(airline, chart), rosterDiffSentence(airline, chart)]
+                .filter(Boolean)
+                .join(" ")}
+            </p>
+          )}
         </div>
         {weekly && <WeeklySparkline values={weekly} />}
       </div>
       <div className="mt-5">
+        {chart && (
+          <p className="mb-2 text-xs text-muted">
+            Named by tail: {fmt(n)} of {fmt(total)} on our fleet list
+          </p>
+        )}
         <StackedBar segments={segments} total={total} />
         <ul className="mt-3 flex flex-col gap-1 text-sm text-secondary sm:flex-row sm:flex-wrap sm:gap-x-6">
           {segments.map((s, i) => (
@@ -133,7 +181,8 @@ export function RolloutPanel({
               className="inline-block h-2.5 w-2.5 rounded-sm border border-muted bg-surface-elevated"
               aria-hidden="true"
             />
-            Not yet: {fmt(Math.max(0, total - segments.reduce((a, s) => a + s.n, 0)))}
+            {chart ? "Not named" : "Not yet"}:{" "}
+            {fmt(Math.max(0, total - segments.reduce((a, s) => a + s.n, 0)))}
           </li>
         </ul>
       </div>

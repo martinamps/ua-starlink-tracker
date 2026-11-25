@@ -35,6 +35,7 @@ import {
   getAdsbFlightDraws,
   getAdsbFlightDrawsFor,
 } from "./adsb-flight-draws";
+import { programmeHeadlineWithChart } from "./airline-count";
 import {
   type AirportDepartureRow,
   type AirportHistory,
@@ -159,7 +160,7 @@ import {
   hasBacktestedOutlook,
   routeOutlookFor,
 } from "./outlook";
-import { type ProgrammeHeadline, programmeHeadline } from "./roster";
+import type { ProgrammeHeadline } from "./roster";
 import { type RouteFlightLeg, getAllFlightLegs, getRouteFlightLegs } from "./route-flights";
 import { getRouteFlightLastSeen } from "./route-history";
 import { capToQuietSources } from "./source-health";
@@ -555,7 +556,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       getFleetPageData(db, airlines, {
         withPartners: scope !== "ALL" && Boolean(AIRLINES[scope]?.programmePartners),
       }),
-    getProgrammeHeadline: () => (scope === "ALL" ? null : programmeHeadline(db, scope)),
+    getProgrammeHeadline: () => (scope === "ALL" ? null : programmeHeadlineWithChart(db, scope)),
     getDepartureSlots: (q) => getDepartureSlots(db, airlines, q),
     getAirportDepartures: () => airportsMemo("", () => getAirportDepartures(db, airlines)),
     getRouteStarlinkSchedule: () => scheduleMemo("", () => getRouteStarlinkSchedule(db, airlines)),

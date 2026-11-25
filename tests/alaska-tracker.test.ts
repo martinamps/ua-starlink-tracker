@@ -6,7 +6,11 @@ import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SHEET_CODE_TO_FAMILY, newestOfficial } from "../src/airlines/aircraft-pages";
+import { leadCount, rosterDiffSentence, unnamedSentence } from "../src/airlines/published-count";
+import { AIRLINES } from "../src/airlines/registry";
 import { InstallPipelineSection } from "../src/components/fleet/pipeline";
+import { RolloutPanel } from "../src/components/home/rollout";
+import { programmeHeadlineWithChart } from "../src/database/airline-count";
 import { getFleetProgress } from "../src/database/database";
 import { programmeHeadline, programmeRoster, tenantProgrammeRoster } from "../src/database/roster";
 import {
@@ -200,5 +204,119 @@ describe("programme headline", () => {
     expect(typeof h?.noun).toBe("string");
     expect(programmeRoster(db, "AS").every((t) => t.airline === "AS")).toBe(true);
     expect(programmeHeadline(db, "UA")).toBeNull();
+  });
+});
+
+describe("Alaska's own chart beside the named tails", () => {
+  // A roster shaped like the live one in miniature: a type the chart leaves
+  // out (737-700), one it sizes differently (787) and one where it counts
+  // aircraft nobody has named (737-9 MAX).
+  const CHART: Array<[string, string, string]> = [
+    ["Embraer 175", "3", "Update complete"],
+    ["Boeing 737-8 MAX", "1", "3"],
+    ["Boeing 737-9 MAX", "2", "3"],
+    ["Boeing 787 Dreamliner", "-", "1"],
+  ];
+  const chartDate = "2026-09-25"; // trackerHtml's "last updated" line
+
+  function list(db: Database, tail: string, type: string, found: string): void {
+    db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+       VALUES (?, 'Starlink', ?, ?, 'Alaska Airlines', 'mainline', NULL, 'AS')`
+    ).run(type, found, tail);
+  }
+
+  async function seeded(namedOn: string): Promise<Database> {
+    const db = makeSyntheticDb();
+    seedRoster(db, "Embraer E175LR", 3, "6");
+    seedRoster(db, "Boeing 737 MAX 8", 4, "8");
+    seedRoster(db, "Boeing 737 MAX 9", 5, "9");
+    seedRoster(db, "Boeing 737-700", 2, "7");
+    seedRoster(db, "Boeing 787-9 Dreamliner", 2, "5");
+    await runAlaskaTrackerSync(db, async () => trackerHtml(CHART));
+    db.run("UPDATE starlink_planes SET DateFound = '2026-01-01' WHERE airline = 'AS'");
+    list(db, "N800AS", "Boeing 737 MAX 8", namedOn);
+    return db;
+  }
+
+  test("the chart attaches only while it counts more than the named tails, with its stored date", async () => {
+    const db = await seeded("2026-09-01");
+    const h = programmeHeadlineWithChart(db, "AS");
+    const chart = h?.airlineCount;
+    expect(chart).toBeTruthy();
+    if (!h || !chart) return;
+    expect(chart.connected).toBeGreaterThan(h.equipped);
+    expect(chart.asOf).toBe(chartDate);
+    expect(chart.url).toBe(AIRLINES.AS.officialTracker?.url ?? "");
+    // The gap is by type, and the named count plus the gap is the chart's count.
+    expect(chart.unnamed.map((u) => u.family)).toEqual(["B737-MAX9"]);
+    expect(h.equipped + chart.unnamed.reduce((s, u) => s + u.count, 0)).toBe(chart.connected);
+    // Every difference in fleet size is accounted for, family by family.
+    const diff = new Map(chart.rosterDiff.map((d) => [d.family, d]));
+    expect(diff.get("B737-700")?.chart).toBeNull();
+    expect(diff.get("B787")?.ours).toBeGreaterThan(diff.get("B787")?.chart ?? 0);
+    expect(chart.rosterDiff.reduce((s, d) => s + d.ours - (d.chart ?? 0), 0)).toBe(
+      h.total - chart.total
+    );
+
+    // Named tails catch up: the chart no longer counts more, so it drops out.
+    for (let i = 0; i < 5; i++)
+      list(db, `N9${String(i).padStart(2, "0")}AS`, "Boeing 737 MAX 9", "2026-09-02");
+    expect(programmeHeadlineWithChart(db, "AS")?.airlineCount).toBeNull();
+    expect(programmeHeadlineWithChart(db, "UA")).toBeNull();
+  });
+
+  test("a chart older than the newest named tail shows but does not lead", async () => {
+    const fresh = programmeHeadlineWithChart(await seeded("2026-09-01"), "AS");
+    const stale = programmeHeadlineWithChart(await seeded("2026-10-15"), "AS");
+    expect(fresh?.airlineCount?.leads).toBe(true);
+    expect(stale?.airlineCount?.leads).toBe(false);
+    for (const h of [fresh, stale]) {
+      if (!h?.airlineCount) throw new Error("chart missing");
+      const lead = leadCount({
+        starlinkCount: h.equipped,
+        totalCount: h.total,
+        airlineCount: h.airlineCount,
+      });
+      expect(lead.n).toBe(h.airlineCount.leads ? h.airlineCount.connected : h.equipped);
+      expect(lead.total).toBe(h.airlineCount.leads ? h.airlineCount.total : h.total);
+    }
+  });
+
+  test("the panel prints both counts, each with whose it is and the chart's date", async () => {
+    for (const namedOn of ["2026-09-01", "2026-10-15"]) {
+      const h = programmeHeadlineWithChart(await seeded(namedOn), "AS");
+      const chart = h?.airlineCount;
+      if (!h || !chart) throw new Error("chart missing");
+      const html = renderToStaticMarkup(
+        RolloutPanel({
+          stats: { starlinkCount: h.equipped, totalCount: h.total, airlineCount: chart },
+          segments: [],
+          airline: AIRLINES.AS,
+        })
+      );
+      const stat = html.slice(html.indexOf('id="starlink-stat"'));
+      expect(stat).toContain("Alaska&#x27;s own count");
+      expect(stat).toContain("as of Sep 25, 2026");
+      expect(stat).toContain(chart.url);
+      expect(stat).toMatch(chart.leads ? /We can name/ : /own count<\/a> is/);
+      expect(html).toContain("Named by tail:");
+      expect(unnamedSentence(AIRLINES.AS, chart)).toMatch(
+        /^Alaska counts \d+ 737 MAX 9s? that no source names/
+      );
+      expect(rosterDiffSentence(AIRLINES.AS, chart)).toMatch(
+        /leaves out the \d+ 737-700s on our fleet list/
+      );
+    }
+    // No chart, no second figure: the panel is the named count alone.
+    const plain = renderToStaticMarkup(
+      RolloutPanel({
+        stats: { starlinkCount: 4, totalCount: 16 },
+        segments: [],
+        airline: AIRLINES.AS,
+      })
+    );
+    expect(plain).not.toContain("own count");
+    expect(plain).not.toContain("Named by tail:");
   });
 });
