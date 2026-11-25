@@ -111,6 +111,7 @@ export default function FleetPage({
   const marks: TailMarks = {
     pipeline,
     reported: new Map(data.sheetReported.map((r) => [r.TailNumber, r])),
+    fitting: new Map(data.sheetFitting.map((n) => [n.tail, n])),
   };
   const typeLinkByFamily = new Map(typeLinks.map((l) => [l.family, l]));
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
@@ -167,6 +168,7 @@ export default function FleetPage({
         progress={data.progress}
         tails={data.progressTails}
         movements={data.movements}
+        fitting={data.sheetFitting}
       />
       <OfficialAnchorsSection anchors={data.anchors} />
       <HangarFloor

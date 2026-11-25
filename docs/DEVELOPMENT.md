@@ -215,7 +215,7 @@ their own. One-shot CLI scripts call `initializeDatabase()` (open + migrate).
 
 ### Database Tables
 
-28 tables, all created by `setupTables` in `src/database/database.ts` (CLAUDE.md
+29 tables, all created by `setupTables` in `src/database/database.ts` (CLAUDE.md
 lists them by area). The ones most code touches:
 
 | Table | Purpose |
