@@ -34,6 +34,7 @@ import {
   byTypeSumBasis,
   countedNames,
   listed,
+  programmePartsText,
   splitByMethod,
   trackingMethod,
 } from "../airlines/published-count";
@@ -2076,6 +2077,9 @@ ${lines.join("\n")}`;
   // site with the wider count; both figures appear, each named, so an agent
   // quoting this never contradicts the site it points to.
   const programme = reader.getProgrammeHeadline();
+  // Over a by-type partner's aircraft the headline is two kinds of count, so
+  // it is said as its parts, with no share of the whole.
+  const headlineParts = programme && programmePartsText(cfg, programme);
   const ownLine = `${aircraftShare(starlinkPlanes.length, totalCount, inScope)} have Starlink WiFi`;
   const own = trackingMethod(cfg) === "type" ? airlineOwnCount(cfg.code) : null;
   const sum = trackingMethod(cfg) === "type" && !own ? airlineOwnTypeSum(cfg.code) : null;
@@ -2084,7 +2088,11 @@ ${lines.join("\n")}`;
     trackingMethod(cfg) === "type"
       ? `**Combined Fleet**: ${byTypeCount(starlinkPlanes.length, heldBackCount(cfg.code))}.${own ? `\n**The airline's own figure**: ${ownFigure(own)}` : sum ? `\n**Per-type counts on file**: ${typeSumLine(sum)}` : ""}`
       : programme
-        ? `**${programme.noun} (the site's headline)**: ${aircraftShare(programme.equipped, programme.total, inScope)} have Starlink WiFi\n**${cfg.shortName}-operated only**: ${ownLine}`
+        ? `**${programme.noun} (the site's headline)**: ${
+            headlineParts
+              ? `${programme.equipped} of ${programme.total} on the fleet list, in two parts: ${headlineParts}`
+              : `${aircraftShare(programme.equipped, programme.total, inScope)} have Starlink WiFi`
+          }\n**${cfg.shortName}-operated only**: ${ownLine}`
         : `**Combined Fleet**: ${ownLine}`,
     subfleetLines.join("\n"),
     familyLines.length > 0 ? `**By Aircraft Type**:\n${familyLines.join("\n")}` : null,

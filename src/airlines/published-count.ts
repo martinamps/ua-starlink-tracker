@@ -140,18 +140,29 @@ export function leftOutByType(split: SplitTotal): string | null {
   return `${listed(split.byType.map((b) => `${b.cfg.shortName}'s ${fmt(b.sum)}`))} on our fleet list ${one ? "is" : "are"} ${BY_TYPE_METHOD}`;
 }
 
+/** A programme headline that spans a by-type partner, as its two kinds. */
+export interface ProgrammeParts {
+  /** The airline's own aircraft, the only part counted on this site. */
+  own: { equipped: number; total: number };
+  /** "6 Alaska-operated aircraft counted on this site and 42 Hawaiian A321neo
+   * & A330 counted by aircraft type, not checked plane by plane" */
+  text: string;
+}
+
+type ProgrammeCount = Pick<ProgrammeHeadline, "equipped" | "total"> & {
+  partners: ReadonlyArray<{ label: string; equipped: number; total: number }>;
+};
+
 /**
- * A programme headline that spans a by-type partner, said as its parts: "6
- * Alaska-operated aircraft counted on this site and 42 Hawaiian A321neo & A330
- * counted by aircraft type, not checked plane by plane". The combined figure
- * is the scope the airline stated its target over, but only the first part
- * was counted, so a sentence that measures against it names both. Null when
- * no by-type partner adds to the figure.
+ * The combined figure is the scope the airline stated its target over, but
+ * only the airline's own part was counted, so every sentence that prints the
+ * figure names both parts and gives no share of the whole. Null when no
+ * by-type partner adds to the figure.
  */
-export function programmePartsText(
+export function programmeParts(
   cfg: AirlineConfig,
-  programme: ProgrammeHeadline
-): string | null {
+  programme: ProgrammeCount
+): ProgrammeParts | null {
   const partners = cfg.programmePartners?.partners ?? [];
   const slices = programme.partners.map((slice, i) => ({
     ...slice,
@@ -160,15 +171,56 @@ export function programmePartsText(
       trackingMethod(AIRLINES[partners[i].airline]) === "type",
   }));
   if (!slices.some((s) => s.byType && s.equipped > 0)) return null;
-  const own = programme.equipped - slices.reduce((sum, s) => sum + s.equipped, 0);
-  return listed([
-    `${fmt(own)} ${cfg.shortName}-operated aircraft counted on this site`,
-    ...slices
-      .filter((s) => s.equipped > 0)
-      .map(
-        (s) => `${fmt(s.equipped)} ${s.label} ${s.byType ? BY_TYPE_METHOD : "counted on this site"}`
-      ),
-  ]);
+  const own = {
+    equipped: programme.equipped - slices.reduce((sum, s) => sum + s.equipped, 0),
+    total: programme.total - slices.reduce((sum, s) => sum + s.total, 0),
+  };
+  return {
+    own,
+    text: listed([
+      `${fmt(own.equipped)} ${cfg.shortName}-operated aircraft counted on this site`,
+      ...slices
+        .filter((s) => s.equipped > 0)
+        .map(
+          (s) =>
+            `${fmt(s.equipped)} ${s.label} ${s.byType ? BY_TYPE_METHOD : "counted on this site"}`
+        ),
+    ]),
+  };
+}
+
+export function programmePartsText(cfg: AirlineConfig, programme: ProgrammeCount): string | null {
+  return programmeParts(cfg, programme)?.text ?? null;
+}
+
+/** programmeParts from the homepage's ContentStats, which carries the same
+ * headline under its own field names. */
+export function statsParts(
+  cfg: AirlineConfig,
+  stats: {
+    starlinkCount: number;
+    totalCount: number;
+    partners?: ReadonlyArray<{ label: string; starlink: number; total: number }>;
+  }
+): ProgrammeParts | null {
+  return programmeParts(cfg, {
+    equipped: stats.starlinkCount,
+    total: stats.totalCount,
+    partners: (stats.partners ?? []).map((p) => ({
+      label: p.label,
+      equipped: p.starlink,
+      total: p.total,
+    })),
+  });
+}
+
+/** Whether a partner slice of this airline's programme is known by aircraft
+ * type, by the slice's label ("Hawaiian A321neo & A330"). */
+export function partnerIsByType(cfg: AirlineConfig, label: string): boolean {
+  const partner = cfg.programmePartners?.partners.find((p) => p.label === label);
+  return Boolean(
+    partner && AIRLINES[partner.airline] && trackingMethod(AIRLINES[partner.airline]) === "type"
+  );
 }
 
 /** Beside a by-type airline's row count where a list holds both kinds of

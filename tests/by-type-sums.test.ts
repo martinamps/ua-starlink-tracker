@@ -11,6 +11,7 @@ import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { renderToStaticMarkup } from "react-dom/server";
 import { buildCardSpecs, buildShareCardSpecs } from "../scripts/generate-og-images";
 import {
   BY_TYPE_CARD_CAPTION,
@@ -21,6 +22,7 @@ import {
   byTypeSumSentence,
   leftOutByType,
   ownCountAsOf,
+  programmePartsText,
   publishedCount,
   splitByMethod,
   trackingMethod,
@@ -32,7 +34,9 @@ import {
   publicAirlines,
   siteForAirline,
 } from "../src/airlines/registry";
+import { RolloutPanel } from "../src/components/home/rollout";
 import { getDailyInstalls, reconcileTypeDeterministicFleets } from "../src/database/database";
+import { programmeHeadline } from "../src/database/roster";
 import { badgeSvgMarkup, badgeValue, createApp } from "../src/server/app";
 import { addFleet, addPlane, bodyOf, makeFreshDb, mcpTool, openSnapshot } from "./helpers";
 
@@ -343,9 +347,11 @@ describe("airlines counted by tail read as before", () => {
     (a) => trackingMethod(a) === "tail" && siteForAirline(a.code)
   );
   let app: App;
+  let snapshot: Database;
 
   beforeAll(() => {
-    app = createApp(openSnapshot());
+    snapshot = openSnapshot();
+    app = createApp(snapshot);
   });
 
   test("United and Alaska are the airlines this covers", () => {
@@ -377,15 +383,29 @@ describe("airlines counted by tail read as before", () => {
       const svg = (await bodyOf(app, "/badge.svg", host)).text;
       const value = svg.match(/<text[^>]*>([^<]*)<\/text>\s*<\/g>/)?.[1] ?? "";
       expect(value).toMatch(/^\d+ of \d+ aircraft$|^\d+ aircraft equipped$/);
-      expect(svg).toContain(`aria-label="${cfg.shortName} Starlink: ${value}"`);
-      expect(svg).toContain(`<title>${cfg.shortName} Starlink: ${value}</title>`);
+      // A headline over a by-type partner's aircraft (Alaska's, with
+      // Hawaiian's jets) keeps its figure and says its two parts apart.
+      const headline = programmeHeadline(snapshot, code);
+      const parts = headline && programmePartsText(cfg, headline);
+      const name = parts ? `${value}. That is ${parts.replace("&", "&amp;")}.` : value;
+      expect(svg).toContain(`aria-label="${cfg.shortName} Starlink: ${name}"`);
+      expect(svg).toContain(`<title>${cfg.shortName} Starlink: ${name}</title>`);
 
       const fleet = (await bodyOf(app, "/fleet", host)).text;
       const header = headerOf(fleet);
-      expect(header).toMatch(
-        /[\d,]+ of [\d,]+ aircraft \( ?\d+% ?\) have Starlink\.|We can name [\d,]+ of [\d,]+ aircraft \( ?\d+% ?\) with Starlink\./
-      );
-      expect(header).not.toContain("on our fleet list");
+      if (parts) {
+        expect(header).toMatch(
+          /[\d,]+ of [\d,]+ aircraft on our fleet list have Starlink\. That is /
+        );
+        expect(header).toContain(`${parts}.`);
+        expect(header.slice(0, header.indexOf(parts))).not.toMatch(/\d ?%/);
+        expect(header).toMatch(/Hawaiian A321neo & A330 [\d,]+ of [\d,]+, by type/);
+      } else {
+        expect(header).toMatch(
+          /[\d,]+ of [\d,]+ aircraft \( ?\d+% ?\) have Starlink\.|We can name [\d,]+ of [\d,]+ aircraft \( ?\d+% ?\) with Starlink\./
+        );
+        expect(header).not.toContain("on our fleet list");
+      }
       expect(fleet).not.toContain("Starlink by aircraft type, not checked plane by plane");
 
       const embed = (await bodyOf(app, "/embed", host)).text;
@@ -680,6 +700,152 @@ describe("no hub total adds a by-type sum to aircraft counted on this site", () 
       const at = said.findIndex((p) => p.startsWith("As of ") && p.endsWith("have Starlink."));
       expect(at).toBeGreaterThan(-1);
       expect(said[at + 1]).toMatch(new RegExp(`^That is ${PARTS.source}`));
+    });
+
+    // The same figure leads Alaska's whole site. Wherever it prints, its two
+    // parts are said apart, and it carries no share: only the first part was
+    // counted on this site.
+    describe("on Alaska's own site", () => {
+      const host = hostOf(AS);
+      const total = () => COUNTED_SEEDS.AS.equipped + COUNTED_SEEDS.AS.bare + sums.HA;
+      const figure = () => `${own + sums.HA} of ${total()}`;
+      const parts = () =>
+        `${own} ${AS.shortName}-operated aircraft counted on this site and ${sums.HA} Hawaiian A321neo & A330 ${BY_TYPE_METHOD}`;
+      let site: Array<{ path: string; said: string[] }>;
+      const saidAt = (path: string) => site.find((p) => p.path === path)?.said ?? [];
+
+      beforeAll(async () => {
+        site = (await sweep(app, host)).map((p) => ({ path: p.path, said: saidOn(p.body) }));
+      });
+
+      test("the seed's combined figure is no other figure on the site", () => {
+        expect(sums.HA).toBeGreaterThan(0);
+        expect(figure()).not.toBe(`${own} of ${COUNTED_SEEDS.AS.equipped + COUNTED_SEEDS.AS.bare}`);
+        expect(site.some((p) => p.said.some((s) => s.includes(figure())))).toBe(true);
+      });
+
+      test("no page gives a share beside the combined figure", () => {
+        const withShare = site.flatMap((p) =>
+          p.said
+            .filter((s) => s.includes(figure()) && /\d ?%/.test(s))
+            .map((s) => `${p.path}: ${s}`)
+        );
+        expect(withShare).toEqual([]);
+      });
+
+      test("every page that prints the combined figure names its two parts", () => {
+        const bare = site
+          .filter((p) => p.said.some((s) => s.includes(figure())))
+          .filter((p) => !p.said.some((s) => s.includes(parts())))
+          .map((p) => p.path);
+        expect(bare).toEqual([]);
+      });
+
+      test("the home page's count, its legend and its structured answer", () => {
+        const said = saidAt("/");
+        expect(said).toContain(`That is ${parts()}.`);
+        expect(said.some((s) => s.startsWith(`Hawaiian A321neo & A330: ${sums.HA} of `))).toBe(
+          true
+        );
+        expect(
+          said.some((s) => s.startsWith("Hawaiian A321neo & A330: ") && s.endsWith(", by type"))
+        ).toBe(true);
+        expect(said.some((s) => /^Regional E175s .* by type, of [\d,]+ aircraft$/.test(s))).toBe(
+          true
+        );
+        const answer = said.findIndex(
+          (s) => s.startsWith(`${figure()} `) && s.includes("have Starlink Wi-Fi")
+        );
+        expect(answer).toBeGreaterThan(-1);
+        expect(said[answer + 1]).toBe(`That is ${parts()}.`);
+      });
+
+      test("the search description states only the part counted on this site", () => {
+        const description = saidAt("/").find((s) => s.startsWith("Yes: ")) ?? "";
+        expect(description).toStartWith(
+          `Yes: ${own} of ${COUNTED_SEEDS.AS.equipped + COUNTED_SEEDS.AS.bare} ${AS.shortName}-operated planes have `
+        );
+        expect(description).not.toContain(figure());
+      });
+
+      test("the title keeps the figure and drops the share", async () => {
+        const title = (await bodyOf(app, "/", host)).text.match(/<title>([^<]*)/)?.[1] ?? "";
+        expect(title).toContain(figure());
+        expect(title).not.toContain("%");
+      });
+
+      test("the fleet page's heading, squares and citation line", () => {
+        const said = saidAt("/fleet");
+        expect(said).toContain(`${figure()} aircraft on our fleet list have Starlink.`);
+        expect(said).toContain(`That is ${parts()}.`);
+        expect(said).toContain(
+          `${sums.HA} Starlink, listed or by aircraft type, not checked plane by plane`
+        );
+        expect(said).toContain(`${own} Starlink`);
+        expect(said.some((s) => s.includes(`: ${parts()}, ${host}`))).toBe(true);
+      });
+
+      test("the badge keeps its figure, and its spoken name gives the parts", () => {
+        const svg = site.find((p) => p.path === "/badge.svg");
+        expect(svg?.said).toContain(`${figure()} aircraft`);
+        expect(svg?.said).toContain(`Alaska Starlink: ${figure()} aircraft.`);
+        expect(svg?.said).toContain(`That is ${parts()}.`);
+      });
+
+      test("llms.txt gives a sentence to copy that names the parts and no share", () => {
+        const cite = saidAt("/llms.txt").find((s) => s.includes("{n} of {total}")) ?? "";
+        expect(cite).toContain(`{b} Hawaiian A321neo & A330 ${BY_TYPE_METHOD}`);
+        expect(cite).not.toContain("{percent}");
+      });
+
+      test("the install pace chart's spoken summary names the parts", () => {
+        const summary = saidAt("/install-rate").findIndex((s) =>
+          /^Alaska planes and Hawaiian Airbus jets with Starlink since /.test(s)
+        );
+        expect(summary).toBeGreaterThan(-1);
+        expect(saidAt("/install-rate")[summary + 1]).toBe(`That is ${parts()}.`);
+      });
+
+      test("get_fleet_stats gives the headline as its parts, and the Alaska-only line as before", async () => {
+        const lines = (await mcpTool(app, host, "get_fleet_stats")).text.split("\n");
+        const headline = lines.find((l) => l.includes("(the site's headline)")) ?? "";
+        expect(headline).toContain(`${figure()} on the fleet list, in two parts: ${parts()}`);
+        expect(headline).not.toContain("%");
+        expect(lines.find((l) => l.includes("-operated only**"))).toMatch(
+          new RegExp(`: ${own} of \\d+ aircraft \\([\\d.]+%\\) have Starlink WiFi$`)
+        );
+      });
+
+      test("with Alaska's chart beside it, the panel still says the parts", () => {
+        const chart = {
+          connected: own + sums.HA + 2,
+          total: total(),
+          asOf: "2026-10-26",
+          sourceLabel: "Alaska's installation tracker",
+          url: "https://example.test/chart",
+          unnamed: [],
+          rosterDiff: [],
+        };
+        for (const leads of [true, false]) {
+          const html = renderToStaticMarkup(
+            RolloutPanel({
+              stats: {
+                starlinkCount: own + sums.HA,
+                totalCount: total(),
+                airlineCount: { ...chart, leads },
+                partners: [{ label: "Hawaiian A321neo & A330", starlink: sums.HA, total: sums.HA }],
+              },
+              segments: [],
+              airline: AS,
+            })
+          );
+          const said = decode(html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, " "));
+          expect(said).toContain(parts());
+          expect(said).not.toContain("by tail");
+          expect(said).not.toMatch(/\d ?%/);
+          expect(said).toContain(ownCountAsOf(chart));
+        }
+      });
     });
 
     test("an airline with no by-type partner keeps its one sentence", async () => {

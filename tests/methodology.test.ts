@@ -54,9 +54,13 @@ describe("homepage citable count", () => {
       const claim = trackingMethod(cfg) === "type" ? "are of" : "have\\s+Starlink";
       expect(stat).toMatch(
         new RegExp(
-          cfg.rollout.rosterIsProgramScope
-            ? `[\\d,]+ of [\\d,]+ [^.]+?\\d{1,3}%\\)? ${claim}`
-            : `[\\d,]+ [^.]+? aircraft (on our fleet list )?${claim}`
+          // A headline over a by-type partner's aircraft (Alaska's) gives its
+          // two parts in place of a share.
+          cfg.programmePartners
+            ? `[\\d,]+ of [\\d,]+ [^.%]+? ${claim}[^%]*? That is [\\d,]+ `
+            : cfg.rollout.rosterIsProgramScope
+              ? `[\\d,]+ of [\\d,]+ [^.]+?\\d{1,3}%\\)? ${claim}`
+              : `[\\d,]+ [^.]+? aircraft (on our fleet list )?${claim}`
         )
       );
       expect(plain(text)).toMatch(/Data last updated [A-Z][a-z]+ \d{1,2}, \d{4}/);

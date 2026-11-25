@@ -12,6 +12,9 @@ export interface CiteStat {
   /** Whose figure it is when not this site's ("Alaska's own count");
    * `lastUpdated` is then that figure's own date. */
   credit?: string;
+  /** The figure's two parts, where it adds a by-type partner's aircraft to
+   * the airline's own (programmePartsText). */
+  parts?: string | null;
 }
 
 /** One visible "Cite this" line for pages the press quotes numbers from.
@@ -33,7 +36,8 @@ export function CiteThis({ site, cite }: { site: SiteConfig; cite?: CiteStat | n
         Cite this
       </a>
       : {fmt(cite.starlink)} of {fmt(cite.total)} {cite.noun ?? `${cfg.name} aircraft`} (
-      {cite.credit ? `${cite.credit}, ` : ""}as of {date}), {site.canonicalHost}
+      {cite.credit ? `${cite.credit}, ` : ""}as of {date}){cite.parts ? `: ${cite.parts}` : ""},{" "}
+      {site.canonicalHost}
     </p>
   );
 }

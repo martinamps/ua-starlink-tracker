@@ -154,7 +154,9 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
       <p id={statId} className="mb-4 text-sm text-secondary">
         As of {a.asOfDate}, <StatInline n={stats.equipped} /> of <StatInline n={stats.total} />{" "}
         {a.noun}
-        {stats.rosterDisagrees ? "" : ` (${pct(stats.equipped, stats.total)})`} have Starlink.
+        {/* No share over a count that adds a by-type partner's aircraft. */}
+        {stats.rosterDisagrees || a.headlineParts ? "" : ` (${pct(stats.equipped, stats.total)})`}{" "}
+        have Starlink.
         {a.headlineParts && ` That is ${a.headlineParts}.`}
         {/* With a target, the pace sits in the bullets below; say it once. */}
         {stats.paceMonthly !== null && !gap && (
@@ -178,6 +180,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
             stats={stats}
             accent={a.accentColor}
             airlineName={a.name}
+            combined={a.headlineParts ? { noun: a.noun, parts: a.headlineParts } : null}
             milestones={rolloutTimeline(a.code)?.milestones}
           />
           {gap && (

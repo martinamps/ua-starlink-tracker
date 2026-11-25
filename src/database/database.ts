@@ -6519,8 +6519,9 @@ function computeFleetPageData(
     const rawProvider = normalizeWifiProvider(r.verified_wifi);
     // On a page over several airlines, an airline known by aircraft type keeps
     // out of the squares counted one by one, whatever a single row carries.
+    // The same on an airline's own page for a programme partner's aircraft.
     const byTypeAmongOthers =
-      !sole && AIRLINES[r.airline] && trackingMethod(AIRLINES[r.airline]) === "type";
+      r.airline !== sole && AIRLINES[r.airline] && trackingMethod(AIRLINES[r.airline]) === "type";
     const provider: WifiProvider = equipped
       ? // Every equipped tail lands in a Starlink bucket, so the squares always
         // add up to the count the header, the type bars and MCP report. Without

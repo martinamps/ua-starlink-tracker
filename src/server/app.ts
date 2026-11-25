@@ -46,6 +46,7 @@ import {
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
+  BY_TYPE_METHOD,
   byTypeBadgeValue,
   byTypeSumBasis,
   byTypeSumSentence,
@@ -53,11 +54,14 @@ import {
   countingMethodSentences,
   leadCount,
   leftOutByType,
+  listed,
   ownCountAsOf,
+  programmeParts,
   programmePartsText,
   rosterDiffSentence,
   splitByMethod,
   statedCount,
+  statsParts,
   trackingMethod,
   unnamedSentence,
 } from "../airlines/published-count";
@@ -2340,9 +2344,12 @@ ${bestLink}`;
   const programme = reader.getProgrammeHeadline();
   const counted = programme?.noun ?? `${name} aircraft`;
   const chart = programme?.airlineCount;
+  // Over a by-type partner's aircraft, the sentence to copy names both parts
+  // and gives no share of the whole.
+  const citeParts = programme && programmeParts(cfg, programme);
   // Two figures on one page: say which is whose, so neither is cited as the other.
   const twoCounts = chart
-    ? ` The element gives two figures. ${cfg.shortName}'s own count, from its by-type chart, is ${fmt(chart.connected)} of ${fmt(chart.total)} ${ownCountAsOf(chart)}: cite it as ${cfg.shortName}'s, with that date. The other, ${fmt(programme.equipped)} of ${fmt(programme.total)}, is the aircraft this site can name by tail: cite it as this site's, with the page's date. ${[unnamedSentence(cfg, chart), rosterDiffSentence(cfg, chart)].filter(Boolean).join(" ")}`
+    ? ` The element gives two figures. ${cfg.shortName}'s own count, from its by-type chart, is ${fmt(chart.connected)} of ${fmt(chart.total)} ${ownCountAsOf(chart)}: cite it as ${cfg.shortName}'s, with that date. The other, ${fmt(programme.equipped)} of ${fmt(programme.total)}, is ${citeParts ? `this site's own: ${citeParts.text}` : "the aircraft this site can name by tail"}: cite it as this site's, with the page's date. ${[unnamedSentence(cfg, chart), rosterDiffSentence(cfg, chart)].filter(Boolean).join(" ")}`
     : "";
   const verify = features.methodologyPage
     ? ` How those numbers are gathered and verified: https://${host}/methodology`
@@ -2356,7 +2363,11 @@ ${bestLink}`;
 The homepage element with HTML id \`starlink-stat\` gives a sum by aircraft type, not a count of installs: how many ${counted} on this site's fleet list are of ${byTypeSumBasis(cfg.code)}. The page's "Data last updated" line dates it. Cite it as "As of {date}, {n} ${counted} on the tracker's fleet list are of ${byTypeSumBasis(cfg.code)}, counted by aircraft type", never as "{n} aircraft have Starlink". It is regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${verify}`
       : `## Citing the headline number
 
-The homepage element with HTML id \`starlink-stat\` gives the count: how many ${counted} have Starlink, out of how many, and the share. The page's "Data last updated" line dates it, and the homepage FAQPage JSON-LD states the same figures as one dated sentence. Cite ${chart ? "this site's count" : "them"} as "As of {date}, {n} of {total} ${counted} ({percent}%) have Starlink." Both are regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${twoCounts}${verify}`;
+The homepage element with HTML id \`starlink-stat\` gives the count: how many ${counted} have Starlink, out of how many${citeParts ? ", and the count's two parts" : ", and the share"}. The page's "Data last updated" line dates it, and the homepage FAQPage JSON-LD states the same figures as one dated sentence. Cite ${chart ? "this site's count" : "them"} as ${
+          citeParts
+            ? `"As of {date}, {n} of {total} ${counted} on the tracker's fleet list have Starlink: {a} ${cfg.shortName}-operated aircraft counted on the site and {b} ${listed((cfg.programmePartners?.partners ?? []).map((p) => p.label))} ${BY_TYPE_METHOD}," never as one count with a share.`
+            : `"As of {date}, {n} of {total} ${counted} ({percent}%) have Starlink."`
+        } Both are regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${twoCounts}${verify}`;
 
   // A week out, so agents copying the example never query a date in the past.
   const exampleDay = new Date(Date.now() + 7 * 86400_000);
@@ -2901,6 +2912,8 @@ const badgeSvg: Handler = ({ site, reader, tenant }) => {
   // spoken name, which has the room the picture lacks.
   const split = cfg ? null : splitByMethod(reader.getPerAirlineStats());
   const leftOut = split && leftOutByType(split);
+  // The figure stays; its spoken name says the two parts it is made of.
+  const parts = cfg && programme ? programmePartsText(cfg, programme) : null;
   const value = byType
     ? byTypeBadgeValue(equipped)
     : split && leftOut
@@ -2915,7 +2928,9 @@ const badgeSvg: Handler = ({ site, reader, tenant }) => {
         ? `${byTypeSumSentence(byType, equipped)}.`
         : split && leftOut
           ? `${label}: ${value}, ${countedNames(split)} only. ${leftOut}.`
-          : undefined
+          : parts
+            ? `${label}: ${value}. That is ${parts}.`
+            : undefined
     ),
     "image/svg+xml; charset=utf-8",
     {
@@ -3948,6 +3963,8 @@ function fleetItemListJsonLd(
 
 const fleetPage: Handler = (ctx) => {
   const data = ctx.reader.getProgrammeFleetPageData();
+  const cfg = tenantConfig(ctx.tenant);
+  const programme = ctx.reader.getProgrammeHeadline();
   const typeLinks: FleetTypeLink[] = servedAircraftPages(ctx).map((d) => ({
     family: d.family,
     slug: d.slug,
@@ -3965,7 +3982,8 @@ const fleetPage: Handler = (ctx) => {
       data,
       shareCard: resolveShareCard(ctx.site.scope),
       cite: citeStat(ctx),
-      airlineCount: ctx.reader.getProgrammeHeadline()?.airlineCount ?? null,
+      airlineCount: programme?.airlineCount ?? null,
+      countParts: cfg && programme ? programmePartsText(cfg, programme) : null,
       typeLinks,
       installRateHref:
         ctx.site.features.installRatePage && hasInstallRate(ctx) ? "/install-rate" : null,
@@ -4642,6 +4660,9 @@ function citeStat(ctx: RequestContext): CiteStat | null {
   });
   const cfg = tenantConfig(ctx.tenant);
   return {
+    // Our own figure over a by-type partner's aircraft carries its parts; the
+    // airline's chart figure is cited whole, as the airline's.
+    parts: !lead.own && cfg && programme ? programmePartsText(cfg, programme) : null,
     starlink: lead.n,
     total: lead.total,
     noun: programme?.noun,
@@ -4709,7 +4730,9 @@ function programmeScopeNote(
   const named = `${fmt(p.equipped)} of ${fmt(p.total)} (${pctLabel(p.equipped, p.total)})`;
   // "As Alaska counts" once stood beside this figure, which Alaska's chart
   // doesn't give: the figure is ours over Alaska's scope, and says so.
-  const scope = `${cfg.shortName}'s count is ${cfg.shortName}-operated aircraft only. Adding ${with_} aircraft, the fleets ${cfg.shortName}'s own chart covers, we can name ${named}.`;
+  // Over a by-type partner's aircraft: the parts, and no share of the whole.
+  const parts = programmePartsText(cfg, p);
+  const scope = `${cfg.shortName}'s count is ${cfg.shortName}-operated aircraft only. Adding ${with_} aircraft, the fleets ${cfg.shortName}'s own chart covers, ${parts ? `our fleet list has ${fmt(p.equipped)} of ${fmt(p.total)}: ${parts}` : `we can name ${named}`}.`;
   const chart = p.airlineCount;
   return chart
     ? `${scope} ${cfg.shortName}'s chart counts ${fmt(chart.connected)} of ${fmt(chart.total)} ${ownCountAsOf(chart)}.`
@@ -5147,11 +5170,14 @@ function homeMeta(
   const headline = cfg && homeHeadline(cfg, stats.starlinkCount, stats.totalCount);
   if (!cfg || !headline) return null;
   const { name: lead, count, share } = headline;
+  // Over a by-type partner's aircraft the count keeps its place but carries
+  // no share, and the snippet states only the part counted on this site.
+  const parts = statsParts(cfg, stats);
   const siteTitle =
     [
-      `${lead}: ${count} Planes Have Starlink (${share})`,
+      ...(parts ? [] : [`${lead}: ${count} Planes Have Starlink (${share})`]),
       `${lead}: ${count} Planes Have Starlink`,
-      `${lead}: ${count} Planes (${share})`,
+      ...(parts ? [] : [`${lead}: ${count} Planes (${share})`]),
     ].find((t) => t.length <= TITLE_MAX) ?? `${lead}: ${count}`;
   const { own } = leadCount(stats);
   if (own) {
@@ -5159,7 +5185,7 @@ function homeMeta(
     // named count follows so the snippet carries both.
     return {
       siteTitle,
-      siteDescription: `Yes: ${fmt(own.connected)} of ${fmt(own.total)} ${stats.noun ?? `${cfg.shortName} planes`} have Starlink Wi-Fi, by ${cfg.shortName}'s own count ${ownCountAsOf(own)}. We name ${fmt(stats.starlinkCount)} by tail.`,
+      siteDescription: `Yes: ${fmt(own.connected)} of ${fmt(own.total)} ${stats.noun ?? `${cfg.shortName} planes`} have Starlink Wi-Fi, by ${cfg.shortName}'s own count ${ownCountAsOf(own)}. We name ${parts ? `${fmt(parts.own.equipped)} ${cfg.shortName}-operated aircraft` : fmt(stats.starlinkCount)} by tail.`,
     };
   }
   const express = stats.fleetStats?.express;
@@ -5170,7 +5196,7 @@ function homeMeta(
   // "free" only where every passenger gets it free; a members-only offer
   // (freeForMembersOf) is the FAQ's to state, with its condition.
   const answer = (clause: string) =>
-    `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${clause}.`;
+    `Yes: ${parts ? `${fmt(parts.own.equipped)} of ${fmt(parts.own.total)} ${cfg.shortName}-operated planes` : `${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share})`} have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${clause}.`;
   if (cfg.code === "UA") {
     // United's own tracker answers "within three days of departure" (its
     // 2026-10-15 release), so the snippet says what we give at booking time.
