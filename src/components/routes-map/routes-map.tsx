@@ -84,16 +84,7 @@ function TapChooser({ airports }: { airports: number }) {
       className="js-map-chooser absolute inset-x-2 z-30 m-0 w-auto rounded-lg border border-subtle bg-surface-elevated p-3 text-primary shadow-xl shadow-black/40 sm:hidden"
       aria-label="Airports near your tap"
     >
-      <div className="flex items-center justify-between gap-3">
-        <Eyebrow className="">Airports near your tap</Eyebrow>
-        <button
-          type="button"
-          className="js-map-chooser-close -m-3 p-3 text-sm text-secondary hover:text-accent"
-          aria-label="Close"
-        >
-          ✕
-        </button>
-      </div>
+      <Eyebrow className="pr-8">Airports near your tap</Eyebrow>
       <div className="js-map-chooser-list mt-2 grid grid-cols-4 gap-2" />
       <p className="js-map-chooser-more mt-2 text-xs text-muted" hidden />
       <button
@@ -101,6 +92,16 @@ function TapChooser({ airports }: { airports: number }) {
         className="js-map-chooser-all mt-1 py-2 text-xs text-accent hover:underline"
       >
         {`Not here? See all ${fmt(airports)} airports`}
+      </button>
+      {/* Last in the markup, still drawn in the top corner: focus opens on
+          the first airport, and Tab from there must reach Close before it
+          leaves the chooser. */}
+      <button
+        type="button"
+        className="js-map-chooser-close absolute right-0 top-0 p-3 text-sm text-secondary hover:text-accent"
+        aria-label="Close"
+      >
+        ✕
       </button>
     </dialog>
   );

@@ -38,7 +38,10 @@ function wireSearch(): void {
 
   const paintButtons = () => {
     for (const b of buttons) {
-      b.className = `${FILTER_BUTTON} ${b.dataset.filter === filter ? FILTER_ACTIVE : FILTER_INACTIVE}`;
+      const on = b.dataset.filter === filter;
+      b.className = `${FILTER_BUTTON} ${on ? FILTER_ACTIVE : FILTER_INACTIVE}`;
+      // The chosen filter is otherwise told by colour alone.
+      b.setAttribute("aria-pressed", String(on));
     }
   };
 

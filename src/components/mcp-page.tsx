@@ -173,7 +173,7 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
               </p>
               <p>
                 2. Paste{" "}
-                <code className="font-mono text-xs text-accent bg-base px-1.5 py-0.5 rounded">
+                <code className="font-mono text-xs text-accent bg-base px-1.5 py-0.5 rounded break-all">
                   {mcpUrl}
                 </code>{" "}
                 and name it "Starlink Tracker"

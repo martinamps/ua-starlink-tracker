@@ -91,6 +91,10 @@ export function TailGrid({
           href={`${anchorBase}#t-${t.tail}`}
           title={tailTitle(t, marks)}
           aria-label={tailTitle(t, marks)}
+          // On /fleet the registry below links every tail again, so the
+          // squares stay out of the tab order: a keyboard would otherwise
+          // stop on each of the fleet's aircraft twice.
+          tabIndex={anchorBase === "" ? -1 : undefined}
           className={`${WIFI_CLASS[t.provider]}${markCellClass(marks, t.tail)} ${cell} rounded-[1px] hover:scale-150 transition-transform`}
         />
       ))}
@@ -315,7 +319,7 @@ export function TailRegistry({
       </p>
       <ProviderLegend counts={counts} labels={labels} className="mb-4" />
       <div
-        className="tail-registry bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[1.7] columns-[20ch] gap-x-3"
+        className="tail-registry bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[2] columns-[20ch] gap-x-3"
         style={{ "--tail-rows": allTails.length } as CSSProperties}
       >
         {allTails.map((t) => {
