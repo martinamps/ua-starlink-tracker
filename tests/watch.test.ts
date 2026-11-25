@@ -13,6 +13,7 @@ import { archivePastDepartures, updateFlights } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import {
   type WatchIcsInput,
+  buildFlownWatchIcs,
   buildWatchIcs,
   escapeIcsText,
   foldIcsLine,
@@ -219,11 +220,43 @@ describe("/cal/{fn}/{date}.ics", () => {
     ["not a date", "/cal/UA100/tomorrow.ics"],
     ["impossible date", "/cal/UA100/2026-02-30.ics"],
     ["too far out", `/cal/UA100/${isoDaysFromNow(400)}.ics`],
-    ["too far past", `/cal/UA100/${isoDaysFromNow(-5)}.ics`],
+    ["too far past", `/cal/UA100/${isoDaysFromNow(-400)}.ics`],
+    ["past date, flight number we have never seen", `/cal/UA4242/${isoDaysFromNow(-5)}.ics`],
+    ["past impossible date", "/cal/UA100/2026-02-30.ics"],
     ["extra segment", `/cal/UA100/${isoDaysFromNow(5)}/x`],
   ])("404 on %s", async (_label, path) => {
     const res = await app.dispatch(req(path, UA_HOST));
     expect(res.status).toBe(404);
+  });
+
+  test("a known flight on a past date: 200 final calendar that says we hold no record", async () => {
+    const date = isoDaysFromNow(-40);
+    const res = await app.dispatch(req(`/cal/UA100/${date}.ics`, UA_HOST));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toStartWith("text/calendar");
+    expect(res.headers.get("x-robots-tag")).toBe("noindex");
+    expect(res.headers.get("cache-control")).toContain("max-age=86400");
+    const body = await res.text();
+    expectWellFormedIcs(body);
+    const live = await bodyOf(app, `/cal/UA100/${isoDaysFromNow(20)}.ics`, UA_HOST);
+    expect(prop(body, "UID")).toBe(prop(live.text, "UID")?.replace(isoDaysFromNow(20), date));
+    expect(prop(body, "SUMMARY")).toBe("Date passed: UA100 · no aircraft record");
+    expect(icsLines(body).join("")).toContain("We hold no record of the aircraft");
+    expect(icsLines(body)).toContain("REFRESH-INTERVAL;VALUE=DURATION:P7D");
+    expect(icsLines(body)).toContain(`DTSTART;VALUE=DATE:${date.replace(/-/g, "")}`);
+  });
+
+  test("the final calendar's link resolves", async () => {
+    const body = (await bodyOf(app, `/cal/UA100/${isoDaysFromNow(-40)}.ics`, UA_HOST)).text;
+    const url = new URL(prop(body, "URL") ?? "");
+    expect(url.host).toBe(UA_HOST);
+    expect((await app.dispatch(req(url.pathname + url.search, UA_HOST))).status).toBe(200);
+  });
+
+  test("hub and Qatar hosts 404 on past dates too", async () => {
+    const date = isoDaysFromNow(-40);
+    expect((await app.dispatch(req(`/cal/UA100/${date}.ics`, HUB_HOST))).status).toBe(404);
+    expect((await app.dispatch(req(`/cal/QR1/${date}.ics`, QR_HOST))).status).toBe(404);
   });
 
   test("hub and Qatar hosts 404", async () => {
@@ -380,6 +413,40 @@ describe("assignment log and same-day alternatives (synthetic)", () => {
     expect(db.query("SELECT starlink FROM flight_assignment_log").get()).toEqual({ starlink: 0 });
   });
 
+  test("pruned rows move to the flown record, which trims at a year", () => {
+    const db = makeSyntheticDb();
+    const day = (n: number) => isoDaysFromNow(n);
+    const ins = db.query(
+      `INSERT INTO flight_assignment_log (airline, flight_number, dep_date, departure_airport, arrival_airport, tail_number, starlink, departure_time, arrival_time, first_seen, last_seen)
+       VALUES ('UA', ?, ?, 'SFO', 'EWR', 'N44444', 1, 100, 200, 1, 2)`
+    );
+    ins.run("UA1", day(-3));
+    ins.run("UA1", day(-30));
+    ins.run("UA1", day(-500));
+    archivePastDepartures(db);
+    const live = db.query("SELECT dep_date FROM flight_assignment_log").all();
+    expect(live).toEqual([{ dep_date: day(-3) }]);
+    const flown = db.query("SELECT * FROM flown_assignments").all();
+    expect(flown).toEqual([
+      {
+        airline: "UA",
+        flight_number: "UA1",
+        dep_date: day(-30),
+        departure_airport: "SFO",
+        arrival_airport: "EWR",
+        tail_number: "N44444",
+        starlink: 1,
+        departure_time: 100,
+        arrival_time: 200,
+        first_seen: 1,
+        last_seen: 2,
+      },
+    ]);
+    // A second pass neither duplicates nor drops it.
+    archivePastDepartures(db);
+    expect(db.query("SELECT COUNT(*) AS n FROM flown_assignments").get()).toEqual({ n: 1 });
+  });
+
   test("rows older than the retention window are pruned by the archive pass", () => {
     const db = makeSyntheticDb();
     addPlane(db, "N44444", "Starlink");
@@ -528,5 +595,132 @@ describe("feed agrees with check-flight without its own FR24 call (synthetic)", 
       `${new Date(denDep * 1000).toISOString().slice(0, 19).replace(/[-:]/g, "")}Z`
     );
     expect(icsLines(ics.text).join("")).not.toContain("No aircraft assigned yet");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flown flights: the final calendar (synthetic)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("a past-dated feed answers from the stored record alone (synthetic)", () => {
+  const dep = (date: string) => Math.floor(Date.parse(`${date}T19:00:00Z`) / 1000);
+  const logRow = (
+    db: ReturnType<typeof makeSyntheticDb>,
+    table: "flight_assignment_log" | "flown_assignments",
+    date: string,
+    tail: string,
+    starlink: number | null,
+    seen: { first: number; last: number },
+    fn = "UA123"
+  ) =>
+    db
+      .query(
+        `INSERT INTO ${table} (airline, flight_number, dep_date, departure_airport, arrival_airport, tail_number, starlink, departure_time, arrival_time, first_seen, last_seen)
+         VALUES ('UA', ?, ?, 'SFO', 'EWR', ?, ?, ?, ?, ?, ?)`
+      )
+      .run(fn, date, tail, starlink, dep(date), dep(date) + 5 * 3600, seen.first, seen.last);
+
+  // No fetcher is installed: a live lookup on this path would throw the test.
+  beforeAll(() =>
+    setAssignmentFetcher(async () => {
+      throw new Error("a past-dated feed must not look anything up");
+    })
+  );
+  afterAll(() => setAssignmentFetcher(null));
+
+  test("three days past, still in the log: flown, with the aircraft and its stored flag", async () => {
+    const db = makeSyntheticDb();
+    const date = isoDaysFromNow(-3);
+    logRow(db, "flight_assignment_log", date, "N11111", 1, {
+      first: dep(date) - 90000,
+      last: dep(date),
+    });
+    const { status, text: body } = await bodyOf(createApp(db), `/cal/UA123/${date}.ics`, UA_HOST);
+    expect(status).toBe(200);
+    expectWellFormedIcs(body);
+    expect(prop(body, "UID")).toBe(`UA123-${date}@${UA_HOST}`);
+    expect(prop(body, "SUMMARY")).toBe("Flown: UA123 SFO→EWR · Starlink ✅ N11111");
+    expect(prop(body, "DTSTART")).toMatch(/^\d{8}T190000Z$/);
+    expect(icsLines(body).join("")).toContain("Last aircraft we saw assigned: N11111");
+    expect(icsLines(body)).toContain("X-PUBLISHED-TTL:P7D");
+  });
+
+  test("the stored flag is what counts, not today's fleet listing", async () => {
+    const db = makeSyntheticDb();
+    const date = isoDaysFromNow(-60);
+    // Listed with Starlink today; the row stored at the time says it had none.
+    addPlane(db, "N22222", "Starlink");
+    logRow(db, "flown_assignments", date, "N22222", 0, { first: 10, last: 20 });
+    const { status, text: body } = await bodyOf(createApp(db), `/cal/UA123/${date}.ics`, UA_HOST);
+    expect(status).toBe(200);
+    expect(prop(body, "SUMMARY")).toBe("Flown: UA123 · No Starlink (N22222)");
+    expect(icsLines(body).join("")).toContain("it was not a Starlink aircraft at the time");
+  });
+
+  test("after a swap the last aircraft seen is the one named, and the history lists both", async () => {
+    const db = makeSyntheticDb();
+    const date = isoDaysFromNow(-60);
+    logRow(db, "flown_assignments", date, "N11111", 1, { first: 10, last: 500 });
+    logRow(db, "flown_assignments", date, "N33333", null, { first: 600, last: 900 });
+    const body = (await bodyOf(createApp(db), `/cal/UA123/${date}.ics`, UA_HOST)).text;
+    expect(prop(body, "SUMMARY")).toBe("Flown: UA123 · N33333\\, Starlink not recorded");
+    const flat = icsLines(body).join("");
+    expect(flat).toContain("N11111 first seen assigned");
+    expect(flat).toContain("N33333 first seen assigned");
+    expect(flat).toContain("we stored no Starlink status for it");
+  });
+
+  test("a known number with no row for the date: 200 and no claim; an unknown number: 404", async () => {
+    const db = makeSyntheticDb();
+    const date = isoDaysFromNow(-60);
+    logRow(db, "flown_assignments", isoDaysFromNow(-90), "N11111", 1, { first: 10, last: 20 });
+    const app = createApp(db);
+    const known = await bodyOf(app, `/cal/UA123/${date}.ics`, UA_HOST);
+    expect(known.status).toBe(200);
+    expect(prop(known.text, "SUMMARY")).toBe("Date passed: UA123 · no aircraft record");
+    expect(known.text).not.toContain("N11111");
+    expect((await app.dispatch(req(`/cal/UA124/${date}.ics`, UA_HOST))).status).toBe(404);
+    // Another airline's row for the same digits does not make the number known here.
+    expect(
+      (await app.dispatch(req(`/cal/AS123/${date}.ics`, "alaskastarlinktracker.com"))).status
+    ).toBe(404);
+  });
+
+  test("the final SEQUENCE and LAST-MODIFIED outrank anything the live feed sent", () => {
+    const row = {
+      airline: "UA",
+      flight_number: "UA123",
+      dep_date: "2026-10-01",
+      departure_airport: "SFO",
+      arrival_airport: "EWR",
+      tail_number: "N37502",
+      starlink: 1,
+      departure_time: 1_790_870_400,
+      arrival_time: 1_790_890_000,
+      first_seen: 1_790_700_000,
+      last_seen: 1_790_870_000,
+    };
+    const input = { canonicalHost: UA_HOST, fn: "UA123", date: "2026-10-01" };
+    const live = buildWatchIcs({
+      ...input,
+      verdict: { state: "yes", tail: "N37502", aircraft: null, confidence: "verified" },
+      history: [row],
+      alternatives: [],
+      dep: "SFO",
+      arr: "EWR",
+      depUnix: row.departure_time,
+      arrUnix: row.arrival_time,
+      now: 1_790_950_000,
+    });
+    const flownA = buildFlownWatchIcs({ ...input, history: [row], now: 1_791_200_000 });
+    const flownB = buildFlownWatchIcs({ ...input, history: [row], now: 1_795_000_000 });
+    expectWellFormedIcs(flownA);
+    expect(prop(flownA, "UID")).toBe(prop(live, "UID"));
+    expect(prop(flownA, "DTSTART")).toBe(prop(live, "DTSTART"));
+    expect(Number(prop(flownA, "SEQUENCE"))).toBeGreaterThan(Number(prop(live, "SEQUENCE")));
+    expect(prop(flownA, "LAST-MODIFIED")! > prop(live, "LAST-MODIFIED")!).toBe(true);
+    // Only DTSTAMP moves between polls of a final calendar.
+    const stable = (ics: string) => icsLines(ics).filter((l) => !l.startsWith("DTSTAMP:"));
+    expect(stable(flownB)).toEqual(stable(flownA));
   });
 });

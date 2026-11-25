@@ -215,7 +215,7 @@ their own. One-shot CLI scripts call `initializeDatabase()` (open + migrate).
 
 ### Database Tables
 
-27 tables, all created by `setupTables` in `src/database/database.ts` (CLAUDE.md
+28 tables, all created by `setupTables` in `src/database/database.ts` (CLAUDE.md
 lists them by area). The ones most code touches:
 
 | Table | Purpose |
@@ -225,6 +225,7 @@ lists them by area). The ones most code touches:
 | `upcoming_flights` | Cached flight schedules |
 | `starlink_verification_log` | Audit trail of all verification attempts |
 | `departure_log` / `flight_assignment_log` | Past departures and tail assignments |
+| `flown_assignments` | Assignment rows over a week old, kept a year for past-dated calendar feeds |
 | `flight_routes` | Accumulated flight-number → route pairs |
 | `meta` | Key-value store for stats (keys namespaced `AIRLINE:key`) |
 | `fleet_guide_tails` | Per-tail marks from a community fleet guide (AF) |

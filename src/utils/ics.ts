@@ -35,7 +35,14 @@ export type WatchVerdict =
   | { state: "none"; message: string | null };
 
 /** Bounded tag for watch.feed_fetch. */
-export type WatchFeedState = "prediction" | "yes" | "no" | "swap" | "none";
+export type WatchFeedState =
+  | "prediction"
+  | "yes"
+  | "no"
+  | "swap"
+  | "none"
+  | "flown"
+  | "flown_unknown";
 
 export interface WatchIcsInput {
   canonicalHost: string;
@@ -257,19 +264,30 @@ export function foldIcsLine(line: string): string {
   return out.join("\r\n");
 }
 
-export function buildWatchIcs(input: WatchIcsInput): string {
-  const { canonicalHost, fn, date, history, depUnix, arrUnix, now } = input;
-  const tails = legTails(history, input.dep);
-  const lastModified = history.reduce((m, h) => Math.max(m, h.first_seen), 0) || now;
-  const url = watchPermalink(canonicalHost, fn, date);
+interface CalendarParts {
+  canonicalHost: string;
+  fn: string;
+  date: string;
+  /** RFC 5545 DURATION a client should wait between polls. */
+  refresh: string;
+  now: number;
+  depUnix: number | null;
+  arrUnix: number | null;
+  lastModified: number;
+  sequence: number;
+  summary: string;
+  description: string[];
+  url: string;
+}
 
+function renderCalendar(c: CalendarParts): string {
   const timing =
-    depUnix !== null
+    c.depUnix !== null
       ? [
-          `DTSTART:${icsUtc(depUnix)}`,
-          ...(arrUnix !== null && arrUnix > depUnix ? [`DTEND:${icsUtc(arrUnix)}`] : []),
+          `DTSTART:${icsUtc(c.depUnix)}`,
+          ...(c.arrUnix !== null && c.arrUnix > c.depUnix ? [`DTEND:${icsUtc(c.arrUnix)}`] : []),
         ]
-      : [`DTSTART;VALUE=DATE:${icsDate(date)}`, `DTEND;VALUE=DATE:${icsDate(nextDay(date))}`];
+      : [`DTSTART;VALUE=DATE:${icsDate(c.date)}`, `DTEND;VALUE=DATE:${icsDate(nextDay(c.date))}`];
 
   const lines = [
     "BEGIN:VCALENDAR",
@@ -277,21 +295,164 @@ export function buildWatchIcs(input: WatchIcsInput): string {
     "PRODID:-//unitedstarlinktracker//watch//EN",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
-    `X-WR-CALNAME:${escapeIcsText(`Starlink Watch ${fn}`)}`,
-    "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
-    "X-PUBLISHED-TTL:PT1H",
+    `X-WR-CALNAME:${escapeIcsText(`Starlink Watch ${c.fn}`)}`,
+    `REFRESH-INTERVAL;VALUE=DURATION:${c.refresh}`,
+    `X-PUBLISHED-TTL:${c.refresh}`,
     "BEGIN:VEVENT",
-    `UID:${fn}-${date}@${canonicalHost}`,
-    `DTSTAMP:${icsUtc(now)}`,
+    `UID:${c.fn}-${c.date}@${c.canonicalHost}`,
+    `DTSTAMP:${icsUtc(c.now)}`,
     ...timing,
-    `LAST-MODIFIED:${icsUtc(lastModified)}`,
-    `SEQUENCE:${tails.length}`,
-    `SUMMARY:${escapeIcsText(watchSummary(input))}`,
-    `DESCRIPTION:${escapeIcsText(watchDescription(input).join("\n"))}`,
-    `URL:${url}`,
+    `LAST-MODIFIED:${icsUtc(c.lastModified)}`,
+    `SEQUENCE:${c.sequence}`,
+    `SUMMARY:${escapeIcsText(c.summary)}`,
+    `DESCRIPTION:${escapeIcsText(c.description.join("\n"))}`,
+    `URL:${c.url}`,
     "TRANSP:TRANSPARENT",
     "END:VEVENT",
     "END:VCALENDAR",
   ];
   return `${lines.map(foldIcsLine).join("\r\n")}\r\n`;
+}
+
+export function buildWatchIcs(input: WatchIcsInput): string {
+  const { canonicalHost, fn, date, history, depUnix, arrUnix, now } = input;
+  return renderCalendar({
+    canonicalHost,
+    fn,
+    date,
+    refresh: "PT1H",
+    now,
+    depUnix,
+    arrUnix,
+    lastModified: history.reduce((m, h) => Math.max(m, h.first_seen), 0) || now,
+    sequence: legTails(history, input.dep).length,
+    summary: watchSummary(input),
+    description: watchDescription(input),
+    url: watchPermalink(canonicalHost, fn, date),
+  });
+}
+
+// ─── A flight whose date has passed ──────────────────────────────────────────
+
+export interface FlownWatchInput {
+  canonicalHost: string;
+  fn: string;
+  date: string;
+  /** Our stored assignment rows for the flight's local date; may be empty. */
+  history: readonly AssignmentLogRow[];
+  now: number;
+}
+
+/** Nothing about a flown flight changes, so apps are asked to poll weekly. */
+const FLOWN_REFRESH = "P7D";
+
+/**
+ * A client keeps the higher SEQUENCE of an event it already holds. The live
+ * feed counts tails, so the final version starts far above any count.
+ */
+const FLOWN_SEQUENCE_BASE = 1000;
+
+/**
+ * The record of a flown flight: on its first leg, the aircraft we last saw
+ * assigned, with the Starlink flag stored beside it at the time. Nothing here
+ * reads today's fleet tables, so a later install never rewrites the past.
+ */
+export function flownRecord(history: readonly AssignmentLogRow[]): AssignmentLogRow | null {
+  const first = [...history].sort(
+    (a, b) =>
+      (a.departure_time ?? Number.POSITIVE_INFINITY) -
+      (b.departure_time ?? Number.POSITIVE_INFINITY)
+  )[0];
+  if (!first) return null;
+  return history
+    .filter((h) => h.departure_airport === first.departure_airport)
+    .reduce((best, h) =>
+      h.last_seen > best.last_seen ||
+      (h.last_seen === best.last_seen && h.first_seen > best.first_seen)
+        ? h
+        : best
+    );
+}
+
+export function flownFeedState(history: readonly AssignmentLogRow[]): WatchFeedState {
+  return flownRecord(history) ? "flown" : "flown_unknown";
+}
+
+export function flownSummary(fn: string, record: AssignmentLogRow | null): string {
+  if (!record) return `Date passed: ${fn} · no aircraft record`;
+  const { tail_number: tail, departure_airport: dep, arrival_airport: arr } = record;
+  if (record.starlink === 1) {
+    const route = arr ? ` ${toIata(dep)}→${toIata(arr)}` : "";
+    return `Flown: ${fn}${route} · Starlink ✅ ${tail}`;
+  }
+  return record.starlink === 0
+    ? `Flown: ${fn} · No Starlink (${tail})`
+    : `Flown: ${fn} · ${tail}, Starlink not recorded`;
+}
+
+export function flownDescription(input: FlownWatchInput): string[] {
+  const { fn, history, canonicalHost } = input;
+  const record = flownRecord(history);
+  const lines: string[] = [];
+  if (!record) {
+    lines.push(
+      "This flight's date has passed.",
+      "We hold no record of the aircraft that flew it, so we can't say whether it had Starlink."
+    );
+  } else {
+    const had =
+      record.starlink === 1
+        ? "it was listed with Starlink at the time"
+        : record.starlink === 0
+          ? "it was not a Starlink aircraft at the time"
+          : "we stored no Starlink status for it";
+    lines.push(
+      "This flight's date has passed.",
+      `Last aircraft we saw assigned: ${record.tail_number}; ${had}.`
+    );
+    const legRows = history.filter((h) => h.departure_airport === record.departure_airport);
+    lines.push("", "Assignment history:");
+    for (const r of legRows) {
+      lines.push(
+        `${r.tail_number} first seen assigned ${formatLocal(r.first_seen, record.departure_airport)}`
+      );
+    }
+  }
+  lines.push(
+    "",
+    "This calendar is final and no longer changes; the subscription can be removed.",
+    flownPermalink(canonicalHost, fn)
+  );
+  return lines;
+}
+
+/** The dated check page only says the date has passed; the undated one stays useful. */
+function flownPermalink(canonicalHost: string, fn: string): string {
+  return `https://${canonicalHost}/check-flight/${fn}?utm_source=cal`;
+}
+
+/**
+ * The final calendar of a past flight: the same UID as the live feed, so a
+ * calendar app updates the event it holds instead of adding a second one.
+ */
+export function buildFlownWatchIcs(input: FlownWatchInput): string {
+  const { canonicalHost, fn, date, history, now } = input;
+  const record = flownRecord(history);
+  const legTailCount = record ? legTails(history, record.departure_airport).length : 0;
+  return renderCalendar({
+    canonicalHost,
+    fn,
+    date,
+    refresh: FLOWN_REFRESH,
+    now,
+    depUnix: record?.departure_time ?? null,
+    arrUnix: record?.arrival_time ?? null,
+    // The moment the feed turned final (two UTC days after the date began):
+    // stable across polls and later than any LAST-MODIFIED the live feed sent.
+    lastModified: Math.floor(Date.parse(`${date}T00:00:00Z`) / 1000) + 2 * 86400,
+    sequence: FLOWN_SEQUENCE_BASE + legTailCount,
+    summary: flownSummary(fn, record),
+    description: flownDescription(input),
+    url: flownPermalink(canonicalHost, fn),
+  });
 }
