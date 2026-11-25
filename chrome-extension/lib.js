@@ -431,15 +431,26 @@ const StarlinkTrackerLib = (() => {
 
   // ── badge copy ─────────────────────────────────────────────────────────────
 
-  // A prediction is never a certainty, so it never reads as 100%.
-  function roundPct(probability) {
-    return Math.min(99, Math.round(probability * 100));
+  // The site prints a percentage by two rules, and the badge follows whichever
+  // one the site uses for the same answer, so a traveller reads one number in
+  // both places. Equipment-type answers (`basis`, Qatar) are rounded down, as
+  // the server's sentence is: a lower bound must not be rounded past itself.
+  // Everything else (United's history odds, an Alaska subfleet's share) is
+  // rounded to the nearest whole number, as the site's pages do. Only a share
+  // that is exactly the whole subfleet reads 100; odds never do.
+  function wholePct(claim) {
+    const p = claim.probability;
+    if (p >= 1) return claim.typeShare ? 100 : 99;
+    if (claim.basis) return Math.floor(p * 100);
+    return Math.min(99, Math.round(p * 100));
   }
 
-  // A share of aircraft, in words. A whole subfleet rounds to the label's
-  // capped 99%, and "about 99% of the aircraft" would misstate it.
-  function shareWords(probability) {
-    return probability >= 0.995 ? "nearly all" : `about ${roundPct(probability)}%`;
+  // A share of aircraft, in words, with the site's edges: "all" only for a
+  // whole subfleet, and "over 99%" where the site prints ">99%".
+  function shareWords(claim) {
+    if (claim.probability >= 1) return "all";
+    if (!claim.basis && claim.probability > 0.99) return "over 99%";
+    return `about ${wholePct(claim)}%`;
   }
 
   function capitalize(text) {
@@ -447,7 +458,7 @@ const StarlinkTrackerLib = (() => {
   }
 
   function badgeLabel(claim) {
-    if (claim.status === "predicted") return `Starlink ~${roundPct(claim.probability)}%`;
+    if (claim.status === "predicted") return `Starlink ~${wholePct(claim)}%`;
     if (claim.status === "installed") return "Starlink (installed)";
     return "Starlink";
   }
@@ -465,7 +476,7 @@ const StarlinkTrackerLib = (() => {
       const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
       const fleet = claim.airline ? `the ${claim.airline} fleet` : "the airline's fleet";
       return (
-        `Scheduled aircraft type${type}: ${shareWords(claim.probability)} of that type in ${fleet} ` +
+        `Scheduled aircraft type${type}: ${shareWords(claim)} of that type in ${fleet} ` +
         `counts as fitted with Starlink. ${airline} doesn't say which aircraft flies, and a swap can change the type.`
       );
     }
@@ -477,12 +488,12 @@ const StarlinkTrackerLib = (() => {
       if (claim.basis === "schedule") {
         const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
         return (
-          `At least ~${roundPct(claim.probability)}% — scheduled on a fitted type${type}, ` +
+          `At least ~${wholePct(claim)}% — scheduled on a fitted type${type}, ` +
           `but this flight has flown other aircraft on some of its ${days}. A swap can change this.`
         );
       }
       return (
-        `At least ~${roundPct(claim.probability)}% — based on the aircraft types on ${days} ` +
+        `At least ~${wholePct(claim)}% — based on the aircraft types on ${days} ` +
         `of this flight. ${airline} publishes the actual aircraft about a week before departure.`
       );
     }
@@ -496,7 +507,7 @@ const StarlinkTrackerLib = (() => {
     if (claim.status === "predicted" && claim.typeShare) {
       // True at any distance from departure: the hub gives this answer
       // whenever it has no aircraft on file for the flight, the day before too.
-      const share = capitalize(shareWords(claim.probability));
+      const share = capitalize(shareWords(claim));
       const whose = claim.airline || "airline's";
       return `${share} of the ${whose} aircraft that fly flights like this one have Starlink. The tracker has no specific aircraft on file for this flight.`;
     }
@@ -506,7 +517,7 @@ const StarlinkTrackerLib = (() => {
           ? ` (${claim.nObservations} observed departure${claim.nObservations === 1 ? "" : "s"})`
           : "";
       return (
-        `~${roundPct(claim.probability)}% chance this flight gets a Starlink-equipped ` +
+        `~${wholePct(claim)}% chance this flight gets a Starlink-equipped ` +
         `aircraft${obs}${airline}. Airlines assign the actual aircraft ~2 days before departure.`
       );
     }
