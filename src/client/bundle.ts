@@ -19,6 +19,7 @@ const ENTRIES = [
   "home",
   "route-planner",
   "route-board",
+  "routes-map",
   "mcp",
 ] as const;
 export type ClientScript = (typeof ENTRIES)[number];

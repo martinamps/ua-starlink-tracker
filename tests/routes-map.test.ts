@@ -7,6 +7,7 @@
 import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
+import { CHOOSER_MAX, FINGER_RADIUS_PX, airportsUnderTap } from "../src/client/routes-map-pick";
 import { buildRouteNetwork } from "../src/components/routes-map/network";
 import { getRouteNetworkRows } from "../src/database/database";
 import { createApp } from "../src/server/app";
@@ -90,7 +91,39 @@ describe("/routes", () => {
     expect(map).not.toContain('href="/routes/EWR"');
     expect(map).toContain("75% of 4 departures are on this map");
     expect(map).toContain("HNL");
-    expect(map).not.toContain("<script");
+    // One script, its own: which airport a tap opens on phones.
+    expect(map.match(/<script[^>]*>/g)).toEqual([
+      expect.stringMatching(/^<script src="\/static\/routes-map\.[a-z0-9]+\.js" defer="">$/),
+    ]);
+  });
+
+  test("the phone tap script is served, and its chooser ships closed and empty", async () => {
+    const { text } = await bodyOf(app, "/routes", UA);
+    const map = sectionOf(text, "The Starlink network");
+    const src = map.match(/\/static\/routes-map\.[a-z0-9]+\.js/)?.[0] ?? "";
+    const r = await app.dispatch(new Request(`http://x${src}`, { headers: { Host: UA } }));
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toContain("text/javascript");
+    expect(r.headers.get("cache-control")).toContain("immutable");
+    // The hooks the script looks for; without any one it does nothing.
+    for (const hook of [
+      "js-map ",
+      "js-map-ring",
+      "js-map-chooser ",
+      "js-map-chooser-list",
+      "js-map-chooser-more",
+      "js-map-chooser-close",
+      "js-map-chooser-all",
+      "js-map-list",
+    ])
+      expect(map).toContain(hook);
+    const chooser = map.slice(map.indexOf("<dialog"), map.indexOf("</dialog>"));
+    expect(chooser).toMatch(
+      /^<dialog class="js-map-chooser [^"]*sm:hidden[^"]*" aria-label="[^"]+">/
+    );
+    expect(chooser).not.toContain(" open");
+    expect(chooser).not.toContain("<a ");
+    expect(chooser).toContain("See all 3 airports");
   });
 
   test("airport links reach screen readers and have phone-sized tap targets", async () => {
@@ -130,6 +163,42 @@ describe("/routes", () => {
  * input at that width, the last one painted under the point wins. Dense hubs
  * from the real map, where a quieter neighbour's dot covers a hub's centre.
  */
+describe("airportsUnderTap", () => {
+  const dots = [
+    { code: "IAD", x: 100, y: 100 },
+    { code: "DCA", x: 104, y: 101 },
+    { code: "BWI", x: 106, y: 96 },
+    { code: "EWR", x: 124, y: 80 },
+    { code: "DEN", x: 10, y: 100 },
+  ];
+  const codes = (x: number, y: number) => airportsUnderTap(dots, x, y).map((d) => d.code);
+
+  test("every dot under the fingertip, nearest first", () => {
+    expect(codes(100, 100)).toEqual(["IAD", "DCA", "BWI"]);
+    expect(codes(105, 99)).toEqual(["DCA", "BWI", "IAD"]);
+  });
+
+  test("a dot alone under the finger is the only answer, out to the finger's edge", () => {
+    expect(codes(10, 100)).toEqual(["DEN"]);
+    expect(codes(10 + FINGER_RADIUS_PX, 100)).toEqual(["DEN"]);
+    expect(codes(10, 100 - FINGER_RADIUS_PX - 1)).toEqual([]);
+    expect(codes(50, 50)).toEqual([]);
+  });
+
+  test("a tap never resolves to one airport while another is as near", () => {
+    // Each sampled tap within a finger of IAD: IAD is offered, never dropped
+    // for a single neighbour.
+    for (let dx = -FINGER_RADIUS_PX; dx <= FINGER_RADIUS_PX; dx += 3)
+      for (let dy = -FINGER_RADIUS_PX; dy <= FINGER_RADIUS_PX; dy += 3) {
+        if (Math.hypot(dx, dy) > FINGER_RADIUS_PX) continue;
+        const near = codes(100 + dx, 100 + dy);
+        expect(near).toContain("IAD");
+        if (near.length === 1) expect(near).toEqual(["IAD"]);
+      }
+    expect(CHOOSER_MAX).toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe("/routes map clicks", () => {
   const DENSE: [string, number][] = [
     ["ORD", 14],
@@ -222,6 +291,20 @@ describe("/routes map clicks", () => {
       if (cs.some((c) => c.href === d.href && c.phone))
         expect(`${d.href} -> ${tap?.href}`).toBe(`${d.href} -> ${d.href}`);
     }
+    // On a phone-wide map (about 324 px), Dulles shares a fingertip with its
+    // neighbours, so the script must ask rather than open; Denver stands alone.
+    const px = (d: Circle) => ({ code: d.href ?? "", x: d.x * 0.324, y: d.y * 0.324 });
+    const phoneDots = dots.map(px);
+    const under = (code: string) => {
+      const at = phoneDots.find((d) => d.code === code);
+      return airportsUnderTap(phoneDots, at?.x ?? Number.NaN, at?.y ?? Number.NaN).map(
+        (d) => d.code
+      );
+    };
+    expect(under("IAD").slice(0, 2)).toEqual(["IAD", "DCA"]);
+    expect(under("LGA")).toContain("EWR");
+    expect(under("BUR")).toContain("LAX");
+    expect(under("DEN")).toEqual(["DEN"]);
     // The hubs whose centres a neighbour once took, and the busiest, take phone taps.
     for (const hub of ["ORD", "EWR", "DEN", "LAX", "SFO"])
       expect(cs.some((c) => c.href === hub && c.phone)).toBe(true);
