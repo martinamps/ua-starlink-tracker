@@ -167,6 +167,47 @@
 .dot-verif {
   color: var(--color-accent);
 }
+/* The registry is three quarters of /fleet's elements and starts screens below
+   the fold; laying it out on load held a phone's main thread for about a
+   second. The browser now leaves it until it nears the screen, and still
+   reaches into it for find-in-page and #t-{tail} jumps. The reserved height
+   (rows over columns) keeps the scrollbar honest until then:
+   the column counts are what columns-[20ch] gives at each width. */
+.tail-registry {
+  --tail-cols: 1;
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto calc(var(--tail-rows) * 1.7em / var(--tail-cols));
+}
+@media (min-width: 366px) {
+  .tail-registry {
+    --tail-cols: 2;
+  }
+}
+@media (min-width: 522px) {
+  .tail-registry {
+    --tail-cols: 3;
+  }
+}
+@media (min-width: 694px) {
+  .tail-registry {
+    --tail-cols: 4;
+  }
+}
+@media (min-width: 866px) {
+  .tail-registry {
+    --tail-cols: 5;
+  }
+}
+@media (min-width: 1022px) {
+  .tail-registry {
+    --tail-cols: 6;
+  }
+}
+@media (min-width: 1178px) {
+  .tail-registry {
+    --tail-cols: 7;
+  }
+}
 .tail-sl,
 .tail-dim {
   display: flex;
