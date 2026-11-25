@@ -91,7 +91,9 @@ import {
   type CadenceGroup,
   GROUND_GAP_SECS,
   INTERVAL_BUDGET_SHARE,
+  SHEET_LISTING_BUMPS_PER_DAY,
   SHEET_LISTING_BUMPS_PER_SYNC,
+  SHEET_LISTING_NOTED_SECS,
   gapChecksPerDay,
   solveRecheckDays,
   sweepsCoverGap,
@@ -375,6 +377,10 @@ export function setupTables(db: Database) {
   // sighting, and when a return last pulled this tail's check forward.
   addColumn(db, "united_fleet", "adsb_last_airborne", "INTEGER");
   addColumn(db, "united_fleet", "gap_pulled_at", "INTEGER");
+  // A sheet listing of a tail our checks hold as not Starlink (updateDatabase):
+  // when it was last noted, and when it last moved the tail's check forward.
+  addColumn(db, "united_fleet", "sheet_listed_at", "INTEGER");
+  addColumn(db, "united_fleet", "sheet_bumped_at", "INTEGER");
 
   if (!tableExists(db, "upcoming_flights")) {
     db.query(
@@ -1287,26 +1293,49 @@ export function updateDatabase(
   // its slot from the check budget like any other, and the readings a
   // contradicted listing needs are unchanged. A look already due inside that
   // day and a half stays where it is (moving it would only reset the pace).
-  // `listedBefore` makes it once per listing, not once per hourly read.
+  // `listedBefore` makes it once per listing, not once per hourly read, and
+  // the stamp on the fleet row makes a tail dropped and listed again the same
+  // listing. Strangers edit the sheet, so the moves are also capped over a
+  // rolling day; both stamps are in the table, so a restart forgets neither.
+  // A stamp ahead of the clock counts as recent: the cap can only err shut.
   const fleetStatus = db.query(
-    "SELECT starlink_status FROM united_fleet WHERE tail_number = ? AND airline = ?"
+    "SELECT starlink_status, sheet_listed_at FROM united_fleet WHERE tail_number = ? AND airline = ?"
+  );
+  const noteListing = db.query(
+    "UPDATE united_fleet SET sheet_listed_at = ? WHERE tail_number = ? AND airline = ?"
   );
   const moveToFront = db.query(
     `UPDATE united_fleet
      SET next_check_after = CASE WHEN COALESCE(next_check_after, 0) > ? THEN ? ELSE next_check_after END,
-         discovery_priority = 1.0
+         discovery_priority = 1.0,
+         sheet_bumped_at = ?
      WHERE tail_number = ? AND airline = ?`
   );
   const now = unixNow();
+  const movedToday = (
+    db
+      .query("SELECT COUNT(*) AS n FROM united_fleet WHERE airline = ? AND sheet_bumped_at > ?")
+      .get(airline, now - 24 * 3600) as { n: number }
+  ).n;
+  const movesLeft = Math.min(
+    SHEET_LISTING_BUMPS_PER_SYNC,
+    Math.max(0, SHEET_LISTING_BUMPS_PER_DAY - movedToday)
+  );
   const movedToFront: string[] = [];
   for (const n of newlyListed) {
-    const row = fleetStatus.get(n.tail, airline) as { starlink_status: string | null } | null;
-    if (row && row.starlink_status !== "confirmed") {
-      recordDiscoveryLag(db, n.tail, airline, "sheet", n.fleet);
-      if (movedToFront.length < SHEET_LISTING_BUMPS_PER_SYNC) {
-        moveToFront.run(now + UNSETTLED_RECHECK_SECS, now, n.tail, airline);
-        movedToFront.push(n.tail);
-      }
+    const row = fleetStatus.get(n.tail, airline) as {
+      starlink_status: string | null;
+      sheet_listed_at: number | null;
+    } | null;
+    if (!row || row.starlink_status === "confirmed") continue;
+    if (row.sheet_listed_at !== null && row.sheet_listed_at > now - SHEET_LISTING_NOTED_SECS) {
+      continue;
+    }
+    noteListing.run(now, n.tail, airline);
+    recordDiscoveryLag(db, n.tail, airline, "sheet", n.fleet);
+    if (movedToFront.length < movesLeft) {
+      moveToFront.run(now + UNSETTLED_RECHECK_SECS, now, now, n.tail, airline);
+      movedToFront.push(n.tail);
     }
   }
   if (movedToFront.length > 0) {

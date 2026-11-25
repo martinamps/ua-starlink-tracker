@@ -27,7 +27,11 @@ import {
   setMeta,
   updateDatabase,
 } from "../src/database/database";
-import { gapChecksPerDay } from "../src/database/discovery-cadence";
+import {
+  SHEET_LISTING_BUMPS_PER_DAY,
+  SHEET_LISTING_NOTED_SECS,
+  gapChecksPerDay,
+} from "../src/database/discovery-cadence";
 import { metrics } from "../src/observability";
 import { runDiscoveryBatch } from "../src/scripts/fleet-discovery";
 import { runVerifierTick } from "../src/scripts/starlink-verifier";
@@ -608,4 +612,128 @@ describe("a sheet-listed tail we held as not Starlink: hours until it is counted
     },
     600_000
   );
+});
+
+describe("the sheet's pull on the queue is bounded: strangers edit it", () => {
+  const FAR = T0 + 20 * DAY;
+  const movedTails = (db: Database) =>
+    (
+      db
+        .query(
+          "SELECT tail_number FROM united_fleet WHERE sheet_bumped_at IS NOT NULL ORDER BY tail_number"
+        )
+        .all() as { tail_number: string }[]
+    ).map((r) => r.tail_number);
+
+  /** discovery.lag_hours points credited to the sheet, while stop() has not been called. */
+  function countSheetLag(): { points: string[]; stop(): void } {
+    const points: string[] = [];
+    const original = metrics.distribution;
+    metrics.distribution = (name, value, tags) => {
+      const t = tags as Record<string, unknown> | undefined;
+      if (name === "discovery.lag_hours" && t?.first_source === "sheet") points.push(name);
+      original(name, value, tags);
+    };
+    return {
+      points,
+      stop() {
+        metrics.distribution = original;
+      },
+    };
+  }
+
+  function seed(db: Database) {
+    const fleet = seedFleet(db, T0, { equipped: 5, unequipped: 40 });
+    listingsFromSheet(db);
+    db.query("UPDATE united_fleet SET next_check_after = ? WHERE starlink_status = 'negative'").run(
+      FAR
+    );
+    return fleet;
+  }
+
+  test("ten moves in any rolling 24 hours, across reads and a restart; a refused move is dropped", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sheet-cap-"));
+    try {
+      const path = join(dir, "db.sqlite");
+      let db = openFile(path);
+      setSystemTime(new Date(T0_MS));
+      const fleet = seed(db);
+      const fresh = (block: number) => fleet.unequipped.slice(block * 4, block * 4 + 4);
+      const read = (at: number, block: number) => {
+        setSystemTime(new Date(at * 1000));
+        updateDatabase(db, 1000, sheetOf([...fleet.equipped, ...fresh(block)]), STATS, "UA");
+      };
+
+      read(T0 + HOUR, 0);
+      read(T0 + 2 * HOUR, 1);
+      expect(movedTails(db)).toHaveLength(8);
+      db.close();
+      db = openFile(path);
+
+      // The third read's four would make twelve: two move, two are refused.
+      read(T0 + 3 * HOUR, 2);
+      expect(movedTails(db)).toHaveLength(SHEET_LISTING_BUMPS_PER_DAY);
+      const refused = fresh(2).filter((t) => !movedTails(db).includes(t));
+      expect(refused).toHaveLength(2);
+      for (const t of refused) {
+        expect(fleetRow(db, t)).toMatchObject({ next_check_after: FAR, discovery_priority: 0.5 });
+      }
+      for (let block = 3; block < 8; block++) read(T0 + (block + 1) * HOUR, block);
+      expect(movedTails(db)).toHaveLength(SHEET_LISTING_BUMPS_PER_DAY);
+
+      // A second before the first read's four are a day old, still shut.
+      read(T0 + HOUR + DAY - 1, 8);
+      expect(movedTails(db)).toHaveLength(SHEET_LISTING_BUMPS_PER_DAY);
+      // Then four slots free. A refused tail listed again does not take one:
+      // it was dropped, not queued, and keeps its routine turn.
+      setSystemTime(new Date((T0 + HOUR + DAY) * 1000));
+      updateDatabase(db, 1000, sheetOf([...fleet.equipped, ...refused, ...fresh(9)]), STATS, "UA");
+      expect(movedTails(db)).toHaveLength(SHEET_LISTING_BUMPS_PER_DAY + 4);
+      for (const t of refused) expect(fleetRow(db, t).next_check_after).toBe(FAR);
+      for (const t of fresh(9)) {
+        expect(fleetRow(db, t)).toMatchObject({
+          next_check_after: T0 + HOUR + DAY,
+          discovery_priority: 1,
+        });
+      }
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a tail dropped and listed again is moved, and sends its lag point, once", () => {
+    const db = makeFreshDb();
+    setSystemTime(new Date(T0_MS));
+    const fleet = seed(db);
+    const tail = fleet.unequipped[0];
+    const withTail = sheetOf([...fleet.equipped, tail]);
+    const without = sheetOf(fleet.equipped);
+    const lag = countSheetLag();
+    try {
+      const read = (at: number, sheet: typeof withTail) => {
+        setSystemTime(new Date(at * 1000));
+        updateDatabase(db, 1000, sheet, STATS, "UA");
+      };
+      read(T0 + HOUR, withTail);
+      expect(lag.points).toHaveLength(1);
+      expect(fleetRow(db, tail).next_check_after).toBe(T0 + HOUR);
+
+      // Its turn has since gone back to a routine date; the sheet flaps for two days.
+      db.query("UPDATE united_fleet SET next_check_after = ? WHERE tail_number = ?").run(FAR, tail);
+      for (let h = 2; h < 50; h++) read(T0 + h * HOUR, h % 2 ? withTail : without);
+      expect(lag.points).toHaveLength(1);
+      expect(fleetRow(db, tail).next_check_after).toBe(FAR);
+      expect(movedTails(db)).toEqual([tail]);
+
+      // Listed again once the first listing is no longer noted: a new listing.
+      read(T0 + HOUR + SHEET_LISTING_NOTED_SECS - 1, without);
+      read(T0 + HOUR + SHEET_LISTING_NOTED_SECS, withTail);
+      expect(lag.points).toHaveLength(2);
+      expect(fleetRow(db, tail).next_check_after).toBe(T0 + HOUR + SHEET_LISTING_NOTED_SECS);
+    } finally {
+      lag.stop();
+      db.close();
+    }
+  });
 });

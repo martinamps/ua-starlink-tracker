@@ -881,3 +881,52 @@ describe("the jobs under the ceiling", () => {
     300_000
   );
 });
+
+describe("two guards the ceiling leans on", () => {
+  test("starts stamped ahead of the clock still count, until the clock is a day past them", () => {
+    const db = makeFreshDb();
+    // The clock ran five hours ahead while a full budget was spent, then came back.
+    const ahead = T0_MS + 5 * HOUR * 1000;
+    setMeta(
+      db,
+      "united_check_budget",
+      JSON.stringify(Array.from({ length: UNITED_DAILY_CHECK_BUDGET }, (_, i) => ahead - i)),
+      "UA"
+    );
+    const shut = { used: UNITED_DAILY_CHECK_BUDGET, open: { settle: false, reconfirm: false } };
+    expect(unitedBudgetState(db, T0_MS)).toEqual(shut);
+    expect(claimUnitedCheck(db, "settle", T0_MS)).toBe(false);
+    expect(claimUnitedCheck(db, "reconfirm", T0_MS)).toBe(false);
+    // A forced run is counted beside them, and does not rewrite them away.
+    expect(claimUnitedCheck(db, "manual", T0_MS)).toBe(true);
+    expect(unitedBudgetState(db, T0_MS).used).toBe(UNITED_DAILY_CHECK_BUDGET + 1);
+
+    const lastMs = ahead + DAY * 1000;
+    expect(unitedBudgetState(db, lastMs - UNITED_DAILY_CHECK_BUDGET).open.settle).toBe(false);
+    expect(unitedBudgetState(db, lastMs).used).toBe(0);
+    expect(claimUnitedCheck(db, "settle", lastMs)).toBe(true);
+    db.close();
+  });
+
+  test("the verifier takes the tail left longest first, whatever order the roster lists them in", async () => {
+    const db = makeFreshDb();
+    setSystemTime(new Date(T0_MS));
+    const fleet = seedFleet(db, T0, { equipped: 6, unequipped: 0, noFlightEvery: 0 });
+    setMeta(db, "united_check_budget", "[]", "UA");
+    // All due, last read 5 to 6.7 days ago, the roster's first tail the most recently:
+    // a fixed order would start from the wrong end.
+    const lastRead = db.query(
+      "UPDATE starlink_verification_log SET checked_at = ? WHERE tail_number = ? AND checked_at > ?"
+    );
+    fleet.equipped.forEach((tail, i) =>
+      lastRead.run(T0 - 5 * DAY - i * 8 * HOUR, tail, T0 - 9 * DAY)
+    );
+
+    for (let tick = 0; tick < 6; tick++) {
+      setSystemTime(new Date(T0_MS + tick * VERIFIER_BEAT * 1000));
+      expect(await runVerifierTick(db, fleet.verifier)).toEqual({ checked: 1, held: null });
+    }
+    expect(fleet.checks.map((c) => c.tail)).toEqual([...fleet.equipped].reverse());
+    db.close();
+  });
+});

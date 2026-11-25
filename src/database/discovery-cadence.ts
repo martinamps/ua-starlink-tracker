@@ -145,3 +145,21 @@ export function sweepsCoverGap(
  * budget ahead of everything else. The rest keep their scheduled re-check.
  */
 export const SHEET_LISTING_BUMPS_PER_SYNC = 10;
+
+/**
+ * The most such moves in any rolling 24 hours, over every read. Anyone can
+ * edit the sheet, and the cap per read alone let a sheet that listed a fresh
+ * ten each hour pick 240 of a day's checks. A real week brought five such
+ * listings, so ten a day is more than a week's worth and under 3% of the
+ * check budget. A move past it is dropped, not queued: the tail keeps its
+ * scheduled re-check.
+ */
+export const SHEET_LISTING_BUMPS_PER_DAY = 10;
+
+/**
+ * How long a tail's listing stays noted. A tail dropped from the sheet and
+ * listed again inside this is the same listing, not a new one: no second move
+ * and no second lag point. A week covers a tab that is removed and restored,
+ * and a moved tail has had its three readings well inside it.
+ */
+export const SHEET_LISTING_NOTED_SECS = 7 * 24 * 3600;
