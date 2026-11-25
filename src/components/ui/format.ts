@@ -166,6 +166,17 @@ export function zonedDeparture(
   };
 }
 
+/** "Thursday, November 26, 2026" at `zone`: a departure's date in a sentence
+ * that has to stay true when quoted without the page around it. */
+export function zonedLongDate(sec: number, zone: string): string {
+  return formatter(zone, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(sec * 1000));
+}
+
 /** "8:15 AM" at `zone`, no zone name: for lists whose header names the zone
  * once, so a row never carries a daylight label from the wrong season. */
 export function zonedClock(sec: number, zone: string | null | undefined): string {

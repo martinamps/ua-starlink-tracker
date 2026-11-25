@@ -103,6 +103,7 @@ import {
   recordUntrackedLookup,
   resolveFlightVerdict,
   scheduledFlights,
+  slotVerdict,
   verdictAssignment,
   verdictSummary,
   verdictTelemetry,
@@ -138,6 +139,7 @@ import {
 } from "../components/airlines-page";
 import { paceWindowSpan } from "../components/charts/rollout-math";
 import CheckFlightPage, {
+  type AssignedDeparture,
   type DatedAnswer,
   type FlightFacts,
   type InvalidFlightQuery,
@@ -203,6 +205,7 @@ import {
 } from "../components/ui/format";
 import {
   DEPARTURE_WINDOW_HOURS,
+  type DepartureSlot,
   PERMALINK_STALE_NOTE_DAYS,
   ROUTE_AIRPORT_RE,
 } from "../database/database";
@@ -3100,6 +3103,38 @@ const AIRPORT_CODE_RE = /^[A-Z0-9]{3,4}$/;
 
 /** SSR facts for a flight permalink — everything comes from the DB (upstream
  * citizenship: no live lookups in the request path). */
+/**
+ * The slot's settled answer, read through verdictSummary like every other
+ * surface. Null leaves the page opening with odds: no settled aircraft, or an
+ * airport we cannot print a local date for.
+ */
+function assignedDeparture(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  slot: DepartureSlot,
+  now: number
+): AssignedDeparture | null {
+  const verdict = slotVerdict(cfg, reader, flightNumber, slot, now);
+  if (!verdict) return null;
+  const { hasStarlink, confidence, assignment } = verdictSummary(verdict);
+  const departureZone = airportTimezone(slot.departure_airport);
+  if (hasStarlink === null || !assignment || !departureZone) return null;
+  if (!AIRPORT_CODE_RE.test(assignment.destination)) return null;
+  return {
+    hasStarlink,
+    verified: confidence !== "likely",
+    tail: assignment.tail,
+    aircraft: assignment.aircraft,
+    wifi: assignment.wifi,
+    origin: assignment.origin,
+    destination: assignment.destination,
+    departure: assignment.departure,
+    departureZone,
+    seenAt: slot.last_updated,
+  };
+}
+
 function buildFlightFacts(
   reader: ScopedReader,
   cfg: AirlineConfig,
@@ -3127,7 +3162,7 @@ function buildFlightFacts(
   // One row per physical departure, newest assignment first, then the same
   // equipped test the date lookup answers with: a swap onto a non-Starlink
   // tail replaces the stale Starlink row instead of listing both.
-  const upcoming = reader
+  const slots = reader
     .getDepartureSlots({
       from: now,
       to: now + DEPARTURE_WINDOW_HOURS * 3600,
@@ -3135,21 +3170,21 @@ function buildFlightFacts(
       flightNumbers: variants,
     })
     .filter((f) => AIRPORT_CODE_RE.test(f.departure_airport))
-    .slice(0, 5)
-    .map((f) => {
-      const starlink = f.equipped === 1;
-      return {
-        departure_airport: f.departure_airport,
-        arrival_airport: f.arrival_airport,
-        departure_time: f.departure_time,
-        departure_local_date: airportLocalDate(f.departure_airport, f.departure_time),
-        departure_tz: airportTimezone(f.departure_airport) ?? null,
-        tail_number: f.tail_number,
-        aircraft_type: f.aircraft_type ?? null,
-        starlink,
-        wifiLabel: starlink ? "Starlink" : upcomingWifiLabel(contradictingWifi(f)),
-      };
-    });
+    .slice(0, 5);
+  const upcoming = slots.map((f) => {
+    const starlink = f.equipped === 1;
+    return {
+      departure_airport: f.departure_airport,
+      arrival_airport: f.arrival_airport,
+      departure_time: f.departure_time,
+      departure_local_date: airportLocalDate(f.departure_airport, f.departure_time),
+      departure_tz: airportTimezone(f.departure_airport) ?? null,
+      tail_number: f.tail_number,
+      aircraft_type: f.aircraft_type ?? null,
+      starlink,
+      wifiLabel: starlink ? "Starlink" : upcomingWifiLabel(contradictingWifi(f)),
+    };
+  });
   // Sibling permalinks: other marketing numbers on the primary route (routes
   // lead with currently-scheduled legs). Draws on the same populations as the
   // permalink existence gate, so every link resolves. The reader is always
@@ -3176,6 +3211,7 @@ function buildFlightFacts(
       : null,
     routes,
     upcoming,
+    nextAssigned: slots[0] ? assignedDeparture(cfg, reader, flightNumber, slots[0], now) : null,
     siblings,
     notObservedSince: notObservedSince(reader, routes, upcoming.length > 0, now),
   };

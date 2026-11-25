@@ -12,6 +12,7 @@ import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
 import { PopularFlightsLinks } from "./atoms";
 import { FlightFactBlocks } from "./check-flight/fact-blocks";
+import { SWAP_CAVEAT, firmLead } from "./check-flight/firm-lead";
 import type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
 import { usualSummary } from "./check-flight/usual";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, scriptSafeJson } from "./faq";
@@ -27,7 +28,12 @@ import {
   SectionTitle,
 } from "./layout";
 
-export type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
+export type {
+  AssignedDeparture,
+  DatedAnswer,
+  FlightFacts,
+  InvalidFlightQuery,
+} from "./check-flight/types";
 
 interface CheckFlightPageProps {
   site: SiteConfig;
@@ -59,6 +65,12 @@ const typeSettled = (flight: FlightFacts) =>
   !flight.prediction?.n_observations &&
   !!flight.typeRule &&
   (flight.typeRule.probability >= 1 || flight.typeRule.probability <= 0);
+
+/** The flight has a number to quote for other dates, not just "no history yet". */
+const hasUsualFigure = (flight: FlightFacts) =>
+  !!flight.prediction?.n_observations || !!flight.typeRule || flight.observedTotal > 0;
+
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 export function answerContext(
   site: SiteConfig,
@@ -173,14 +185,23 @@ export default function CheckFlightPage({
     : fn
       ? `Does ${fn} have Starlink Wi-Fi?`
       : `Does my ${shortName} flight have Starlink?`;
+  // An assigned next departure with a settled aircraft opens the page; the
+  // odds then describe the other dates instead of standing in for an answer.
+  const assigned = !invalid && !answer ? (flight?.nextAssigned ?? null) : null;
   const dek =
     invalid || answer
       ? undefined
-      : flight
-        ? `${usualSummary(flight)}${typeSettled(flight) ? "" : " A firm answer comes about 2 days before departure, once the aircraft is assigned."}`
-        : fn
-          ? `Pick your travel date to check ${fn}.`
-          : "Enter your flight number and date to see whether your aircraft has Starlink.";
+      : flight && assigned
+        ? firmLead(flight, assigned)
+        : flight
+          ? `${usualSummary(flight)}${typeSettled(flight) ? "" : " A firm answer comes about 2 days before departure, once the aircraft is assigned."}`
+          : fn
+            ? `Pick your travel date to check ${fn}.`
+            : "Enter your flight number and date to see whether your aircraft has Starlink.";
+  const otherDates =
+    flight && assigned && !typeSettled(flight) && hasUsualFigure(flight)
+      ? `On other dates: ${lowerFirst(usualSummary(flight))}`
+      : null;
 
   const scheduledOnDate = answer?.firm === true;
   const crumbs = [
@@ -193,7 +214,14 @@ export default function CheckFlightPage({
 
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
-      <PageHeader title={title} dek={dek} />
+      <PageHeader title={title} dek={dek}>
+        {assigned && (
+          <p id="assignment-caveat" className="mx-auto max-w-2xl text-sm text-muted text-pretty">
+            {SWAP_CAVEAT}
+            {otherDates ? ` ${otherDates}` : ""}
+          </p>
+        )}
+      </PageHeader>
 
       {answer && (
         <Section bare>

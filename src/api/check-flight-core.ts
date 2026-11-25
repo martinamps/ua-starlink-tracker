@@ -27,7 +27,11 @@ import {
   programTypeOf,
   publicAirlines,
 } from "../airlines/registry";
-import type { FlightAssignmentRow, UnequippedAssignment } from "../database/database";
+import type {
+  DepartureSlot,
+  FlightAssignmentRow,
+  UnequippedAssignment,
+} from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
 import { rowEvidence } from "../database/sql/equipped";
 import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
@@ -57,6 +61,7 @@ import { AIRPORT_COORDS } from "../utils/airport-geo";
 import {
   AIRPORT_TZ,
   type FlightDateWindow,
+  airportLocalDate,
   flightDateWindow,
   matchesLocalDate,
 } from "../utils/airport-tz";
@@ -480,6 +485,56 @@ export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
         probability: verdict.probability,
       };
   }
+}
+
+/**
+ * The verdict for one departure slot whose aircraft our own rows already name,
+ * or null when they hold no settled answer for it. The undated flight page
+ * leads with this; it classifies the slot's row exactly as the dated lookup
+ * does, and answers only where the slot's own equipped test agrees, so the
+ * page's opening, its departures list and the lookup cannot contradict.
+ */
+export function slotVerdict(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  slot: DepartureSlot,
+  now: number = unixNow()
+): AssignedVerdict | null {
+  // Qatar answers per aircraft type; its rows never name a tail.
+  if (cfg.code === "QR") return null;
+  const date = airportLocalDate(slot.departure_airport, slot.departure_time);
+  const window = date ? flightDateWindow(date, now) : null;
+  if (!window) return null;
+  const normalized = ensureAirlinePrefix(cfg, flightNumber);
+  // Newest first, so a swap's stale row can't answer for the slot's current tail.
+  const row = reader
+    .getFlightAssignments(
+      buildAirlineFlightNumberVariants(cfg, normalized),
+      slot.departure_time,
+      slot.departure_time + 1
+    )
+    .find((r) => r.departure_airport === slot.departure_airport);
+  if (!row || row.tail_number !== slot.tail_number) return null;
+  const c = classifyRow(row);
+  if (c === "settled" || c === "verified_other") {
+    if (slot.equipped === 1) return null;
+    return {
+      kind: "scheduled_no",
+      window,
+      normalized,
+      flights: [{ ...row, negativeReason: c }],
+      fr24Error: false,
+    };
+  }
+  if (slot.equipped !== 1) return null;
+  return {
+    kind: "scheduled",
+    window,
+    normalized,
+    verified: c === "verified" ? [row] : [],
+    unverified: c === "verified" ? [] : [row],
+  };
 }
 
 function rowAssignment(f: FlightAssignmentRow, wifi: string | null): VerdictAssignment {

@@ -65,7 +65,7 @@ export function usualAnswer(flight: FlightFacts): UsualAnswer {
   const { observedStarlink: s, observedTotal: n } = flight;
   if (n > 0) {
     return {
-      sentence: `The aircraft had Starlink in ${fmt(s)} of ${fmt(n)} recent checks.`,
+      sentence: `Aircraft on ${fn} had Starlink in ${fmt(s)} of ${fmt(n)} recent checks.`,
       figure: `${fmt(s)} of ${fmt(n)}`,
       caption: "Recent aircraft checks that found Starlink",
       tone: "neutral",
