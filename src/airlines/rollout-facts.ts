@@ -598,12 +598,20 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Aer Lingus",
     iata: "EI",
     status: "installing",
-    statusLabel: "On all transatlantic routes",
+    statusLabel: "Transatlantic done, short-haul started",
     // No tail count on purpose: FlyerTalk and aggregator counts disagree (1 to
     // 10 aircraft) and no first-party source publishes one.
     summary:
-      "Free on all transatlantic routes as of November 2026; live since March 29, 2026 (Airbus A330 EI-EIN, Dublin to New York JFK). The whole long-haul fleet is due by Q1 2027.",
+      "Free on all transatlantic routes; short-haul installs began November 23, 2026 (A320ceo EI-DVM, Spain, Portugal and Morocco first), with 29 short-haul aircraft due in early 2027.",
     facts: [
+      {
+        fact: "Aer Lingus has started fitting Starlink to its short-haul fleet, beginning with Airbus A320ceo EI-DVM on select European services. 29 short-haul aircraft are expected to have it in early 2027, starting with flights to Spain, Portugal and Morocco. Wi-Fi is free.",
+        asOf: "2026-11-23",
+        source: {
+          label: "Aer Lingus media centre",
+          url: "https://mediacentre.aerlingus.com/pressrelease/details/108/26607",
+        },
+      },
       {
         fact: "Aer Lingus says free Starlink Wi-Fi is already available across all of its transatlantic routes.",
         asOf: "2026-11-18",
@@ -696,11 +704,20 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Mostly done",
     summary:
-      "Nearly 60% of the fleet had Starlink as of June 2026, with the rollout due to complete by the end of 2026. Free in every cabin with a Flying Blue login.",
+      "70% of the fleet had Starlink as of October 2026, with 80% due by the end of 2026 and the whole fleet in 2027. Free in every cabin with a Flying Blue login.",
     facts: [
+      {
+        fact: "Air France says 70% of its fleet has its free high-speed Wi-Fi, will reach 80% by the end of 2026 and aims to equip the whole fleet, including regional aircraft, in 2027.",
+        asOf: "2026-10-27",
+        source: {
+          label: "Aviation24.be (reporting Air France's 27 October 2026 release)",
+          url: "https://www.aviation24.be/airlines/air-france-klm-group/air-france/air-france-expands-winter-network-and-la-premiere-rollout/",
+        },
+      },
       {
         fact: "Nearly 60% of Air France's fleet has Starlink installed, with the airline hoping to complete the rollout by the end of 2026.",
         asOf: "2026-06-08",
+        superseded: true,
         source: {
           label: "One Mile at a Time",
           url: "https://onemileatatime.com/news/air-france-free-starlink-wi-fi/",
@@ -709,6 +726,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       {
         fact: "Air France expects to equip around a third of its aircraft with Starlink by the end of 2025 and its entire fleet by the end of 2026.",
         asOf: "2025-09-23",
+        superseded: true,
         source: {
           label: "Aviation Week",
           url: "https://aviationweek.com/air-transport/interiors-connectivity/air-france-pushes-ahead-starlink-connectivity-installations",

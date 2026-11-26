@@ -836,7 +836,7 @@ const AIRLINE_DEFS = {
       statusLabel: "Mostly done",
       // Dated: an undated "has not started" outlives the rollout it describes.
       phaseNote:
-        "Nearly 60% of the fleet had Starlink as of June 2026; Air France plans the whole fleet by the end of 2026.",
+        "70% of the fleet had Starlink as of October 2026; Air France expects 80% by the end of 2026 and the whole fleet in 2027.",
       // Freighters and programExclusions leave every AF denominator, so the
       // roster that remains is the programme's own.
       rosterIsProgramScope: true,

@@ -283,7 +283,8 @@ describe("hub /airlines/{slug} facts pages (content-level roster)", () => {
       expect(res.status, entry.slug).toBe(200);
       const body = await res.text();
       expect(body, entry.slug).toContain(html(entry.name));
-      for (const fact of entry.facts) {
+      // Superseded facts are dropped from the airline page on purpose.
+      for (const fact of entry.facts.filter((f) => !f.superseded)) {
         const { label, date } = factStamp(fact);
         // Dated claims read "as of"; claims resting on an undated evergreen
         // source read "checked" — the reader must be able to tell them apart.
