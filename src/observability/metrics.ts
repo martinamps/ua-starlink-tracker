@@ -506,10 +506,10 @@ export function mcpClientTags(): Tags {
 // handshake's clientInfo — the user agent is the only per-call signal.
 // Patterns from production /mcp spans: Claude-User (claude.ai connectors),
 // claude-code/x, the Claude desktop app's "Claude/x" Electron UA,
-// openai-mcp/x (ChatGPT and Codex), Cursor/x.
+// openai-mcp/x (ChatGPT), codex-mcp-client/x (OpenAI's Codex), Cursor/x.
 const MCP_CLIENTS: ReadonlyArray<readonly [string, RegExp]> = [
   ["claude", /Claude-User|claude-code|\bClaude\/|anthropic/i],
-  ["chatgpt", /openai-mcp|ChatGPT/i],
+  ["chatgpt", /openai-mcp|ChatGPT|codex-mcp-client/i],
   ["cursor", /^Cursor\//i],
   ["vscode", /vscode|Visual Studio Code|Copilot/i],
 ];
@@ -759,7 +759,8 @@ export const COUNTERS = {
 
   // A listing's settled wifi crossed the equipped line (verified_wifi between
   // Starlink/unverified and another provider). tags: direction (to_starlink|
-  //   from_starlink), reason (normalizeSettleRule), path (reconcile|verifier),
+  //   from_starlink|first_settle: a never-settled listing's first settle off
+  //   Starlink, not a move), reason (normalizeSettleRule), path (reconcile|verifier),
   //   airline. Normal is ~0–1 from_starlink a day; a burst means upstream noise.
   CONSENSUS_SETTLE_TRANSITION: "consensus.settle_transition",
 

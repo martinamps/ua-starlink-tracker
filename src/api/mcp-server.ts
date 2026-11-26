@@ -86,6 +86,7 @@ import {
   routeBaseline,
   storedUnreadAircraft,
 } from "../scripts/starlink-predictor";
+import { clientIp } from "../server/client-ip";
 import { aircraftTypeText } from "../server/community-wire";
 import { jsonRpc, mcpMethodNotAllowed } from "../server/respond";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
@@ -163,7 +164,7 @@ const DEFAULT_ANALYTICS: AnalyticsConfig = {
  * Uses a custom "MCP" goal with props so you can break down by tool in the
  * Plausible dashboard (Behaviors → Goal Conversions → MCP → props).
  */
-function trackMcpEvent(
+export function trackMcpEvent(
   req: Request,
   analytics: AnalyticsConfig | null | undefined,
   props: { method: string; tool?: string }
@@ -176,15 +177,14 @@ function trackMcpEvent(
   // Forward the client's UA and IP so Plausible can do bot filtering and
   // unique-visitor counting as if this were a page view.
   const ua = req.headers.get("user-agent") || "mcp-client/unknown";
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "";
+  const ip = clientIp(req);
 
   fetch(analytics.eventApiUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "User-Agent": ua,
-      ...(ip ? { "X-Forwarded-For": ip } : {}),
+      ...(ip !== "unknown" ? { "X-Forwarded-For": ip } : {}),
     },
     body: JSON.stringify({
       name: "MCP",

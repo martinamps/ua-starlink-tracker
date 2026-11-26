@@ -314,6 +314,7 @@ import {
 
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
+import { clientIp } from "./client-ip";
 import { aircraftTypeParam, communityWireFields } from "./community-wire";
 import {
   type Database,
@@ -5909,15 +5910,6 @@ export const EXTENSION_RATE_LIMIT = 300;
 const API_RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT_LOG_INTERVAL_MS = 60_000;
 const LOCAL_IPS = new Set(["127.0.0.1", "::1", "localhost"]);
-
-function clientIp(req: Request): string {
-  return (
-    req.headers.get("cf-connecting-ip") ||
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
 
 /** Any character RFC 3986 allows in neither a host nor a port. */
 const NOT_A_HOST = /[^A-Za-z0-9\-._~!$&'()*+,;=%:[\]]/;
