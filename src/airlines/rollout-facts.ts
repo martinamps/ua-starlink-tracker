@@ -861,17 +861,17 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "Latin America's first Starlink airline: first flight July 4, 2026 (737 MAX 9 HP-9901CMP). About one-quarter of the fleet was equipped by November 2026, with the rest expected by mid-2027, per an executive on its earnings call. Free for ConnectMiles elites and business class; others pay.",
+      "Latin America's first Starlink airline: first flight July 4, 2026 (737 MAX 9 HP-9901CMP). About one-quarter of the fleet was equipped by November 2026, with the rest expected by mid-2027, per its third-quarter results. Free for ConnectMiles elites and business class; others pay.",
     facts: [
       {
-        // An executive's words on the Q3 call as a market site's machine-written
-        // summary carries them: not Copa's page (copaair.com and its investor
-        // hosts refuse every automated client), and a share, not a count.
-        fact: "About one-quarter of Copa's fleet has been equipped with Starlink, with full implementation expected by mid-2027, executive vice president Robert Carey said on the airline's third-quarter earnings call.",
-        asOf: "2026-11-19",
+        // Copa Holdings' own third-quarter release, as filed with the SEC
+        // (6-K, exhibit 99.1). It speaks for the company and names no
+        // executive; it gives a share of the fleet, not a count.
+        fact: "About one-quarter of Copa's fleet is equipped with Starlink, with full implementation expected by mid-2027, Copa Holdings said in its third-quarter results.",
+        asOf: "2026-11-18",
         source: {
-          label: "MarketBeat (Copa Q3 2026 earnings call summary)",
-          url: "https://www.marketbeat.com/instant-alerts/transcript-copa-q3-earnings-call-highlights-2026-11-19/",
+          label: "Copa Holdings (Q3 2026 results, filed with the SEC)",
+          url: "https://www.sec.gov/Archives/edgar/data/1345105/000162828026075125/cpa3q26ex-991.htm",
         },
       },
       {
@@ -885,7 +885,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        // The November call moved the finish to mid-2027.
+        // The November results moved the finish to mid-2027.
         fact: "At the July 2026 launch, Copa planned to complete Starlink implementation across its entire fleet during the first quarter of 2027.",
         asOf: "2026-07-06",
         superseded: true,
