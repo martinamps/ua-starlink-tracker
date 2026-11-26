@@ -57,6 +57,15 @@ describe("the names table", () => {
     }
   });
 
+  // The page template prints titles and descriptions into the head as they
+  // come, inside double-quoted attributes: a name with one of these would
+  // break the tag, or be read as markup. Held here so it is a rule, not luck.
+  test("no name holds a character the head would need escaped", () => {
+    for (const [code, parts] of entries) {
+      for (const part of parts) expect(part, code).not.toMatch(/["&<>]/);
+    }
+  });
+
   test("no two airports print the same place", () => {
     const byName = new Map<string, string[]>();
     for (const [code] of entries) {

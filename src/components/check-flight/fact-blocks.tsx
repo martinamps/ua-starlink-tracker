@@ -5,6 +5,7 @@
 import React from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { SiteConfig } from "../../airlines/registry";
+import { routePlaceNames } from "../../utils/airport-names";
 import { airportTimezone } from "../../utils/airport-tz";
 import { Chip, Section, StatInline } from "../layout";
 import { countSentence, followSentence } from "../outlook-copy";
@@ -157,6 +158,7 @@ export function FlightFactBlocks({
           <ul className="divide-y divide-subtle text-sm">
             {flight.routes.map((r) => {
               const lastSeen = lastSeenLabel(r.last_seen_at);
+              const places = routePlaceNames(r.departure_airport, r.arrival_airport);
               return (
                 <li
                   key={`${r.departure_airport}-${r.arrival_airport}`}
@@ -169,6 +171,7 @@ export function FlightFactBlocks({
                         <span className="text-secondary"> · {formatDuration(r.dur_sec)}</span>
                       ) : null}
                     </div>
+                    {places && <div className="text-secondary">{places}</div>}
                     <div className="text-muted">
                       Seen {fmt(r.times)} time{r.times === 1 ? "" : "s"}
                       {lastSeen ? ` · ${lastSeen}` : ""}

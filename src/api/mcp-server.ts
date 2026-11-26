@@ -2044,7 +2044,7 @@ Probability and confidence are independent: 92% with 4 obs (medium) is a *less c
  * Still short-circuits, as a plain answer: fed on, an unseen code made the
  * planner invent positioning legs and the search advise the planner.
  */
-function unseenAirports(
+export function unseenAirports(
   cfg: AirlineConfig,
   reader: ScopedReader,
   ...codes: (string | undefined)[]

@@ -137,7 +137,7 @@ import {
   withLegNote,
 } from "../api/check-flight-core";
 import { type LookupAsker, asLookupAsker } from "../api/lookup-budget";
-import { handleMcpRequest } from "../api/mcp-server";
+import { handleMcpRequest, unseenAirports } from "../api/mcp-server";
 import { QATAR_PUBLISHED_DAYS_FORWARD, qatarEquipmentName } from "../api/qatar-status";
 import {
   QATAR_HISTORY_WINDOW_DAYS,
@@ -278,6 +278,8 @@ import type {
   RouteSchedule,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
+import { orList, placeCodeAirports } from "../utils/airport-aliases";
+import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-names";
 import {
   airportLocalDate,
   airportTimezone,
@@ -1576,12 +1578,39 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   if (origin.trim().toUpperCase() === destination.trim().toUpperCase()) {
     return jsonError(400, "Origin and destination must differ");
   }
+  // An airport nobody holds gets no itinerary: the planner would otherwise
+  // route "any flight" from NYC or ROMA to a real hub. Same rule as the MCP
+  // planner: unknown is outside the coordinate table and absent from this
+  // airline's flights. K/P ICAO spellings are read as their IATA code.
+  const from = normalizeAirportCode(origin);
+  const to = normalizeAirportCode(destination);
+  const unknown = [
+    ...(from ? [] : [origin]),
+    ...(to ? [] : [destination]),
+    ...unseenAirports(cfg, reader, from ?? undefined, to ?? undefined),
+  ].map((raw) => raw.trim().toUpperCase());
+  if (!from || !to || unknown.length > 0) {
+    // Only letters shaped like a code are said back.
+    const named = unknown.filter((code) => /^[A-Z]{3,4}$/.test(code));
+    // A city code (NYC from an address, or typed before the page's names
+    // file loaded) is offered that city's airports, from the alias list.
+    const offers = named.flatMap((code) => {
+      const airports = placeCodeAirports(code);
+      return airports ? [` For ${code}, try ${orList(airports)}.`] : [];
+    });
+    const message =
+      named.length === unknown.length
+        ? `No airport on record with the code ${named.join(" or ")}.${offers.join("")} Enter a city or a 3-letter airport code.`
+        : "Enter a 3-letter airport code for both airports.";
+    return json({ origin, destination, itineraries: [], baseline: null, message });
+  }
+  if (from === to) return jsonError(400, "Origin and destination must differ");
   // The itinerary planner runs on the flight-history model. Model-less
   // tenants get the registry route answer as prose (additive `message`
   // field; itineraries stays [] so the page's empty-state contract holds).
   // The message carries registry text only — the page injects it as HTML.
   if (!cfg.flightHistoryModel) {
-    const r = carrierRouteAnswer(cfg, reader, origin, destination);
+    const r = carrierRouteAnswer(cfg, reader, from, to);
     const message = r
       ? joinSentences(`~${Math.round(r.probability * 100)}% Starlink — ${r.reason}`)
       : joinSentences(
@@ -1594,14 +1623,14 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   const dateParam = url.searchParams.get("date");
   const targetDateUnix =
     dateParam && routeBoardDateOk(dateParam) ? flightDateWindow(dateParam)?.mid : undefined;
-  const itineraries = planItinerary(reader, origin, destination, {
+  const itineraries = planItinerary(reader, from, to, {
     maxItineraries: 12,
     maxStops,
     targetDateUnix,
   });
   // Additive: the nonstop every connection is measured against (null when the
   // pair's duration is unknowable, i.e. an airport outside the coordinate table).
-  const baseline = routeBaseline(reader, origin, destination);
+  const baseline = routeBaseline(reader, from, to);
   return json({ origin, destination, itineraries, baseline });
 };
 
@@ -3923,13 +3952,42 @@ function routeFlightNumbers(ctx: RequestContext, board: RouteFlightBoard): strin
   return [...new Set([...listed, ...board.flights.map((f) => f.flight_number)])];
 }
 
-/** The search snippet: the board's own facts, never a count it doesn't show. */
-function routeMetaDescription(
+/**
+ * The search snippet: the board's own facts, never a count it doesn't show.
+ * The pair is named by city and code where that fits whole under `max`. A
+ * long pair gives up its codes first (the title and the heading carry them),
+ * so the next-flight sentence stays; then that sentence; then the cities.
+ * Without codes, an airport of a city that has several is named.
+ */
+export function routeMetaDescription(
   cfg: AirlineConfig,
   board: RouteFlightBoard,
-  flightNumbers: string[]
+  flightNumbers: string[],
+  max = META_DESCRIPTION_MAX
 ): string {
-  const pair = `${board.origin} to ${board.destination}`;
+  const named = routePairLabel(board.origin, board.destination);
+  const codes = `${board.origin} to ${board.destination}`;
+  // With no code on the line, a city with several airports says which one:
+  // "Washington Dulles", never "Washington to Washington".
+  const from = airportSpokenPlace(board.origin);
+  const to = airportSpokenPlace(board.destination);
+  const cities = from && to && from !== to ? `${from} to ${to}` : null;
+  return (
+    [
+      routeDescription(cfg, board, flightNumbers, named, true),
+      ...(cities ? [routeDescription(cfg, board, flightNumbers, cities, true)] : []),
+      routeDescription(cfg, board, flightNumbers, named, false),
+    ].find((t) => t.length <= max) ?? routeDescription(cfg, board, flightNumbers, codes, true)
+  );
+}
+
+function routeDescription(
+  cfg: AirlineConfig,
+  board: RouteFlightBoard,
+  flightNumbers: string[],
+  pair: string,
+  nextFlight: boolean
+): string {
   const n = board.flights.length;
   if (n === 0) {
     if (flightNumbers.length === 0)
@@ -3959,7 +4017,28 @@ function routeMetaDescription(
   }
   const at = zonedDeparture(assigned[0].t, airportTimezone(board.origin));
   const k = assigned.length;
-  return `${fmt(k)} of ${fmt(n)} ${cfg.shortName} ${pair} nonstops ${k === 1 ? "has" : "have"} a Starlink plane assigned in the next ${DEPARTURE_WINDOW_HOURS} hours. The next is ${assigned[0].fn} on ${at.date} at ${at.time}.`;
+  const count = `${fmt(k)} of ${fmt(n)} ${cfg.shortName} ${pair} nonstops ${k === 1 ? "has" : "have"} a Starlink plane assigned in the next ${DEPARTURE_WINDOW_HOURS} hours.`;
+  return nextFlight ? `${count} The next is ${assigned[0].fn} on ${at.date} at ${at.time}.` : count;
+}
+
+/**
+ * The route page's <title>: the pair by city and code, as people search it
+ * ("United Chicago to Denver Starlink"). The question the H1 asks does not
+ * fit with two cities in it, so the title states the same thing shorter, and
+ * a pair too long for any wording keeps the old question with its codes.
+ */
+export function routeTitle(airline: string, origin: string, destination: string): string {
+  const named = routePairLabel(origin, destination);
+  const codes = `${origin} to ${destination}`;
+  const question = `Which ${airline} ${codes} Flights Have Starlink?`;
+  if (named === codes) return question;
+  return (
+    [
+      `${airline} ${named} Flights With Starlink`,
+      `${airline} ${named} Starlink Flights`,
+      `${named} Starlink Flights`,
+    ].find((t) => t.length <= TITLE_MAX) ?? question
+  );
 }
 
 function routePageMeta(
@@ -3970,19 +4049,19 @@ function routePageMeta(
 ): PageMeta {
   const { origin, destination } = board;
   const pair = `${origin} to ${destination}`;
-  // The question the H1 asks, with the carrier, which searchers type.
-  const question = `Which ${cfg.shortName} ${pair} Flights Have Starlink?`;
+  const named = routePairLabel(origin, destination);
   const description = routeMetaDescription(cfg, board, flightNumbers);
   return {
-    siteTitle: question,
+    siteTitle: routeTitle(cfg.shortName, origin, destination),
     siteDescription: description,
     keywords: `${origin} ${destination} starlink, ${pair} wifi, ${cfg.shortName.toLowerCase()} ${origin} ${destination} starlink`,
-    ogTitle: question,
+    // The question the H1 asks, with the carrier; a share card has room for it.
+    ogTitle: `Which ${cfg.shortName} ${named} Flights Have Starlink?`,
     ogDescription: description,
     pageJsonLd: jsonLdBlock({
       "@context": "https://schema.org",
       "@type": "ItemList",
-      name: `${cfg.name} flights on ${origin} → ${destination}`,
+      name: `${cfg.name} flights on ${airportCityWithCode(origin)} → ${airportCityWithCode(destination)}`,
       numberOfItems: flightNumbers.length,
       itemListElement: flightNumbers.map((fn, i) => ({
         "@type": "ListItem",

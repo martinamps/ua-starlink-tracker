@@ -1,5 +1,6 @@
 import type { SiteConfig } from "../airlines/registry";
 import type { RouteFlightBoard } from "../api/route-flights";
+import { airportWithCode, routePairLabel } from "../utils/airport-names";
 import type { Link } from "./layout";
 import { Chip, LINK, PageHeader, PageShell, Section } from "./layout";
 import {
@@ -92,10 +93,12 @@ export default function RoutePage({
   pageLinks,
   currentPath,
 }: RoutePageProps) {
+  // A code stays on its city's line: "Denver (DEN)" never breaks before the bracket.
+  const pair = routePairLabel(origin, destination).replaceAll(" (", "\u00a0(");
   const plannerHref = `/route-planner?origin=${origin}&destination=${destination}`;
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
-      <PageHeader title={`Which ${origin} to ${destination} flights have Starlink?`} />
+      <PageHeader title={`Which ${pair} flights have Starlink?`} />
 
       <RouteFlightsSection
         board={board}
@@ -134,7 +137,7 @@ export default function RoutePage({
             <span key={airport}>
               {" · "}
               <a href={`/routes/${airport}`} className={LINK}>
-                Starlink flights from {airport}
+                Starlink flights from {airportWithCode(airport)}
               </a>
             </span>
           ))}

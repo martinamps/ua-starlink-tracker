@@ -13,6 +13,7 @@ import {
 } from "../../airlines/published-count";
 import type { AirlineConfig } from "../../airlines/registry";
 import { ROUTE_AIRPORT_RE } from "../../database/sql/fragments";
+import { airportPlaceName } from "../../utils/airport-names";
 import { excludeMassWriteDays } from "../../utils/install-rate";
 import { Sparkline } from "../charts/sparkline";
 import { LINK, Panel, SECTION_WIDE, StatInline } from "../layout";
@@ -234,28 +235,32 @@ export function AirportBars({
   const max = top[0].count;
   return (
     <ol className={columns === 2 ? "grid gap-x-8 sm:grid-cols-2" : ""}>
-      {top.map((r) => (
-        <li
-          key={r.airport}
-          className="grid grid-cols-[3rem_1fr_3.5rem] items-center gap-3 py-1.5 text-sm"
-        >
-          {linked && ROUTE_AIRPORT_RE.test(r.airport) ? (
-            <a
-              href={`/routes/${r.airport}`}
-              className="font-mono text-primary hover:text-accent transition-colors"
-            >
-              {r.airport}
-            </a>
-          ) : (
-            <span className="font-mono text-primary">{r.airport}</span>
-          )}
-          <Meter
-            share={max > 0 ? r.count / max : 0}
-            label={`${r.airport}: ${fmt(r.count)} Starlink departures`}
-          />
-          <span className="text-right text-secondary tabular-nums">{fmt(r.count)}</span>
-        </li>
-      ))}
+      {top.map((r) => {
+        const place = airportPlaceName(r.airport);
+        return (
+          <li key={r.airport} className="py-1.5 text-sm">
+            <div className="flex items-baseline gap-2">
+              {linked && ROUTE_AIRPORT_RE.test(r.airport) ? (
+                <a
+                  href={`/routes/${r.airport}`}
+                  className="font-mono text-primary hover:text-accent transition-colors"
+                >
+                  {r.airport}
+                </a>
+              ) : (
+                <span className="font-mono text-primary">{r.airport}</span>
+              )}
+              {place && <span className="min-w-0 text-xs text-secondary">{place}</span>}
+              <span className="ml-auto shrink-0 text-secondary tabular-nums">{fmt(r.count)}</span>
+            </div>
+            <Meter
+              share={max > 0 ? r.count / max : 0}
+              label={`${r.airport}: ${fmt(r.count)} Starlink departures`}
+              className="mt-1.5"
+            />
+          </li>
+        );
+      })}
     </ol>
   );
 }
