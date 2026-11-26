@@ -27,8 +27,8 @@ Bun + SQLite + server-rendered React, multi-tenant by Host (`src/airlines/regist
 |---|---|---|
 | Sheet scrape + consensus reconcile | 1 hr | Sync sheet → fleet, hangar notes, sub-fleet check order, settle wifi status |
 | Flight updater | 22.5 s | Keep `upcoming_flights` fresh (1–8 hr smart cache) |
-| Starlink verifier | 60 s | Verify UA tails against United.com |
-| Fleet discovery | 90 s | Find newly-equipped UA tails |
+| Starlink verifier | 60 s | Verify UA tails against United.com, longest-waiting first, inside the shared check budget |
+| Fleet discovery | 90 s | Find newly-equipped UA tails; shares the 364-a-day United check budget with the verifier (`src/scripts/united-check-budget.ts`) and leaves settled tails the verifier has just confirmed |
 | Alaska verifier | 90 s | HA/AS wifi from alaskaair.com |
 | Alaska tracker | 24 hr | AS per-type counts from Alaska's newsroom tracker → `fleet_progress`; complete types settle per tail, unless the chart fails its bounds (`src/database/chart-bounds.ts`), which settles none |
 | Qatar schedule ingester | 1 hr | Per-flight QR equipment → `qatar_schedule` |
@@ -36,13 +36,15 @@ Bun + SQLite + server-rendered React, multi-tenant by Host (`src/airlines/regist
 | Fleet sync | 24 hr | Full FR24 fleet pull, every enabled airline |
 | Daily jobs | 24 hr | Ship numbers, fleet progress (+ tails), FAA registry, SEC anchors, BTS, geofeed, crash-row prune |
 | ADS-B sweep, data-freshness gauges | 5 min | Metrics only (FR24 stays the serving source) |
+| Source health | 5 min | Per-source last good read and last failure, kept in `meta`; gauges, and one Slack notice when a source goes quiet and one when it returns (`src/database/source-health.ts`) |
+| Passenger dedupe-key sweep | 6 hr | Blanks passenger-report dedupe keys past their window |
 | IndexNow new tails | 5 min | Reads the equipped list; when a tail is new, submits that tail's changed pages for each live site, and again at a later pass if the send was capped, paused or failed (40 addresses a site a day; INDEXNOW_DISABLED=1 or true turns it off) |
 
 Community tail lists are no longer imported: QR rides its type rule + schedule ingester, AS its verifier, and AF serves its last stored guide, dated.
 
 **Tables (29):** core `starlink_planes`, `united_fleet`, `upcoming_flights`, `starlink_verification_log`, `departure_log`, `flight_routes`, `flight_assignment_log`, `flown_assignments`, `first_flights`, `meta`; pipeline `fleet_progress`, `fleet_progress_tails`, `fleet_guide_tails`, `fleet_anchors`, `pipeline_events`, `starlink_prefixes`, `faa_registry`, `sec_filings_seen`, `sheet_mod_notes`; Qatar `qatar_schedule`, `qatar_equipment_history`, `qatar_fetch_coverage`; ADS-B `adsb_sweeps`, `adsb_observations`, `adsb_flight_draws`; BTS `bts_monthly_operators`, `bts_monthly_routes`, `bts_monthly_tails`; `passenger_reports`. DDL lives in `setupTables` (`src/database/database.ts`).
 
-**Routes:** exact entries in `createApp(db).routes`, prefixes in `prefixRoutes` (`src/server/app.ts`; each entry declares its methods and feature flag). Pages `/`, `/fleet`, `/fleet/{type}`, `/check-flight[/…]`, `/route-planner[/…]`, `/routes`, `/airlines[/…]`, `/compare[/…]`, `/newly-equipped`, `/methodology`, `/timeline`, `/how-to-check`, `/is-starlink-free`, `/live-tv`, `/install-rate`, `/embed`, `/mcp` · APIs `/api/data`, `/api/fleet-summary`, `/api/routes`, `/api/check-flight`, `/api/check-any-flight`, `/api/compare-route`, `/api/predict-flight`, `/api/plan-route`, `/api/mismatches`, `/api/fleet-discovery`, `/api/passenger-probe` · feeds `/feed.xml`, `/cal/…` (.ics), `/badge.svg`, `/data/starlink-tails.csv`, `/sitemap.xml`, `/llms.txt`, `/robots.txt`. `app.routeTags` is the `route` metric tag budget (docs/OBSERVABILITY.md).
+**Routes:** exact entries in `createApp(db).routes`, prefixes in `prefixRoutes` (`src/server/app.ts`; each entry declares its methods and feature flag). Pages `/`, `/fleet`, `/fleet/{type}`, `/check-flight[/…]`, `/route-planner[/…]`, `/routes`, `/routes/{airport}`, `/airlines[/…]`, `/compare[/…]`, `/newly-equipped`, `/methodology`, `/timeline`, `/how-to-check`, `/is-starlink-free`, `/live-tv`, `/install-rate`, `/embed`, `/mcp` · APIs `/api/data`, `/api/fleet-summary`, `/api/routes`, `/api/check-flight`, `/api/check-any-flight`, `/api/compare-route`, `/api/predict-flight`, `/api/plan-route`, `/api/mismatches`, `/api/fleet-discovery`, `/api/passenger-probe` · feeds `/feed.xml`, `/cal/…` (.ics), `/badge.svg`, `/data/starlink-tails.csv`, `/sitemap.xml`, `/llms.txt`, `/robots.txt`. `app.routeTags` is the `route` metric tag budget (docs/OBSERVABILITY.md).
 
 **MCP:** stateless Streamable HTTP at `/mcp` exposing 7 tools (`check_flight`, `predict_flight_starlink`, `plan_starlink_itinerary`, `predict_route_starlink`, `search_starlink_flights`, `get_fleet_stats`, `list_starlink_aircraft`). See `src/api/mcp-server.ts`.
 
