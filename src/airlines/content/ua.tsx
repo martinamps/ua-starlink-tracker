@@ -15,6 +15,9 @@ const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, t
 const UA_WIDEBODY_RELEASE =
   "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html";
 
+// United's checker, launched Oct 15, 2026; it answers only within three days of departure.
+const UA_FLIGHT_CHECKER = "https://fleetradar.united.com/program/starlink";
+
 const UAHero = ({ stats }: HeroProps) => (
   <RolloutPanel
     stats={stats}
@@ -97,7 +100,11 @@ export const content: AirlineContent = {
           <a href="/chrome" className={LINK}>
             Chrome extension
           </a>{" "}
-          shows the same answer on Google Flights.
+          shows the same answer on Google Flights. United's own{" "}
+          <a href={UA_FLIGHT_CHECKER} className={LINK} target="_blank" rel="noopener noreferrer">
+            Starlink checker
+          </a>{" "}
+          answers from three days before departure.
         </p>
       ),
     },

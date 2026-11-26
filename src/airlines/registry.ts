@@ -385,7 +385,7 @@ const AIRLINE_DEFS = {
         "{{starlinkCount}} of {{totalAircraftCount}} United aircraft have Starlink. Check any United flight by number and date.",
       ogTitle: "United Starlink Tracker: Live Fleet Rollout",
       ogDescription:
-        "Check any United flight for Starlink Wi-Fi, free with MileagePlus, with plane-by-plane status checked against united.com.",
+        "Starlink odds for any United flight and date, every equipped plane by tail number, and connections ranked by Starlink.",
       keywords: "united starlink tracker, united starlink wifi",
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
