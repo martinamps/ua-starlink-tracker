@@ -248,12 +248,21 @@ describe("the ledger", () => {
     }
 
     /**
-     * This version runs a day at the ceiling. It is reverted for `revertHours`,
-     * and the older version, which has no ledger, checks `perHour` times an
-     * hour and writes only the log. Then this version boots again and takes
-     * every slot it is given for a day. Returns when every check really started.
+     * This version runs a day at the ceiling, and `offsetMin` minutes into the
+     * next hour. It is reverted for `revertMin` minutes, and the older version,
+     * which has no ledger, checks `perHour` times an hour and writes only the
+     * log. Then this version boots again and takes every slot it is given for
+     * `daysAfter` days. Returns when every check really started.
      */
-    function revertAndReturn(revertHours: number, perHour: number, logLagSec = 0) {
+    function revertFor(
+      {
+        offsetMin = 0,
+        revertMin,
+        perHour,
+      }: { offsetMin?: number; revertMin: number; perHour: number },
+      logLagSec = 0,
+      daysAfter = 1
+    ) {
       const dir = mkdtempSync(join(tmpdir(), "united-revert-"));
       const path = join(dir, "db.sqlite");
       const made: number[] = [];
@@ -267,9 +276,9 @@ describe("the ledger", () => {
         }
       };
       try {
-        withBoot(path, (handle) => takeAll(handle, T0, T0 + DAY));
-        const revertAt = T0 + DAY;
-        const returnAt = revertAt + revertHours * HOUR;
+        const revertAt = T0 + DAY + offsetMin * 60;
+        const returnAt = revertAt + revertMin * 60;
+        withBoot(path, (handle) => takeAll(handle, T0, revertAt));
         withBoot(path, (handle) => {
           for (let t = revertAt; t < returnAt; t += Math.floor(HOUR / perHour)) {
             made.push(t);
@@ -278,14 +287,29 @@ describe("the ledger", () => {
         });
         const seenOnReturn = withBoot(path, (handle) => {
           const used = unitedBudgetState(handle, returnAt * 1000).used;
-          takeAll(handle, returnAt, returnAt + DAY);
+          takeAll(handle, returnAt, returnAt + daysAfter * DAY);
           return used;
         });
         const inWindowOnReturn = made.filter((t) => t > returnAt - DAY && t < returnAt).length;
-        return { made, seenOnReturn, inWindowOnReturn };
+        return { made, seenOnReturn, inWindowOnReturn, returnAt };
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
+    }
+
+    const revertAndReturn = (revertHours: number, perHour: number, logLagSec = 0) =>
+      revertFor({ revertMin: revertHours * 60, perHour }, logLagSec);
+
+    /** The most checks in any rolling 24 hours that ends at a check this version made after its return. */
+    function busiestAfterReturn(made: readonly number[], returnAt: number): number {
+      const sorted = [...made].sort((a, b) => a - b);
+      let most = 0;
+      let from = 0;
+      for (let to = 0; to < sorted.length; to++) {
+        while (sorted[from] <= sorted[to] - DAY) from++;
+        if (sorted[to] >= returnAt) most = Math.max(most, to - from + 1);
+      }
+      return most;
     }
 
     test.each([
@@ -314,6 +338,29 @@ describe("the ledger", () => {
         }
         // And it is not shut for good: a day after the return it runs at the line.
         expect(afterReturn.length).toBeGreaterThan(0);
+      }
+    );
+
+    // In the hour a revert starts, this version's checks are that hour's oldest
+    // log rows and the older version's its newest. Counting the oldest as the
+    // surplus dropped the newest an hour early, and a day later this version
+    // took their slots while they were still inside the window: up to 374.
+    test.each([
+      [0, 360, 20],
+      [30, 360, 20],
+      [30, 25, 20],
+      [20, 40, 30],
+      [45, 14, 60],
+      [50, 9, 120],
+      [55, 4, 600],
+      [30, 720, 18],
+      [30, 26 * 60, 15],
+    ])(
+      "a revert %i minutes into an hour, for %i minutes at %i checks an hour: two days on, none of this version's checks passes the ceiling",
+      (offsetMin, revertMin, perHour) => {
+        const { made, returnAt } = revertFor({ offsetMin, revertMin, perHour }, 0, 2);
+        expect(made.some((t) => t >= returnAt + DAY)).toBe(true);
+        expect(busiestAfterReturn(made, returnAt)).toBeLessThanOrEqual(UNITED_DAILY_CHECK_BUDGET);
       }
     );
 

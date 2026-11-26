@@ -96,10 +96,12 @@ function logSurplus(db: Database, ledger: readonly number[], now: number): numbe
     if (s > since) ledgered.set(hourOf(s), (ledgered.get(hourOf(s)) ?? 0) + 1);
   }
   const surplus: number[] = [];
-  // Newest first, so an hour's surplus is its oldest log rows: those free
-  // first, and an older version's checks are the ones the ledger never saw.
+  // Oldest first, so an hour's surplus is its newest log rows. Which rows of
+  // the hour the ledger never saw is not known (a revert that starts inside
+  // the hour leaves the older version's checks newest, a return leaves them
+  // oldest). The newest free last, so the count is never under the real one.
   const logged = getRecentUnitedCheckTimes(db, Math.floor(since / 1000)).map((s) => s * 1000);
-  for (const at of logged.reverse()) {
+  for (const at of logged) {
     const left = ledgered.get(hourOf(at)) ?? 0;
     if (left > 0) ledgered.set(hourOf(at), left - 1);
     else surplus.push(at);
