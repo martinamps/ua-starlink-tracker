@@ -51,8 +51,8 @@ function tailTitle(t: FleetTail, marks?: TailMarks, labels = PROVIDER_LABEL): st
 }
 
 /** A tail's title after the tail itself: its Wi-Fi system and any mark. */
-function wifiNote(t: FleetTail, marks?: TailMarks): string {
-  return tailTitle(t, marks).slice(`${t.tail} · `.length);
+function wifiNote(t: FleetTail, marks: TailMarks, labels: Record<WifiProvider, string>): string {
+  return tailTitle(t, marks, labels).slice(`${t.tail} · `.length);
 }
 
 // The two pipeline states worth a visual on the grid — "scheduled" stays
@@ -152,11 +152,13 @@ function FamilyBlock({
   marks,
   typeLink,
   typeLinks,
+  labels,
 }: {
   fam: FleetFamily;
   marks: TailMarks;
   typeLink?: FleetTypeLink;
   typeLinks: Map<string, FleetTypeLink>;
+  labels: Record<WifiProvider, string>;
 }) {
   const spec = AIRCRAFT_SPECS[fam.family];
   const name = familyLabel(fam.family, typeLinks);
@@ -196,7 +198,7 @@ function FamilyBlock({
         </svg>
       </summary>
       <div className="px-2 pb-2">
-        <TailGrid tails={fam.tails} marks={marks} />
+        <TailGrid tails={fam.tails} marks={marks} labels={labels} />
         {typeLink && (
           <a
             href={`/fleet/${typeLink.slug}`}
@@ -270,6 +272,7 @@ export function HangarFloor({
       <div className="fam-container gap-3">
         {hangarFamilies.map((fam) => (
           <FamilyBlock
+            labels={labels}
             key={fam.family}
             fam={fam}
             marks={marks}
@@ -359,12 +362,12 @@ export function TailRegistry({
                     target: "_blank",
                     rel: "nofollow noreferrer noopener",
                   })}
-              title={`${familyLabel(t.family, typeLinks)} · ${tailTitle(t, marks)}`}
+              title={`${familyLabel(t.family, typeLinks)} · ${tailTitle(t, marks, labels)}`}
               // The row shows a tail and a type; its Wi-Fi is colour and a
               // glyph, so the name says it (a title alone is often skipped).
               // It opens with the row's own text, space and all, as speech
               // control expects (WCAG 2.5.3).
-              aria-label={`${t.tail} ${abbr} · ${wifiNote(t, marks)}`}
+              aria-label={`${t.tail} ${abbr} · ${wifiNote(t, marks, labels)}`}
               className={registryClass(t, marks)}
             >
               <span aria-hidden="true" className={`tail-dot${dot.cls}`}>

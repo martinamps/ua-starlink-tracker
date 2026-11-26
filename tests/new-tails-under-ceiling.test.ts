@@ -426,6 +426,9 @@ describe("discovery and a tail either job has just read", () => {
     const { db, fleet, tail, addRead } = setup();
     fleet.retrofit(tail);
     addRead(2, { starlink: true });
+    // The reading is in the log and not in the ledger, so it is counted once.
+    const usedBefore = unitedBudgetState(db).used;
+    expect(usedBefore).toBe(1);
     const skips = countSkips();
     const stats = await runDiscoveryBatch(db, 1, fleet.discovery);
     skips.stop();
@@ -434,7 +437,7 @@ describe("discovery and a tail either job has just read", () => {
     expect(stats.deferred).toBe(1);
     expect(stats.held).toBeNull();
     expect(skips.by).toEqual({ just_read: 1 });
-    expect(unitedBudgetState(db).used).toBe(0);
+    expect(unitedBudgetState(db).used).toBe(usedBefore);
     expect(fleetRow(db, tail).next_check_after).toBe(T0 - 2 * HOUR + 36 * HOUR);
     expect(fleetRow(db, tail).starlink_status).toBe("negative");
 

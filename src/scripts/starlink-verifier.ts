@@ -36,6 +36,7 @@ import {
   type UnitedBudgetState,
   type UnitedCheckClass,
   claimUnitedCheck,
+  endUnitedCheck,
   recordUnitedCheckHeld,
   unitedBudgetState,
 } from "./united-check-budget";
@@ -353,6 +354,8 @@ export async function verifyPlaneStarlink(
 
         // Return null to allow batch processing to continue
         return null;
+      } finally {
+        endUnitedCheck(db);
       }
     },
     { tail_number: tailNumber }

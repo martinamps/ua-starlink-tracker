@@ -30,7 +30,7 @@ import {
   Section,
   SectionTitle,
 } from "./layout";
-import { zonedIsoDate } from "./ui/format";
+import { wholeDates, zonedIsoDate } from "./ui/format";
 
 export type {
   AssignedDeparture,
@@ -235,7 +235,7 @@ export default function CheckFlightPage({
       : flight && assigned
         ? firmLead(flight, assigned)
         : flight
-          ? `${usualSummary(flight)}${typeSettled(flight) ? "" : " A firm answer comes about 2 days before departure, once the aircraft is assigned."}`
+          ? `${wholeDates(usualSummary(flight))}${typeSettled(flight) ? "" : " A firm answer comes about 2 days before departure, once the aircraft is assigned."}`
           : fn
             ? `Pick your travel date to check ${fn}.`
             : "Enter your flight number and date to see whether your aircraft has Starlink.";

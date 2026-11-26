@@ -239,7 +239,8 @@
   color: var(--color-text-muted);
 }
 .tail-sl:hover .tail-num,
-.tail-dim:hover .tail-num {
+.tail-dim:hover .tail-num,
+.type-tails > a:hover {
   text-decoration: underline;
 }
 .tail-sl:target,
@@ -249,12 +250,19 @@
   scroll-margin-top: 5rem;
 }
 /* A type page's tail list: one element per row, its glyph from data-dot.
-   Rows without one keep the empty box, so the tails line up. */
+   Every row keeps the glyph's box as padding, so the tails line up. The glyph
+   sits out of flow so the row's hover underline runs under the tail alone,
+   as it does under a registry row's number. */
+.type-tails > a {
+  position: relative;
+  padding-left: 1.3em;
+}
 .type-tails > a::before {
   content: attr(data-dot);
+  position: absolute;
+  left: 0;
   width: 0.8em;
   text-align: center;
-  flex-shrink: 0;
 }
 .tail-dot {
   width: 0.8em;

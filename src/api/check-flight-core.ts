@@ -70,7 +70,7 @@ import {
   flightDateWindow,
   matchesLocalDate,
 } from "../utils/airport-tz";
-import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
+import { type FallbackSegment, lookupFlightTailVerdict, unreadAircraft } from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
 import {
   type QatarGrade,
@@ -664,7 +664,8 @@ export function recordPrediction(
 export interface ResolveDeps {
   now?: number;
   /** The booking's aircraft type, for carriers whose answer is per programme
-   * type (community-source); used only when no tail is known. */
+   * type (community-source), used only when no tail is known, and for an
+   * airline whose own statement names one type, where it is all there is. */
   aircraftType?: string | null;
   /** Override the FR24 reverse lookup; pass null to disable it (hub check-any-flight). */
   lookupTail?: typeof lookupFlightTailVerdict | null;
@@ -694,6 +695,7 @@ export async function resolveFlightVerdict(
   }
 
   if (cfg.code === "QR") return resolveQatarLeg(reader, normalized, date, window, now, deps);
+  if (cfg.statementRule) return statementVerdict(cfg, reader, normalized, date, window, now, deps);
 
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
 
@@ -715,7 +717,7 @@ export async function resolveFlightVerdict(
       Math.max(u.last_updated, supersededAt.get(u.departure_time) ?? 0)
     );
   }
-  const rows = reader
+  const scheduled = reader
     .getFlightAssignments(variants, window.queryStart, window.queryEnd)
     .filter((r) => {
       if (seen.has(r.departure_time)) return false;
@@ -724,6 +726,13 @@ export async function resolveFlightVerdict(
     })
     .filter(onDate)
     .filter((r) => r.last_updated >= (supersededAt.get(r.departure_time) ?? 0));
+  // An answer made with no live lookup (the hub, a page's first paint) reads
+  // what an earlier lookup stored: a listed tail it named after our last read
+  // of that tail's schedule is on the flight as far as we know.
+  const rows =
+    scheduled.length === 0 && deps.lookupTail === null
+      ? reader.getListedSightings(variants, window.queryStart, window.queryEnd).filter(onDate)
+      : scheduled;
 
   const leg = deps.leg;
   if (!leg) {
@@ -1086,6 +1095,11 @@ async function verdictFromRows(
           aircraftType: deps.aircraftType,
           nowMs: now * 1000,
           scheduled: scheduledAircraft(cfg, reader, normalized, date, live, leg),
+          // With no lookup's answer in hand, the mark the last one left stands in.
+          unreadAircraft:
+            unreadAircraft(raw) > 0 ||
+            (raw === null &&
+              reader.hasUnreadAircraft(buildAirlineFlightNumberVariants(cfg, normalized), date)),
         }),
         fr24Error,
         ...(fr24Shed ? { fr24Shed } : {}),
@@ -1209,6 +1223,49 @@ function assignedFromSegments(
     mark: guide?.mark ?? null,
     guideUpdated,
     guideStale: isGuideStale(guideUpdated, now * 1000),
+  };
+}
+
+/**
+ * An airline held by its own statement: no row, no schedule and no live
+ * lookup exists to read, so the route the caller gives is the whole of what
+ * places the flight. With no route the answer is the statement and an ask
+ * for one; `leg` appears only when a leg was sent, as everywhere else.
+ */
+function statementVerdict(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  normalized: string,
+  date: string,
+  window: FlightDateWindow,
+  now: number,
+  deps: ResolveDeps
+): FlightVerdict {
+  const verdict: AnsweredVerdict = {
+    kind: "no_model",
+    window,
+    normalized,
+    answer: carrierPrediction(cfg, reader, normalized, {
+      route: deps.leg,
+      aircraftType: deps.aircraftType,
+      date,
+      nowMs: now * 1000,
+    }),
+    fr24Error: false,
+  };
+  if (deps.unscoped) return { ...verdict, leg: unscopedResolution(deps.unscoped) };
+  if (!deps.leg) return verdict;
+  return {
+    ...verdict,
+    leg: {
+      origin: deps.leg.origin ?? null,
+      destination: deps.leg.destination ?? null,
+      // No assignment row is held for any leg of such an airline.
+      match: "no_data",
+      otherLegs: [],
+      answered: null,
+      unscopedOutcome: "none",
+    },
   };
 }
 

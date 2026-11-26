@@ -111,7 +111,11 @@ export function cachedFlightAssignments(
 
   let promise: Promise<Assignment>;
   try {
-    promise = fetchAssignments(flightNumber, targetDateUnix);
+    promise = fetchAssignments(flightNumber, targetDateUnix).then((raw) => {
+      const legs = readableLegs(raw);
+      fetchedAt.set(legs, now);
+      return legs;
+    });
   } catch (err) {
     settleShare(true);
     throw err;
@@ -158,6 +162,65 @@ export function cachedFlightAssignments(
     }
   );
   return promise;
+}
+
+/** A leg that named an aircraft we could not read, kept by departure alone. */
+interface UnreadLeg {
+  origin: string;
+  departure_time: number;
+}
+const unreadLegs = new WeakMap<Assignment, UnreadLeg[]>();
+/** When each cached answer was asked for: what it says was true then, not when it is replayed. */
+const fetchedAt = new WeakMap<Assignment, number>();
+const unreadCounts = new WeakMap<FallbackSegment[], number>();
+
+const trimmed = (text: string | null | undefined): string | null =>
+  typeof text === "string" ? text.trim() : null;
+
+/**
+ * The lookup's strings are an outside service's text, and every reader of the
+ * cache prints some of them, so they are checked once here: trimmed, then a
+ * leg whose airports aren't shaped like airports is dropped, and a tail that
+ * isn't shaped like one is blanked. A leg that named an aircraft and lost it
+ * either way is remembered: the flight has an aircraft we know nothing about,
+ * which is not the same as no aircraft named yet.
+ */
+function readableLegs(raw: Assignment): Assignment {
+  const legs: Assignment = [];
+  const unread: UnreadLeg[] = [];
+  for (const a of raw) {
+    const tail = trimmed(a.tail_number);
+    const origin = trimmed(a.origin);
+    const destination = trimmed(a.destination);
+    const route = isAirportCode(origin) && isAirportCode(destination);
+    const named = isRegistration(tail);
+    if (tail && !(named && route)) {
+      unread.push({
+        origin: isAirportCode(origin) ? origin : "",
+        departure_time: a.departure_time,
+      });
+    }
+    if (!route) continue;
+    legs.push({
+      ...a,
+      origin,
+      destination,
+      tail_number: named ? tail : null,
+      aircraft_model: trimmed(a.aircraft_model),
+    });
+  }
+  unreadLegs.set(legs, unread);
+  return legs;
+}
+
+/**
+ * How many aircraft the lookup named for that date and we could not read: a
+ * tail or airport that failed its shape check, or a type name that did on a
+ * tail whose type we don't hold ourselves. Callers must not answer such a
+ * flight as if its aircraft were the one its number usually means.
+ */
+export function unreadAircraft(segments: FallbackSegment[] | null | undefined): number {
+  return (segments && unreadCounts.get(segments)) || 0;
 }
 
 // Request-path FR24 guards, separate from the background updater's own
@@ -367,18 +430,24 @@ export async function lookupFlightTailVerdict(
     caller
   );
   const segments: FallbackSegment[] = [];
+  const onDate = (a: UnreadLeg) =>
+    matchesLocalDate(date, a.origin, a.departure_time, startOfDay, endOfDay);
+  let unread = (unreadLegs.get(assignments) ?? []).filter(onDate).length;
 
   for (const a of assignments) {
-    // The lookup's strings are an outside service's text and are echoed in
-    // answers: a leg whose tail or airports aren't shaped like one is dropped.
-    if (!isRegistration(a.tail_number)) continue;
-    if (!isAirportCode(a.origin) || !isAirportCode(a.destination)) continue;
-    if (!matchesLocalDate(date, a.origin, a.departure_time, startOfDay, endOfDay)) continue;
+    // readableLegs has checked the airports, and blanked a tail that isn't one.
+    if (!a.tail_number || !onDate(a)) continue;
 
     const v = resolveTailVerdict(reader, a.tail_number, nowSec);
+    const aircraftModel = v.aircraft_model || plainTypeName(a.aircraft_model);
+    // The type name was there and unprintable. Our own fleet list's type
+    // for the tail stands in for it downstream; with neither, the aircraft
+    // is one we can't place.
+    const ownType = () => reader.assignedTails.getFleetEntryByTail(a.tail_number ?? "");
+    if (!aircraftModel && a.aircraft_model && !ownType()?.aircraft_type) unread++;
     segments.push({
       tail_number: a.tail_number,
-      aircraft_model: v.aircraft_model || plainTypeName(a.aircraft_model),
+      aircraft_model: aircraftModel,
       origin: a.origin,
       destination: a.destination,
       departure_time: a.departure_time,
@@ -392,6 +461,27 @@ export async function lookupFlightTailVerdict(
     });
   }
 
-  if (segments.length > 0) reader.logResolvedAssignments(normalizedFlightNumber, segments, nowSec);
+  // The log goes by when the lookup was fetched: replayed from the cache, it
+  // must not outrank what a newer lookup of another date has since logged.
+  const asOf = fetchedAt.get(assignments) ?? nowSec;
+  // Before the log: a tail the lookup still names is seen again just below.
+  reader.withdrawUnreturnedSightings(
+    normalizedFlightNumber,
+    [
+      ...assignments,
+      ...(unreadLegs.get(assignments) ?? []).map((u) => ({ ...u, tail_number: null })),
+    ],
+    asOf
+  );
+  reader.noteUnreadAircraft(
+    normalizedFlightNumber,
+    [
+      ...assignments.map((a) => ({ ...a, unread: false })),
+      ...(unreadLegs.get(assignments) ?? []).map((u) => ({ ...u, unread: true })),
+    ],
+    asOf
+  );
+  if (segments.length > 0) reader.logResolvedAssignments(normalizedFlightNumber, segments, asOf);
+  unreadCounts.set(segments, unread);
   return segments;
 }

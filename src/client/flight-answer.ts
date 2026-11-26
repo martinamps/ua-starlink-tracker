@@ -17,6 +17,7 @@ import {
   probLabel,
   probPhrase,
   probTier,
+  wholeDates,
   zonedDeparture,
   zonedIsoDate,
 } from "../components/ui/format";
@@ -280,7 +281,7 @@ const swapNote = (ctx: AnswerContext) =>
 
 function card(answer: AnswerTone, headline: string, body: string): string {
   const tone = ANSWER_TONE[answer];
-  return `<div class="rounded-lg border p-5 ${TONE_CARD[tone] ?? NEUTRAL_CARD}" data-tone="${answer}"><h2 class="font-display text-xl ${headlineClass(tone)} text-balance">${esc(headline)}</h2>${body}</div>`;
+  return `<div class="rounded-lg border p-5 ${TONE_CARD[tone] ?? NEUTRAL_CARD}" data-tone="${answer}"><h2 class="font-display text-xl ${headlineClass(tone)} text-balance">${wholeDates(esc(headline))}</h2>${body}</div>`;
 }
 
 function probabilityBar(p: number, answer: AnswerTone): string {
@@ -347,7 +348,7 @@ function countedAnswer(
   const html = card(
     tone,
     headline,
-    `<p class="mt-3 text-sm text-secondary">${esc(said)} ${esc(note)}</p>${watchRow(ctx, false)}`
+    `<p class="mt-3 text-sm text-secondary">${wholeDates(esc(said))} ${esc(note)}</p>${watchRow(ctx, false)}`
   );
   return { tone, headline, html, firm: false };
 }

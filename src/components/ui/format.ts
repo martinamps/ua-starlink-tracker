@@ -134,6 +134,37 @@ export function monthDay(input: DateInput, nowSec?: number): string {
   }).format(d);
 }
 
+const SHORT_DATE = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2})(?:, (\d{4}))?\b/g;
+
+/**
+ * The text with each "Oct 26" or "Oct 26, 2026" held together by no-break
+ * spaces, so a narrow line never ends inside a date. For text about to be
+ * drawn on a page; an API's or a description's sentence keeps plain spaces.
+ */
+export const wholeDates = (text: string): string =>
+  text.replace(
+    SHORT_DATE,
+    (_, month: string, day: string, year?: string) =>
+      `${month}\u00a0${day}${year ? `,\u00a0${year}` : ""}`
+  );
+
+/**
+ * The text cut at each short date, words and spaces unchanged, so a page can
+ * hold a date on one line by wrapping it where no-break spaces would change
+ * the text a reader copies or a test reads.
+ */
+export function dateRuns(text: string): Array<{ text: string; date: boolean }> {
+  const runs: Array<{ text: string; date: boolean }> = [];
+  let from = 0;
+  for (const m of text.matchAll(SHORT_DATE)) {
+    if (m.index > from) runs.push({ text: text.slice(from, m.index), date: false });
+    runs.push({ text: m[0], date: true });
+    from = m.index + m[0].length;
+  }
+  if (from < text.length) runs.push({ text: text.slice(from), date: false });
+  return runs;
+}
+
 /** "Sep 2026" for a YYYY-MM month key. */
 export const monthYear = (month: string) => utc(`${month}-01`, { month: "short", year: "numeric" });
 

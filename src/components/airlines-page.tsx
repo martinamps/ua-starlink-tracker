@@ -36,7 +36,14 @@ import {
 } from "../airlines/rollout-facts";
 import { siteShowsAircraftNotWifi } from "../api/check-flight-core";
 import type { PerAirlineStat } from "../types";
-import { ROLLOUT_TONE, StagePill, factsStage, shareIsPublishable, trackedStage } from "./atoms";
+import {
+  ROLLOUT_TONE,
+  StagePill,
+  StagePillAgain,
+  factsStage,
+  shareIsPublishable,
+  trackedStage,
+} from "./atoms";
 import {
   ButtonLink,
   Chip,
@@ -51,7 +58,7 @@ import {
   Td,
   Th,
 } from "./layout";
-import { fmt, pct } from "./ui/format";
+import { dateRuns, fmt, pct } from "./ui/format";
 import { Pill, TONE_TEXT, type Tone } from "./ui/tone";
 
 const FACTS_TONE: Record<RolloutFactsStatus, Tone> = {
@@ -252,6 +259,36 @@ const METHOD_LABEL = {
 const methodLabel = (cfg: AirlineOverview["cfg"]) =>
   partlyByType(cfg) ? "Part by type, part by plane" : METHOD_LABEL[trackingMethod(cfg)];
 
+/** A source line with each date held on one line: in a phone's narrow figure
+ * column it otherwise broke inside "Oct 26, 2026". */
+function Dated({ text }: { text: string }) {
+  return (
+    <>
+      {dateRuns(text).map((run) =>
+        run.date ? (
+          <span key={run.text} className="whitespace-nowrap">
+            {run.text}
+          </span>
+        ) : (
+          run.text
+        )
+      )}
+    </>
+  );
+}
+
+/** Below sm the stage sits under the airline's name. As a third column it left
+ * the figures 79px on a 360px phone, and cut them off. Its words are in the
+ * status column's markup already, so this copy has the stylesheet draw them:
+ * read without one, a row said "Installing Installing". */
+function StageUnderName({ info }: { info: Parameters<typeof StagePill>[0]["info"] }) {
+  return (
+    <span className="mt-1.5 block sm:hidden">
+      <StagePillAgain info={info} />
+    </span>
+  );
+}
+
 function EquippedCell({ o }: { o: AirlineOverview }) {
   const { cfg, stat } = o;
   if (stat.total === 0) return <span className="text-muted">No data yet</span>;
@@ -261,10 +298,11 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
     return (
       <>
         {fmt(published.count)}
-        <span className="block text-xs text-muted">{ownCountAsOf(published)}</span>
+        <span className="block text-xs text-muted">
+          <Dated text={ownCountAsOf(published)} />
+        </span>
         {published.reportedBy && (
-          // Two short lines: the cell does not wrap, and one long line
-          // widened the table past a phone's screen.
+          // Two short lines, so the credit never reads as part of the date.
           <span className="block text-xs text-muted">
             as reported by
             <span className="block">{published.reportedBy}</span>
@@ -277,8 +315,8 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
     return (
       <>
         {fmt(published.count)}
-        <span className="block text-xs text-muted">
-          {typeSumParts(published)}, {typeSumCredit(published)}
+        <span className="block text-xs text-muted text-balance">
+          <Dated text={`${typeSumParts(published)}, ${typeSumCredit(published)}`} />
         </span>
       </>
     );
@@ -286,7 +324,9 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
   if (shareIsPublishable(cfg, stat)) {
     return (
       <>
-        {fmt(stat.starlink)} of {fmt(stat.total)}{" "}
+        <span className="whitespace-nowrap">
+          {fmt(stat.starlink)} of {fmt(stat.total)}
+        </span>{" "}
         <span className="text-muted">({pct(stat.starlink, stat.total)})</span>
       </>
     );
@@ -337,7 +377,7 @@ export function AirlinesIndexPage({
             <thead>
               <tr>
                 <Th>Airline</Th>
-                <Th>Status</Th>
+                <Th optional>Status</Th>
                 <Th optional>Method</Th>
                 <Th numeric>With Starlink</Th>
                 <Th numeric optional>
@@ -363,14 +403,17 @@ export function AirlinesIndexPage({
                         {o.cfg.shortName} Starlink Tracker →
                       </a>
                     )}
+                    <StageUnderName info={trackedStage(o.cfg, o.stat)} />
                   </Td>
-                  <Td>
+                  <Td optional>
                     <StagePill info={trackedStage(o.cfg, o.stat)} />
                   </Td>
                   <Td optional className="text-secondary">
                     {methodLabel(o.cfg)}
                   </Td>
-                  <Td numeric className="whitespace-nowrap text-primary">
+                  {/* Wraps: a figure's source line alone is wider than a phone, and
+                      a cell that could not wrap pushed the column off the panel. */}
+                  <Td numeric className="text-primary">
                     <EquippedCell o={o} />
                   </Td>
                   <Td numeric optional className="text-secondary">
@@ -439,7 +482,7 @@ function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
         <thead>
           <tr>
             <Th>Airline</Th>
-            <Th>Status</Th>
+            <Th optional>Status</Th>
             <Th optional>Summary</Th>
             <Th numeric>As of</Th>
           </tr>
@@ -456,8 +499,9 @@ function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
                   >
                     {e.name}
                   </a>
+                  <StageUnderName info={factsStage(e.status)} />
                 </Td>
-                <Td className="align-top">
+                <Td optional className="align-top">
                   <StagePill info={factsStage(e.status)} />
                 </Td>
                 <Td optional className="align-top text-secondary">

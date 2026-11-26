@@ -47,6 +47,7 @@ import {
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import { formatFactDate } from "../airlines/rollout-facts";
+import { type StatementAnswer, statementAnswer } from "../airlines/statement-rule";
 import { bandLabel, capitalize } from "../components/ui/format";
 import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
 import type { AirlineTypeCount } from "../database/airline-count";
@@ -1250,7 +1251,10 @@ export type CarrierPrediction =
       guideUpdated: string | null;
       guideStale: boolean;
     }
-  | { kind: "partner_operated"; tail: string };
+  | { kind: "partner_operated"; tail: string }
+  // An airline held by one dated statement of its own (cfg.statementRule):
+  // the airline's word for the route asked about, never a share or odds.
+  | { kind: "statement"; answer: StatementAnswer };
 
 /** One aircraft our own data puts on a flight. */
 export interface AircraftSighting {
@@ -1388,8 +1392,29 @@ export function carrierPrediction(
     nowMs?: number;
     /** The aircraft our data puts on the asked date; absent on an undated ask. */
     scheduled?: readonly AircraftSighting[];
+    /** The lookup named an aircraft for the asked date that we could not read. */
+    unreadAircraft?: boolean;
+    /** The traveller's own airports and date, for an airline answered by its
+     * statement: only the route places such a flight. */
+    route?: { origin?: string; destination?: string };
+    date?: string;
   } = {}
 ): CarrierPrediction {
+  // Reads nothing: no roster or schedule is held for such an airline.
+  if (cfg.statementRule) {
+    return {
+      kind: "statement",
+      answer: statementAnswer(
+        { name: cfg.name, iata: cfg.iata, statementRule: cfg.statementRule },
+        {
+          ...ctx.route,
+          aircraftType: ctx.aircraftType,
+          date: ctx.date,
+          today: new Date(ctx.nowMs ?? Date.now()).toISOString().slice(0, 10),
+        }
+      ),
+    };
+  }
   const noModel: CarrierPrediction = {
     kind: "no_model",
     reason: `No per-flight prediction model exists for ${cfg.name} — Starlink status is determined by aircraft type, not flight-number history. ${cfg.rollout.phaseNote}`,
@@ -1407,10 +1432,26 @@ export function carrierPrediction(
   if (groups) return { kind: "type_split", groups };
 
   const sf = cfg.subfleets.find((s) => s.match(flightNumber));
-  if (sf?.families) {
+  // An aircraft we could not read may be any type. A fixed band's answer
+  // presumes the band's own aircraft, so it is withdrawn; a blended band keeps
+  // its blend, un-narrowed by whatever else was read beside it.
+  if (sf?.families && ctx.unreadAircraft) {
+    if (sf.penetrationOverride != null) return unreadAircraftAnswer(flightNumber, sf);
+  } else if (sf?.families) {
     // The aircraft on the asked date, where we know it, speaks for that date;
     // the number's other departures speak only where we don't.
-    const scheduled = typedSightings((ctx.scheduled ?? []).filter((a) => !a.equipped));
+    const unlisted = (ctx.scheduled ?? []).filter((a) => !a.equipped);
+    const scheduled = typedSightings(unlisted);
+    // A tail we read, don't hold as equipped and can't type is not known to
+    // be the band's aircraft, and a fixed band's answer presumes it is.
+    if (sf.penetrationOverride != null && scheduled.length < unlisted.length) {
+      const typed = new Set(scheduled.map((a) => a.tail));
+      return untypedAircraftAnswer(
+        flightNumber,
+        sf,
+        unlisted.filter((a) => !typed.has(a.tail)).map((a) => a.tail)
+      );
+    }
     const byAircraft =
       scheduled.length > 0
         ? aircraftAnswer(cfg, reader, flightNumber, sf, "scheduled", scheduled)
@@ -1429,6 +1470,64 @@ export function carrierPrediction(
     return { kind: "penetration", sf, pen };
   }
   return noModel;
+}
+
+/**
+ * For an answer made from the number alone (the predict surfaces, which ask
+ * no lookup): did the newest lookup of the flight leave an unread aircraft on
+ * `date`, or with no date on any departure still ahead. Local dates run up to
+ * a day behind UTC, so "still ahead" starts at yesterday's UTC date.
+ */
+export function storedUnreadAircraft(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  date: string | null,
+  nowMs = Date.now()
+): boolean {
+  const variants = buildAirlineFlightNumberVariants(cfg, flightNumber);
+  if (date) return reader.hasUnreadAircraft(variants, date);
+  const from = new Date(nowMs - 86_400_000).toISOString().slice(0, 10);
+  return reader.hasUnreadAircraft(variants, from, true);
+}
+
+function unreadAircraftAnswer(flightNumber: string, sf: SubfleetDef): CarrierPrediction {
+  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  const sentence = joinSentences(
+    `An aircraft is scheduled on ${flightNumber}, but we could not read which one`,
+    `Its number${hint} usually means ${bandLabel(sf.label)} aircraft, and we can't confirm this is one`,
+    "Starlink depends on which aircraft flies yours"
+  );
+  return {
+    kind: "no_model",
+    reason: sentence,
+    aircraft: { basis: "scheduled", tail: null, aircraftType: null, sentence, count: null },
+  };
+}
+
+function untypedAircraftAnswer(
+  flightNumber: string,
+  sf: SubfleetDef,
+  tails: readonly string[]
+): CarrierPrediction {
+  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  const one = tails.length === 1;
+  const sentence = joinSentences(
+    `${flightNumber} is scheduled on ${tails.join(" and ")}, ${one ? "an aircraft" : "aircraft"} we don't hold as having Starlink and whose type we don't know`,
+    `Its number${hint} usually means ${bandLabel(sf.label)} aircraft, and we can't confirm ${one ? "this is one" : "these are"}`,
+    "Starlink depends on which aircraft flies yours"
+  );
+  return {
+    kind: "no_model",
+    reason: sentence,
+    aircraft: {
+      basis: "scheduled",
+      tail: one ? tails[0] : null,
+      aircraftType: null,
+      sentence,
+      count: null,
+    },
+  };
 }
 
 function loggedSightings(
@@ -1572,7 +1671,9 @@ function aircraftAnswer(
     // we name tails of, the answer turns on which tail flies, and the log
     // can't say how often a named one does. So no share is drawn from it: a
     // blended band keeps its own answer, a fixed band keeps no number.
-    if (!scheduled && count.named > 0) {
+    // A line the chart marks complete leaves nothing to depend on which tail
+    // flies: it falls through to the complete-line answer below.
+    if (!scheduled && count.named > 0 && !(fixed && count.connected >= count.total)) {
       if (!fixed) return null;
       const sentence = joinSentences(
         capitalize(subject),
@@ -1609,6 +1710,19 @@ function aircraftAnswer(
     };
   }
   if (!fixed) return null;
+
+  // No chart to quote, but the reason the log draws no share still holds for
+  // a type we name tails of: the answer turns on which tail flies, so the
+  // home band's blend would say more than we know.
+  const named = home && !scheduled ? reader.getNamedOfType(family) : 0;
+  if (named > 0) {
+    const sentence = joinSentences(
+      capitalize(subject),
+      `We name ${named} ${plural(aircraftName(family))} by tail`,
+      "Starlink depends on which aircraft flies yours"
+    );
+    return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count: null } };
+  }
 
   const pen = home ? subfleetPenetration(reader.getSubfleetPenetration(), home) : null;
   if (home && pen && !pen.synthetic && pen.total >= MIN_PENETRATION_TOTAL) {
@@ -1649,8 +1763,10 @@ export function namesScheduledAircraft(answer: CarrierPrediction): boolean {
   );
 }
 
-/** A named tail is a tail-level answer, not a per-type one. */
-export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" {
+/** A named tail is a tail-level answer, not a per-type one; an airline's own
+ * statement is neither. */
+export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" | "statement" {
+  if (answer.kind === "statement") return "statement";
   return answer.kind === "assigned_unconfirmed" || answer.kind === "partner_operated"
     ? "tail"
     : "type";
@@ -1662,7 +1778,11 @@ export function carrierPredictionTelemetry(answer: CarrierPrediction | RouteComp
   outcome: "predicted" | "no_data";
   confidence: "low" | "none";
 } {
-  const informative = answer !== null && answer.kind !== "no_model";
+  // A statement that doesn't cover the flight is no answer for it.
+  const informative =
+    answer !== null &&
+    answer.kind !== "no_model" &&
+    !(answer.kind === "statement" && answer.answer.outcome !== "likely");
   return informative
     ? { outcome: "predicted", confidence: "low" }
     : { outcome: "no_data", confidence: "none" };
@@ -1785,6 +1905,7 @@ export function describeCarrierPrediction(
   opts: { date?: string | null } = {}
 ): string {
   if (answer.kind === "no_model") return answer.reason;
+  if (answer.kind === "statement") return answer.answer.sentence;
   if (answer.kind === "type_progress") {
     const g = guideRef(cfg, answer.guideUpdated);
     return joinSentences(

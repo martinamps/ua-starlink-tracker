@@ -261,6 +261,7 @@ import {
   planItinerary,
   predictFlight,
   routeBaseline,
+  storedUnreadAircraft,
   subfleetBreakdown,
 } from "../scripts/starlink-predictor";
 import type { Prediction } from "../scripts/starlink-predictor";
@@ -339,6 +340,8 @@ import { recordWatchCtaShown, sameDayAlternativesField, watchFeed } from "./watc
 import {
   type AirportBoard,
   airportMetaDescription,
+  airportQuestion,
+  airportTitle,
   buildAirportBoard,
   indexableAirports,
 } from "../api/airport-board";
@@ -463,11 +466,14 @@ function withClampedMeta(vars: Record<string, string>): Record<string, string> {
 }
 
 /** index.html's look without its page machinery: the theme block (which
- * carries the @font-face rules) and stylesheet, but no scripts, analytics,
- * JSON-LD, social tags or canonical. A dead URL has nothing to canonicalize to
- * and nothing to measure. */
+ * carries the @font-face rules), the heading font's preload and the
+ * stylesheet, but no scripts, analytics, JSON-LD, social tags or canonical. A
+ * dead URL has nothing to canonicalize to and nothing to measure. The preload
+ * is part of the look: the fonts are `font-display: optional`, and without it
+ * the heading font arrives after first paint and the fallback stays. */
 function notFoundTemplate(template: string): string {
   const style = template.match(/<style>[\s\S]*?<\/style>/)?.[0] ?? "";
+  const fontPreload = template.match(/<link rel="preload" as="font"[^>]*>/)?.[0] ?? "";
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -477,6 +483,7 @@ function notFoundTemplate(template: string): string {
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="{{accentColor}}" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    ${fontPreload}
     {{stylesheetTag}}
     ${style}
   </head>
@@ -1066,6 +1073,28 @@ function notTrackedResponse(
   );
 }
 
+/**
+ * The hub answers an old Hawaiian HA number as Hawaiian's, so the note saying
+ * which number is sold today rides behind the answer as an added last key. A
+ * single-airline host refuses the number, and notTrackedResponse adds it there.
+ */
+function withHubNumberNote(handler: Handler): Handler {
+  return async (ctx) => {
+    const res = await handler(ctx);
+    const note =
+      ctx.tenant === "ALL" && res.status === 200
+        ? retiredCodeNote(ctx.url.searchParams.get("flight_number") ?? "")
+        : null;
+    if (!note) return res;
+    const body: unknown = await res.clone().json();
+    if (!body || typeof body !== "object" || Array.isArray(body) || "error" in body) return res;
+    return new Response(JSON.stringify({ ...body, flight_number_note: note }), {
+      status: res.status,
+      headers: res.headers,
+    });
+  };
+}
+
 /** REST renderer over decideCarrier (check-flight-core owns the policy). */
 function resolveCarrier(
   tenant: Tenant,
@@ -1491,7 +1520,11 @@ const apiPredictFlight: Handler = ({ url, reader, getReader, tenant }) => {
     // No flight-history model for this carrier — answer from the registry
     // (subfleet penetration / type story), mirroring check-flight's no_model.
     const normalized = ensureAirlinePrefix(cfg, flightNumber);
-    const answer = carrierPrediction(cfg, carrier.reader, normalized);
+    // This ask has no date and makes no lookup: an aircraft the last lookup
+    // could not read on a departure still ahead withdraws a fixed band's number.
+    const answer = carrierPrediction(cfg, carrier.reader, normalized, {
+      unreadAircraft: storedUnreadAircraft(cfg, carrier.reader, normalized, null),
+    });
     const t = carrierPredictionTelemetry(answer);
     recordFlightLookup("api_predict", t.outcome, t.confidence, cfg.code);
     return json({
@@ -1720,7 +1753,8 @@ const mcp: Handler = async (ctx) => {
       ogTitle: "Add Starlink Tracker to Claude",
     };
     if (!site.features.mcpPage) {
-      const description = `Paste one URL into Claude Desktop. ${mcpPageCopy(site).dek}`;
+      const copy = mcpPageCopy(site);
+      const description = `Paste one URL into Claude Desktop. ${copy.metaDek ?? copy.dek}`;
       return renderSubPage(ctx, McpPage, "/mcp", {
         ...meta,
         siteDescription: description,
@@ -4668,16 +4702,14 @@ function busiestIndexableAirport(reader: ScopedReader): string | undefined {
 }
 
 function airportPageMeta(ctx: RequestContext, cfg: AirlineConfig, board: AirportBoard): PageMeta {
-  const { airport } = board;
-  // The question the H1 asks, with the carrier, as on the route pages.
-  const question = `Which ${cfg.shortName} Flights From ${airport} Have Starlink?`;
-  const description = airportMetaDescription(board);
+  const { airport, place } = board;
+  const description = airportMetaDescription(board, META_DESCRIPTION_MAX);
   const routes = board.destinations.filter((d) => d.linkable);
   return {
-    siteTitle: question,
+    siteTitle: airportTitle(board),
     siteDescription: description,
     keywords: `${airport} starlink flights, ${cfg.shortName.toLowerCase()} ${airport} starlink, ${airport} flights with starlink wifi`,
-    ogTitle: question,
+    ogTitle: airportQuestion(board),
     ogDescription: description,
     // Structured data only where the page indexes, as on the type pages.
     ...(board.indexable && routes.length > 0
@@ -4685,7 +4717,7 @@ function airportPageMeta(ctx: RequestContext, cfg: AirlineConfig, board: Airport
           pageJsonLd: jsonLdBlock({
             "@context": "https://schema.org",
             "@type": "ItemList",
-            name: `${cfg.name} routes from ${airport} flown by Starlink planes`,
+            name: `${cfg.name} routes from ${place} flown by Starlink planes`,
             numberOfItems: routes.length,
             itemListElement: routes.map((d, i) => ({
               "@type": "ListItem",
@@ -5886,10 +5918,10 @@ export function createApp(
     "/api/data": read(apiData),
     "/api/fleet-summary": read(apiFleetSummary),
     "/api/routes": read(apiRoutes, "routesPage"),
-    "/api/check-flight": read(apiCheckFlight),
-    "/api/check-any-flight": read(apiCheckAnyFlight),
+    "/api/check-flight": read(withHubNumberNote(apiCheckFlight)),
+    "/api/check-any-flight": read(withHubNumberNote(apiCheckAnyFlight)),
     "/api/compare-route": read(apiCompareRoute),
-    "/api/predict-flight": read(apiPredictFlight),
+    "/api/predict-flight": read(withHubNumberNote(apiPredictFlight)),
     "/api/plan-route": read(apiPlanRoute),
     "/api/route-flights": read(apiRouteFlights, "routePlannerPage"),
     "/api/mismatches": read(apiMismatches),

@@ -17,7 +17,7 @@ import { operatorName } from "./home/aircraft-list";
 import { ButtonLink, Chip, Eyebrow, Panel } from "./layout";
 import { fmt, monthDay, pct } from "./ui/format";
 import { Meter } from "./ui/meter";
-import { Pill, type Tone } from "./ui/tone";
+import { DrawnPill, Pill, type Tone } from "./ui/tone";
 
 export type { PerAirlineStat };
 
@@ -189,6 +189,12 @@ export function factsStage(status: RolloutFactsStatus): StageInfo {
 
 export function StagePill({ info }: { info: StageInfo }) {
   return <Pill tone={STAGE_TONE[info.stage]}>{info.label}</Pill>;
+}
+
+/** The stage again for another layout of the same row, its words drawn by the
+ * stylesheet (DrawnPill) so the row's markup says them once. */
+export function StagePillAgain({ info }: { info: StageInfo }) {
+  return <DrawnPill tone={STAGE_TONE[info.stage]} label={info.label} />;
 }
 
 /**

@@ -264,6 +264,76 @@ Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
       HA-numbered flight gets no badge: HA's answer is a per-type split with no
       single probability (see README "Coverage windows differ by airline")
 
+## Aer Lingus (hub endpoint, the airline's statement, new in 2.4.0)
+
+Not yet run in a real browser: 2.4.0 was built on 2026-11-26 and tested
+against the tracker's own answers only.
+
+- [ ] DUB → JFK or SNN → BOS on Aer Lingus, a date up to 2027-03-27: a gray
+      "Starlink (likely)" badge. Its tooltip begins "Likely Starlink: Aer
+      Lingus said on 2026-11-18," then quotes "The service is already available
+      across all Aer Lingus transatlantic routes." and ends with the caution
+      about flights a partner airline operates and aircraft changes
+- [ ] DUB → LHR or DUB → AMS on Aer Lingus: no badge, and with "Starlink
+      only" on the card is not dimmed
+- [ ] DUB → JFK dated 2027-03-28 or later: no badge, not dimmed
+- [ ] DevTools: the request goes to
+      `airlinestarlinktracker.com/api/check-any-flight` with `origin` and
+      `destination`, and the answer carries `airline_statement`
+- [ ] DUB → ORD: Aer Lingus and American both fly it, and American's flights
+      are also sold under `EI` numbers. Note what the card for an
+      American-operated `EI` number shows: the statement does not cover it
+
+## Virgin Atlantic and SAS (hub endpoint, the stated aircraft type, new in 2.5.0)
+
+Not yet run on Google Flights: 2.5.0 was built on 2026-11-26 and tested
+against the tracker's own answers and made-up cards only. The content script
+itself runs in Chromium on those made-up pages (`tests/extension-page.test.ts`).
+How Google Flights prints the aircraft type on a card, and how it opens a
+card's details, was not seen, so the first three checks decide whether this
+feature works at all.
+
+- [ ] LHR → JFK on Virgin Atlantic, card closed: no badge
+- [ ] Open the card's details. Note exactly how the aircraft type is printed
+      (expected "Airbus A350" or "Airbus A350-1000") and whether "Operated by"
+      appears for a flight Virgin Atlantic flies itself
+- [ ] With the details open on a Virgin Atlantic A350 flight: a gray
+      "Starlink (likely)" badge. Its tooltip begins "Likely Starlink, only if
+      this flight stays on the Airbus A350", quotes Virgin Atlantic's
+      sentence, says "checked 2026-11-26" (never "said on"), then "The same
+      page says that availability may vary depending on your aircraft and
+      route.", and ends with the caution about a partner airline's aircraft
+      and aircraft changes. The badge stays put while the list changes: it
+      does not blink off and on
+- [ ] A Virgin Atlantic 787 or A330 flight, details open: no badge, and with
+      "Starlink only" on the card is not dimmed
+- [ ] A `VS` number operated by Delta, Air France or KLM (LHR → ATL, or any
+      card that says "Operated by"), details open, even on an A350: no badge
+- [ ] CPH → LHR or ARN → OSL on SAS, details open on an "Airbus A320neo":
+      gray "Starlink (likely)"; on an "Airbus A320": no badge
+- [ ] An SAS flight operated by a partner (a CRJ, Embraer or ATR, "Operated
+      by"): no badge
+- [ ] A two-flight card on Virgin Atlantic or SAS: no badge, also when the
+      other flight is on an airline whose code starts with a digit (IndiGo
+      6E, Cape Air 9K)
+- [ ] The same Virgin Atlantic A350 card with Google Flights in another
+      language (add `&hl=de`, `&hl=fr` or `&hl=sv` to the address): no badge,
+      on purpose. Note the `lang` of the page's `<html>` element in DevTools,
+      and how the card says who operates a partner's flight in that language
+- [ ] A wet-lease card (an SAS or Virgin Atlantic number flown by another
+      company's aircraft and crew), details open, in English: no badge. Note
+      the operator line word for word ("Operated by …", "Plane and crew by …")
+- [ ] The exact characters around the type: in DevTools, select the type's
+      element and run `JSON.stringify($0.parentElement.innerText)` in the
+      console. Note what stands before and after the type (a line break, a
+      " · ", a no-break space `\u00a0`), whether a variant follows it
+      ("-1000", "(Sharklets)"), and whether the card prints a duration as
+      "7 hr 55 min": the reader takes "hr" and a few other words as its sign
+      that the card is in English
+- [ ] DevTools: the request to `/api/check-any-flight` carries
+      `aircraft_type` only for `VS` and `SK` numbers, and a United, Alaska,
+      Qatar or Aer Lingus request is unchanged
+
 ## Qatar (hub endpoint, equipment type)
 
 Qatar's flight numbers come and go with its schedule, so pick them on the day:

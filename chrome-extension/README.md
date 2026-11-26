@@ -3,7 +3,9 @@
 Chrome extension (Manifest V3) that badges Google Flights search results with
 the Starlink WiFi status of each flight — for United, Alaska (including
 Hawaiian Airlines-operated flights, which Google Flights lists under Alaska
-`AS` flight numbers), and Qatar Airways.
+`AS` flight numbers), Qatar Airways, from 2.4.0 Aer Lingus flights between
+Ireland and North America, and from 2.5.0 Virgin Atlantic and SAS flights whose
+card states the aircraft type.
 
 ## Installation (development)
 
@@ -25,6 +27,7 @@ all** rather than a guess:
 |---|---|
 | **Starlink** (blue) | Verified — the assigned aircraft was confirmed Starlink against the airline's own site |
 | **Starlink (installed)** (green) | The assigned aircraft is Starlink-equipped per fleet data, not yet re-verified |
+| **Starlink (likely)** (gray) | No aircraft or schedule is held for the airline: the airline itself says Starlink is on this route (Aer Lingus, Ireland to North America) or on the aircraft type the card states (a Virgin Atlantic A350, an SAS A320neo). The tooltip quotes its sentence with the date |
 | **Starlink ~92%** (gray) | No aircraft assigned yet (airlines assign ~2 days out); the percentage is this flight number's historical rate (United), the equipped share of the subfleet that flies it (Alaska), or the fitted share of the scheduled aircraft type (a Qatar 777-300ER or 787-8). Shown only at ≥80% with non-low confidence |
 | *no badge* | Verified non-Starlink aircraft, a prediction below the bar or of low confidence, an answer that is type-determined with no aircraft assigned yet (see below), an untracked airline, or an API that couldn't answer — silence over invention |
 
@@ -78,6 +81,45 @@ depends on the airline:
   `HA`-numbered lookups still work if Google ever shows them again, but an
   `HA` number doesn't pin the aircraft type, so before the ~2-day assignment
   window it gets no badge rather than a blended guess.
+- **Aer Lingus** (2.4.0) — no aircraft and no schedule are held. Aer Lingus
+  said on 18 November 2026 that Starlink "is already available across all Aer
+  Lingus transatlantic routes", so a card for an `EI` flight between Ireland
+  and the US, Canada or Mexico shows a gray "Starlink (likely)" whose tooltip
+  quotes that sentence. The tracker answers by route, so the extension must
+  send the card's origin and destination: an `EI` flight with no leg, on
+  another route, or dated after the statement's end date (27 March 2027) gets
+  no badge and is never dimmed. An `EI` number flown by a partner airline is
+  not covered by the statement; the tooltip says so, and the card is not told
+  apart from Aer Lingus's own flights.
+- **Virgin Atlantic and SAS** (2.5.0) — no aircraft and no schedule are held.
+  Virgin Atlantic's Starlink page (undated; read 26 November 2026) says
+  "Starlink is now available across our A350 fleet", and SAS said on
+  1 September 2026 "With all 81 A320neo aircraft now equipped". The tracker
+  answers only for an aircraft type the caller states, so the extension reads
+  the type from the card's visible text and sends it as `aircraft_type`.
+  Google Flights shows the type only once a card's details are open, so a
+  closed card gets no badge. A partner airline's aircraft under a `VS` or
+  `SK` number is not covered by the airline's statement, whatever its type, so
+  the reader sends a type only when every doubt is ruled out
+  (`statedAircraftType` in `lib.js`): the card's own itinerary data decoded
+  and shows one flight; the page is in English and the card reads as English
+  (an operating-carrier line can only be recognised in a language we read, so
+  on Google Flights in any other language Virgin Atlantic and SAS get no
+  badge); neither the card's text nor its aria-labels name another airline or
+  operator ("Operated by", "Plane and crew by", any "by/for/as" followed by a
+  name, any other "Airlines" or "Airways"); and the card states exactly one
+  aircraft type, as a whole field. A type followed by anything ("Airbus A350
+  900", "Airbus A320neo (Sharklets)") is refused, never shortened, and so is
+  a type whose next line would lengthen it ("(900)", "900 series", "Series
+  900", "F", "ULR"). The extension's own badge is left out of what the reader
+  reads. A card is read again whenever something inside it changes, since
+  opening its details is what first shows a type. A gray "Starlink (likely)" then
+  appears for an "Airbus A350" or "Airbus A350-1000" on Virgin Atlantic and an
+  "Airbus A320neo" on SAS; "Airbus A320" alone, any other type, and no type
+  get no badge and are never dimmed. The tooltip repeats the airline's own
+  caution where its page has one (Virgin Atlantic: "availability may vary
+  depending on your aircraft and route"), taken from the tracker's answer. No
+  other airline's request carries `aircraft_type`.
 - **Qatar** — no tail-level data, but Qatar publishes the scheduled aircraft
   type about a week ahead (selected routes only). Inside that window an A350 or
   777-200LR shows green "Starlink (installed)", because Qatar reports those
@@ -107,8 +149,9 @@ depends on the airline:
   resolves the marketing carrier server-side.
 - Multi-leg itineraries are badged by their weakest leg — a card is never
   marked "Starlink" when only one leg has it. An itinerary with any leg on an
-  airline the tracker doesn't cover (UA + Lufthansa, Alaska + American) gets
-  no badge and no lookup: that leg can't be vouched for.
+  airline the tracker doesn't cover (UA + Lufthansa, Alaska + American, or an
+  airline whose code starts with a digit, such as Cape Air's 9K) gets no
+  badge and no lookup: that leg can't be vouched for.
 - Answers are cached in-memory for 30 minutes (5 minutes for transient
   failures). At most 40 uncached lookups run per page pass, three cards at a
   time. Cards Google adds while a pass is running queue a follow-up pass.

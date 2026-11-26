@@ -38,6 +38,7 @@ import {
 import {
   type AirlineTypeCount,
   airlineTypeCount,
+  namedOfType,
   programmeHeadlineWithChart,
 } from "./airline-count";
 import {
@@ -51,16 +52,22 @@ import {
 } from "./airports";
 import {
   type AssignmentLogRow,
+  type DepartureReading,
   type LoggedAircraft,
   type ResolvedLeg,
+  type ReturnedDeparture,
   type SameDayAlternative,
   type SameDayAlternativesQuery,
   getAssignmentHistory,
   getFlownAssignmentHistory,
+  getListedSightings,
   getLoggedAircraft,
   getSameDayStarlinkAlternatives,
+  hasUnreadAircraft,
   isKnownFlightNumber,
   logResolvedAssignments,
+  noteUnreadAircraft,
+  withdrawUnreturnedSightings,
 } from "./assignment-log";
 import {
   type ConfirmedEdge,
@@ -377,9 +384,7 @@ export interface ScopedReader {
   getStarlinkPlaneByTail(
     tail: string
   ): { Aircraft: string; OperatedBy: string; fleet: string } | null;
-  getFleetEntryByTail(
-    tail: string
-  ): { starlink_status: string; verified_wifi: string | null; verified_at: number | null } | null;
+  getFleetEntryByTail(tail: string): ReturnType<typeof getFleetEntryByTail>;
   computeWifiConsensus(
     tail: string,
     opts?: { sources?: readonly VerificationSource[] }
@@ -415,15 +420,41 @@ export interface ScopedReader {
   /** The newest tail logged per departure, with its fleet-list type; every
    * date the log holds when `depDate` is absent. */
   getLoggedAircraft(variants: readonly string[], depDate?: string): LoggedAircraft[];
+  /** Listed tails seen on the flight since their schedule was last read, as
+   * schedule rows; spans operatingPartners like getFlightAssignments. */
+  getListedSightings(
+    variants: readonly string[],
+    start: number,
+    end: number
+  ): FlightAssignmentRow[];
   /** The airline's own dated count for one aircraft family; null on the hub
    * and wherever the stored chart has no usable line for it. */
   getAirlineTypeCount(family: string): AirlineTypeCount | null;
+  /** Aircraft of the family this site lists as equipped; 0 on the hub. */
+  getNamedOfType(family: string): number;
   /** The same rows for a past date, read from the year-long flown record too. */
   getFlownAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
   /** A route, a scheduled leg or a logged assignment exists under one of the spellings. */
   isKnownFlightNumber(variants: readonly string[]): boolean;
   getSameDayStarlinkAlternatives(q: SameDayAlternativesQuery): SameDayAlternative[];
   logResolvedAssignments(flightNumber: string, legs: readonly ResolvedLeg[], now: number): void;
+  /** Stamps the tails logged on departures a lookup returned without them;
+   * spans operatingPartners like getListedSightings, which skips such rows. */
+  withdrawUnreturnedSightings(
+    flightNumber: string,
+    returned: readonly ReturnedDeparture[],
+    now: number
+  ): void;
+  /** Marks the departures a lookup named an unreadable aircraft on, and clears
+   * the mark on those it returned without one; spans operatingPartners. */
+  noteUnreadAircraft(
+    flightNumber: string,
+    returned: readonly DepartureReading[],
+    now: number
+  ): void;
+  /** The last lookup to return a departure of the flight on that local date
+   * named an aircraft there we could not read. */
+  hasUnreadAircraft(variants: readonly string[], depDate: string, orLater?: boolean): boolean;
 
   getQatarScheduleStats(): {
     total: number;
@@ -666,11 +697,20 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
     getLoggedAircraft: (v, d) => getLoggedAircraft(db, withOperatingPartners(airlines), v, d),
+    getListedSightings: (v, s, e) =>
+      getListedSightings(db, withOperatingPartners(airlines), v, s, e),
     getAirlineTypeCount: (family) => (scope === "ALL" ? null : airlineTypeCount(db, scope, family)),
+    getNamedOfType: (family) => (scope === "ALL" ? 0 : namedOfType(db, scope, family)),
     getFlownAssignmentHistory: (v, d) => getFlownAssignmentHistory(db, airlines, v, d),
     isKnownFlightNumber: (v) => isKnownFlightNumber(db, airlines, v),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
     logResolvedAssignments: (fn, legs, now) => logResolvedAssignments(db, airlines, fn, legs, now),
+    withdrawUnreturnedSightings: (fn, returned, now) =>
+      withdrawUnreturnedSightings(db, withOperatingPartners(airlines), fn, returned, now),
+    noteUnreadAircraft: (fn, returned, now) =>
+      noteUnreadAircraft(db, withOperatingPartners(airlines), fn, returned, now),
+    hasUnreadAircraft: (v, d, orLater) =>
+      hasUnreadAircraft(db, withOperatingPartners(airlines), v, d, orLater),
 
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),

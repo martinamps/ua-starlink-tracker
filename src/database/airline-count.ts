@@ -130,9 +130,14 @@ export function airlineTypeCount(
   const { chart } = boundedChart(db, code, today);
   const line = chart?.types.find((t) => t.family === family);
   if (!chart || !line || line.total <= 0) return null;
-  const named =
-    countRoster(tenantProgrammeRoster(db, code), (t) => t.family).get(family)?.equipped ?? 0;
+  const named = namedOfType(db, code, family);
   return { family, connected: line.connected, total: line.total, asOf: chart.asOf, named };
+}
+
+/** Aircraft of one family this site lists as equipped, tail by tail: our own
+ * count, which needs no chart. */
+export function namedOfType(db: Database, code: string, family: string): number {
+  return countRoster(tenantProgrammeRoster(db, code), (t) => t.family).get(family)?.equipped ?? 0;
 }
 
 /** The day the newest equipped listing in the programme was found, if dated. */

@@ -601,6 +601,11 @@ describe("plain 404", () => {
       expect(body).not.toContain("<script");
       expect(body).not.toContain('rel="canonical"');
       expect(body).not.toMatch(/{{\w+}}/);
+      // The heading font is `font-display: optional`: without its preload the fallback stays.
+      const full = await (await get("/", site.canonicalHost)).text();
+      const preload = full.match(/<link rel="preload" as="font"[^>]*>/)?.[0];
+      expect(preload).toBeDefined();
+      expect(body).toContain(preload as string);
     });
   }
 });

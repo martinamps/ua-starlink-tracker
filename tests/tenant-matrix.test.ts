@@ -166,7 +166,8 @@ describe("guardrail: no optional-tenant United/hub defaults in src/", () => {
 
   test("every registered airline has homepage content (no hub fallback)", () => {
     const hub = getContent("ALL");
-    for (const cfg of Object.values(AIRLINES)) {
+    // An airline answered by statement alone has no site and so no homepage.
+    for (const cfg of Object.values(AIRLINES).filter((a) => !a.statementRule)) {
       const content = getContent(cfg);
       expect(content, `getContent(${cfg.code}) returned hub content`).not.toBe(hub);
       expect(content.faq.length).toBeGreaterThan(0);

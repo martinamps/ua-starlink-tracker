@@ -835,6 +835,12 @@ export function setupTables(db: Database) {
   dropRedundantIndexes(db);
   runOnce(db, "backfill_alaska_skywest_operator", () => backfillAlaskaSkyWestOperator(db));
   db.exec(ASSIGNMENT_LOG_DDL);
+  // When a lookup last returned the row's departure without its tail
+  // (withdrawUnreturnedSightings); cleared when the tail is seen there again.
+  addColumn(db, "flight_assignment_log", "withdrawn_at", "INTEGER");
+  // When a lookup last returned the row's departure with no unread aircraft
+  // on it (noteUnreadAircraft).
+  addColumn(db, "unread_aircraft_log", "cleared_at", "INTEGER");
 
   // Per-tail marks from a curated community fleet guide (AF: FlyerTalk). The
   // section only gates the type and names the operator; the guide's seat and
@@ -3429,9 +3435,14 @@ export function getFleetEntryByTail(
   db: Database,
   tail: string,
   airline?: AirlineFilter
-): { starlink_status: string; verified_wifi: string | null; verified_at: number | null } | null {
+): {
+  starlink_status: string;
+  verified_wifi: string | null;
+  verified_at: number | null;
+  aircraft_type: string | null;
+} | null {
   const q = withAirline(
-    "SELECT starlink_status, verified_wifi, verified_at FROM united_fleet WHERE tail_number = ?",
+    "SELECT starlink_status, verified_wifi, verified_at, aircraft_type FROM united_fleet WHERE tail_number = ?",
     airline,
     "",
     [tail]
@@ -3440,6 +3451,7 @@ export function getFleetEntryByTail(
     starlink_status: string;
     verified_wifi: string | null;
     verified_at: number | null;
+    aircraft_type: string | null;
   } | null;
 }
 

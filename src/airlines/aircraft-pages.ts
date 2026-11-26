@@ -669,9 +669,12 @@ export function answerFor(
 export function answerSummary(
   data: Pick<AircraftTypePageData, "airline" | "total">,
   def: AircraftPageDef,
-  answer: Pick<AircraftAnswer, "kind" | "headline" | "sentence" | "effective">
+  answer: Pick<AircraftAnswer, "kind" | "headline" | "sentence" | "effective"> &
+    Partial<Pick<AircraftAnswer, "rosterShort">>
 ): string {
-  if (answer.kind !== "most" && answer.kind !== "some") {
+  // A short roster's headline gives the airline's count and no share; `E` is
+  // that count capped at our list, so "E of T" here would print 100%.
+  if ((answer.kind !== "most" && answer.kind !== "some") || answer.rosterShort) {
     return `${answer.headline} ${answer.sentence}`.trim();
   }
   const copy = tenantCopy(data.airline);
