@@ -1,4 +1,5 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { clientScriptSrc } from "../client/bundle";
 import { ClientScriptTag } from "./layout";
 import type { Link } from "./layout";
 import { Chip, Eyebrow, PageHeader, PageShell, Panel, SectionTitle, buttonClass } from "./layout";
@@ -10,6 +11,52 @@ interface RoutePlannerPageProps {
   popularRoutes?: Array<{ origin: string; destination: string }>;
 }
 
+const BUSY_AIRPORTS = 40;
+const AIRPORT_LIST =
+  "absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded border border-neutral bg-surface-elevated text-left shadow-lg";
+
+/**
+ * A box of the planner's form. As served it takes a code, four characters at
+ * most, and that is all it does with no script. The planner's script opens it
+ * to city and airport names and fills the list (src/client/airport-picker.ts).
+ */
+function AirportField({
+  id,
+  name,
+  label,
+  placeholder,
+}: { id: string; name: string; label: string; placeholder: string }) {
+  return (
+    <div className="flex-1 w-full min-w-0">
+      <Eyebrow as="label" htmlFor={id} className="mb-2 block">
+        {label}
+      </Eyebrow>
+      <div className="relative">
+        <input
+          type="text"
+          id={id}
+          name={name}
+          placeholder={placeholder}
+          maxLength={4}
+          className="airport-input w-full bg-base border border-neutral rounded px-3 py-3 text-primary font-mono text-lg focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+          required
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+        {/* Above the list, so "choose one" is not covered by the choices. */}
+        <p id={`${id}-hint`} className="mt-1 text-xs text-muted empty:hidden" />
+        <div
+          id={`${id}-list`}
+          data-label={`${label}: matching airports`}
+          className={AIRPORT_LIST}
+          hidden
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function RoutePlannerPage({
   site,
   pageLinks,
@@ -19,6 +66,16 @@ export default function RoutePlannerPage({
   const cfg = siteAirline(site);
   const airlineName = cfg.name;
   const shortName = cfg.shortName;
+  // The airports this airline's popular routes touch most, busiest first: a
+  // city with several airports offers the one it flies from before the rest.
+  const touches = new Map<string, number>();
+  for (const r of popularRoutes) {
+    for (const code of [r.origin, r.destination]) touches.set(code, (touches.get(code) ?? 0) + 1);
+  }
+  const busyAirports = [...touches]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, BUSY_AIRPORTS)
+    .map(([code]) => code);
 
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
@@ -29,25 +86,16 @@ export default function RoutePlannerPage({
 
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <Panel className="glow-accent">
-          <form id="route-form" className="space-y-4">
-            <div className="flex flex-col sm:flex-row gap-4 items-end">
-              <div className="flex-1">
-                <Eyebrow as="label" htmlFor="origin" className="mb-2 block">
-                  From
-                </Eyebrow>
-                <input
-                  type="text"
-                  id="origin"
-                  name="origin"
-                  placeholder="SFO"
-                  maxLength={4}
-                  className="airport-input w-full bg-base border border-neutral rounded px-3 py-3 text-primary font-mono text-lg focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
-                  required
-                  autoComplete="off"
-                />
-              </div>
+          <form
+            id="route-form"
+            className="space-y-4"
+            data-picker-src={clientScriptSrc("airport-picker") ?? undefined}
+            data-busy-airports={busyAirports.join(" ") || undefined}
+          >
+            <div className="flex flex-col sm:flex-row gap-4 items-start">
+              <AirportField id="origin" name="origin" label="From" placeholder="SFO" />
 
-              <div className="hidden sm:flex items-center pb-3 text-muted">
+              <div className="hidden sm:flex items-center pt-11 text-muted">
                 <svg
                   width="32"
                   height="12"
@@ -60,22 +108,9 @@ export default function RoutePlannerPage({
                 </svg>
               </div>
 
-              <div className="flex-1">
-                <Eyebrow as="label" htmlFor="destination" className="mb-2 block">
-                  To
-                </Eyebrow>
-                <input
-                  type="text"
-                  id="destination"
-                  name="destination"
-                  placeholder="JAX"
-                  maxLength={4}
-                  className="airport-input w-full bg-base border border-neutral rounded px-3 py-3 text-primary font-mono text-lg focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
-                  required
-                  autoComplete="off"
-                />
-              </div>
+              <AirportField id="destination" name="destination" label="To" placeholder="JAX" />
             </div>
+            <div id="airport-status" role="status" className="sr-only" />
             <div>
               <Eyebrow as="label" htmlFor="travel-date" className="mb-2 block">
                 Date
