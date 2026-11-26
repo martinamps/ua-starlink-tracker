@@ -4,13 +4,12 @@
  *
  * Seeded on a fresh database around each airport's own next local day, so the
  * rules are pinned on rows the test wrote: one flight is one departure however
- * it is spelled or listed, the day is the airport's, the airline's own figure
- * rides beside ours only as the airline's, and no share is printed.
+ * it is spelled or listed, the day is the airport's, the count stands alone
+ * with no figure credited to the airline, and no share is printed.
  */
 
 import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { HUB_FIGURE_MAX_AGE_DAYS, hubFigures } from "../src/airlines/hub-figures";
 import { AIRLINES, SITES } from "../src/airlines/registry";
 import { buildAirportBoard } from "../src/api/airport-board";
 import { AIRPORT_RANK_MIN_DEPARTURES, buildAirportRanking } from "../src/api/airport-ranking";
@@ -44,7 +43,7 @@ beforeAll(() => {
   addPlane(db, "N3TWICE", null);
   addPlane(db, "N3TWICE", null);
 
-  // DEN, a hub with a United figure: four departures on its next local day.
+  // DEN, a hub: four departures on its next local day.
   addFlight(db, "N1VER", "UA100", "DEN", onNextDay("DEN", 14), { arrivalAirport: "ORD" });
   addFlight(db, "N2LIST", "UA200", "DEN", onNextDay("DEN", 12), { arrivalAirport: "SFO" });
   // One flight under its marketed and its operating spelling: one departure.
@@ -151,7 +150,7 @@ describe("getAirportDayCounts", () => {
 
 describe("buildAirportRanking", () => {
   test("ranks from the minimum up, equal counts sharing a rank", () => {
-    const ranking = buildAirportRanking(AIRLINES.UA, reader(), now);
+    const ranking = buildAirportRanking(AIRLINES.UA, reader());
     expect(ranking.rows.map((r) => [r.rank, r.airport])).toEqual([
       [1, "DEN"],
       [2, "GJT"],
@@ -162,30 +161,12 @@ describe("buildAirportRanking", () => {
     expect(ranking.date).toBe(nextLocalDay("DEN", now));
   });
 
-  test("the airline's own figure sits on its hubs only, and carries its source", () => {
-    const figures = hubFigures("UA", Date.parse("2026-11-26T00:00:00Z") / 1000);
-    expect(figures).not.toBeNull();
-    expect(Object.keys(figures?.perDay ?? {}).sort()).toEqual(
-      ["DEN", "EWR", "IAD", "IAH", "LAX", "ORD", "SFO"].sort()
-    );
-    expect(figures?.reported).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(figures?.source.url).toMatch(/^https:\/\//);
-    expect(figures?.source.url).not.toContain("united.com");
-    const ranking = buildAirportRanking(AIRLINES.UA, reader(), now);
+  test("carries our count alone: no reported figure, no share", () => {
+    const ranking = buildAirportRanking(AIRLINES.UA, reader());
+    expect(Object.keys(ranking).sort()).toEqual(["airline", "date", "rows", "unranked"]);
     for (const r of ranking.rows) {
-      expect(r.airlineFigure, r.airport).toBe(ranking.figures?.perDay[r.airport] ?? null);
+      expect(Object.keys(r).sort(), r.airport).toEqual(["airport", "date", "departures", "rank"]);
     }
-    expect(Object.keys(ranking).filter((k) => /share|ratio|percent/i.test(k))).toEqual([]);
-  });
-
-  test("a figure past its age bound is no longer shown, and no other airline has one", () => {
-    const reported = Date.parse(`${hubFigures("UA", 0)?.reported}T00:00:00Z`) / 1000;
-    expect(hubFigures("UA", reported + HUB_FIGURE_MAX_AGE_DAYS * 86400)).not.toBeNull();
-    expect(hubFigures("UA", reported + (HUB_FIGURE_MAX_AGE_DAYS + 1) * 86400)).toBeNull();
-    expect(hubFigures("AS", reported)).toBeNull();
-    const late = reported + (HUB_FIGURE_MAX_AGE_DAYS + 1) * 86400;
-    expect(buildAirportRanking(AIRLINES.UA, reader(), late).figures).toBeNull();
-    expect(buildAirportBoard(AIRLINES.UA, reader(), "DEN", late).airlineFigure).toBeNull();
   });
 });
 
@@ -203,17 +184,12 @@ describe("/routes", () => {
     expect(text(block)).toContain("swapped before departure");
   });
 
-  test("shows the airline's figure as the airline's, dated and sourced, and no share", async () => {
-    const ranking = buildAirportRanking(AIRLINES.UA, reader());
+  test("says the count can rise, credits no figure to the airline, and prints no share", async () => {
     const block = sectionOf(await page("/routes"), "Airports with the most Starlink departures");
     const said = text(block);
-    if (ranking.figures) {
-      expect(said).toContain("United's own estimate of equipped departures a day, as reported by");
-      expect(block).toContain(`href="${ranking.figures.source.url}"`);
-      expect(said).toContain("different day from ours");
-    } else {
-      expect(said).not.toContain("own estimate");
-    }
+    expect(said).toContain("a day's count can rise as the day nears");
+    expect(said).not.toMatch(/own estimate|as reported by|Travel And Tour World|recounts/i);
+    expect(block).not.toMatch(/<th[^>]*>United<\/th>/);
     expect(said).not.toMatch(/\d\s*%|percent/i);
   });
 
@@ -258,18 +234,12 @@ describe("/routes/{airport}", () => {
     expect(said).not.toContain("No. ");
   });
 
-  test("the airline's figure appears at its hubs alone", async () => {
-    const hub = buildAirportBoard(AIRLINES.UA, reader(), "DEN");
-    const spoke = buildAirportBoard(AIRLINES.UA, reader(), "GJT");
-    expect(spoke.airlineFigure).toBeNull();
-    const [den, gjt] = [text(await page("/routes/DEN")), text(await page("/routes/GJT"))];
-    expect(gjt).not.toContain("own estimate");
-    if (hub.airlineFigure) {
-      expect(den).toContain("United's figure for DEN:");
-      expect(den).toContain("as reported by");
-    } else {
-      expect(den).not.toContain("own estimate");
-    }
+  test("a hub page explains its count and credits no figure to the airline", async () => {
+    const board = buildAirportBoard(AIRLINES.UA, reader(), "DEN");
+    expect(Object.keys(board).filter((k) => /figure|share|ratio/i.test(k))).toEqual([]);
+    const said = text(await page("/routes/DEN"));
+    expect(said).toContain("a day's count can rise as the day nears");
+    expect(said).not.toMatch(/United's figure|own estimate|as reported by|Travel And Tour World/i);
   });
 });
 

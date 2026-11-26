@@ -8,7 +8,6 @@ import {
   airportDek,
   perDayLabel,
 } from "../api/airport-board";
-import { HubFigureSource } from "./airport-ranking";
 import type { Link } from "./layout";
 import { LINK, PageHeader, PageShell, Panel, SECTION, Section, StatValue, Td, Th } from "./layout";
 import { VERIFIED_LEGEND, VERIFIED_MARK } from "./route-flights-copy";
@@ -49,7 +48,7 @@ function Stat({
 }
 
 function Stats({ board }: { board: AirportBoard }) {
-  const { history, airport, day, airlineFigure } = board;
+  const { history, airport, day } = board;
   if (history.starlink === 0 && board.departures.length === 0) return null;
   const flown = history.starlink > 0;
   return (
@@ -82,16 +81,10 @@ function Stats({ board }: { board: AirportBoard }) {
       {day && (
         <p className="mt-4 text-xs text-muted text-pretty">
           The day's figure counts departures scheduled on planes we list as having Starlink, by{" "}
-          {airport}'s own calendar day, as we hold the schedule now. Planes are swapped before
-          departure, and we hold no total of {airport}'s departures to set it against.
-        </p>
-      )}
-      {airlineFigure && (
-        <p className="mt-2 text-xs text-muted text-pretty">
-          <span className="font-semibold">
-            {airlineFigure.figures.by}'s figure for {airport}: {fmt(airlineFigure.perDay)} a day.
-          </span>{" "}
-          <HubFigureSource figures={airlineFigure.figures} />
+          {airport}'s own calendar day, as we hold the schedule now. That schedule reaches about two
+          days ahead and is still being added to, so a day's count can rise as the day nears. Planes
+          are swapped before departure, and we hold no total of {airport}'s departures to set it
+          against.
         </p>
       )}
     </Panel>

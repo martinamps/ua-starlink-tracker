@@ -3,15 +3,13 @@
  * and the rank each airport page quotes.
  *
  * A count of departures scheduled on listed aircraft for one dated local day,
- * never a share: the schedule tables hold Starlink planes alone. The airline's
- * own hub figure rides beside ours as the airline's, dated, and nothing is
- * worked out from it.
+ * never a share: the schedule tables hold Starlink planes alone. Ours stands
+ * alone: an airline's hub figure belongs beside it only from the airline's own
+ * words, and the ones in print name no source.
  */
 
-import { type HubFigures, hubFigures } from "../airlines/hub-figures";
 import type { AirlineConfig } from "../airlines/registry";
 import type { ScopedReader } from "../database/reader";
-import { unixNow } from "../database/sql/windows";
 
 /**
  * An airport is ranked from this many departures on the day. On a measured
@@ -30,8 +28,6 @@ export interface AirportRankRow {
   /** The airport's next local day, YYYY-MM-DD: the day `departures` is for. */
   date: string;
   departures: number;
-  /** The airline's own per-day figure for this airport, when it published one. */
-  airlineFigure: number | null;
 }
 
 export interface AirportRanking {
@@ -42,16 +38,10 @@ export interface AirportRanking {
   unranked: string[];
   /** The local day most rows are for; rows on another say so. */
   date: string | null;
-  figures: HubFigures | null;
 }
 
-export function buildAirportRanking(
-  cfg: AirlineConfig,
-  reader: ScopedReader,
-  nowSec = unixNow()
-): AirportRanking {
+export function buildAirportRanking(cfg: AirlineConfig, reader: ScopedReader): AirportRanking {
   const counts = reader.getAirportDayCounts();
-  const figures = hubFigures(cfg.code, nowSec);
   const rows: AirportRankRow[] = [];
   for (const c of counts) {
     if (c.departures < AIRPORT_RANK_MIN_DEPARTURES) continue;
@@ -61,7 +51,6 @@ export function buildAirportRanking(
       airport: c.airport,
       date: c.date,
       departures: c.departures,
-      airlineFigure: figures?.perDay[c.airport] ?? null,
     });
   }
   const perDate = new Map<string, number>();
@@ -75,6 +64,5 @@ export function buildAirportRanking(
       .map((c) => c.airport)
       .sort(),
     date,
-    figures,
   };
 }

@@ -11,7 +11,6 @@
  */
 
 import { aircraftName } from "../airlines/aircraft-families";
-import { type HubFigures, hubFigures } from "../airlines/hub-figures";
 import type { AirlineConfig } from "../airlines/registry";
 import { fmt, zonedDeparture } from "../components/ui/format";
 import { countOnLocalDay, nextLocalDay } from "../database/airports";
@@ -74,8 +73,6 @@ export interface AirportBoard {
    * with no mapped timezone.
    */
   day: { date: string; departures: number; rank: number | null; ranked: number } | null;
-  /** The airline's own per-day figure for this airport, with who reprinted it and when. */
-  airlineFigure: { perDay: number; figures: HubFigures } | null;
   indexable: boolean;
 }
 
@@ -134,8 +131,6 @@ export function buildAirportBoard(
     );
 
   const date = nextLocalDay(airport, nowSec);
-  const figures = hubFigures(cfg.code, nowSec);
-  const perDay = figures?.perDay[airport];
 
   return {
     airport,
@@ -147,7 +142,6 @@ export function buildAirportBoard(
     day: date
       ? dayStanding(reader, airport, date, countOnLocalDay(airport, date, departures))
       : null,
-    airlineFigure: figures && perDay !== undefined ? { perDay, figures } : null,
     indexable: (flown?.starlink ?? 0) >= AIRPORT_INDEX_MIN_DEPARTURES,
   };
 }
