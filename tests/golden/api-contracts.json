@@ -1124,7 +1124,7 @@
         },
         "valid_through": "2027-03-27"
       },
-      "reason": "Aer Lingus said on Nov 18, 2026 that free Starlink Wi-Fi is available across all its transatlantic routes. It has not said that of its European flights. We hold no Aer Lingus schedule, so a flight number alone can't be placed on a route: give the origin and destination airports to get an answer for this flight.",
+      "reason": "Aer Lingus said on Nov 18, 2026 that free Starlink Wi-Fi is available across all its transatlantic routes. Of European flights, it said on Nov 23, 2026 that Starlink is already on select services and is expected across 29 short-haul aircraft in early 2027, not that every flight has it. We hold no Aer Lingus schedule, so a flight number alone can't be placed on a route: give the origin and destination airports to get an answer for this flight.",
       "flights": []
     }
   },
