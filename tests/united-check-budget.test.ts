@@ -175,7 +175,9 @@ describe("the ledger", () => {
       const path = join(dir, "db.sqlite");
       let db = new Database(path);
       migrate(db);
-      fill(db, UNITED_DAILY_CHECK_BUDGET, T0_MS);
+      // One outer commit: on a CI runner's disk, 364 separate fsyncs took up
+      // to 5.7 s and timed the test out. What it tests is the reopen.
+      db.transaction(() => fill(db, UNITED_DAILY_CHECK_BUDGET, T0_MS))();
       db.close();
 
       db = new Database(path);
