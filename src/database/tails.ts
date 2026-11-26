@@ -161,6 +161,8 @@ export interface TailFleetRow {
   verified_wifi: string | null;
   verified_at: number | null;
   ship_number: string | null;
+  /** The one Starlink read a first-read count stands on, until the next read. */
+  first_read_counted_at: number | null;
 }
 
 export interface TailCheck {
@@ -245,7 +247,8 @@ export function getTailRecord(
 ): TailRecord | null {
   const fleet = db
     .query(
-      `SELECT aircraft_type, fleet, operated_by, starlink_status, verified_wifi, verified_at, ship_number
+      `SELECT aircraft_type, fleet, operated_by, starlink_status, verified_wifi, verified_at, ship_number,
+              first_read_counted_at
        FROM united_fleet WHERE tail_number = ? AND airline = ?`
     )
     .get(tail, airline) as TailFleetRow | null;

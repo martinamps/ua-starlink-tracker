@@ -1,6 +1,7 @@
 import { aircraftName } from "../airlines/aircraft-families";
 import { marketingFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
+import { firstReadNote, firstReadTakenBackNote } from "../database/first-read";
 import type { FirstFlight, PerAirlineStat, RecentInstall, ReportedInstall } from "../types";
 import { reportedClause } from "../utils/reported-reason";
 import type { Link } from "./layout";
@@ -99,6 +100,11 @@ function InstallRow({
           {monthDay(first.departed_at)}
         </div>
       )}
+      {install.first_read_at ? (
+        <div className="text-xs text-muted mt-1">
+          {firstReadNote(install.first_read_at, AIRLINES[install.airline]?.verifySite)}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -126,6 +132,9 @@ function ReportedRow({
       <div className="text-xs text-muted mt-1">
         Not confirmed: {reportedClause(row)}
         {row.observed_at ? `, last checked ${monthDay(row.observed_at)}` : ""}.
+        {row.first_read_taken_back_at
+          ? ` ${firstReadTakenBackNote(row.first_read_taken_back_at, AIRLINES[row.airline]?.verifySite)}`
+          : ""}
       </div>
     </div>
   );

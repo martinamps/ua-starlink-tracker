@@ -101,9 +101,11 @@ import {
   solveRecheckDays,
   sweepsCoverGap,
 } from "./discovery-cadence";
+import { type FirstReadRule, firstReadDecision } from "./first-read";
 import { fleetRejectReason, recordFleetRejection } from "./fleet-admission";
 import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
 import { type TailModNote, getSheetModNotes, replaceSheetModNotes } from "./sheet-mod-notes";
+import { readSourceState } from "./source-health";
 import {
   equippedSql,
   fleetStatusFromWifi,
@@ -122,6 +124,7 @@ import {
   airlineIn,
   cleanAirportPairSql,
   filterKey,
+  firstReadStampSql,
   flightNumberGlob,
   isCleanAirportPair,
   placeholders,
@@ -384,6 +387,11 @@ export function setupTables(db: Database) {
   // when it was last noted, and when it last moved the tail's check forward.
   addColumn(db, "united_fleet", "sheet_listed_at", "INTEGER");
   addColumn(db, "united_fleet", "sheet_bumped_at", "INTEGER");
+  // A count made on our first Starlink read of a sheet-listed tail
+  // (first-read.ts): the read it stands on while no later read has settled
+  // it, and when such a count was last taken back.
+  addColumn(db, "united_fleet", "first_read_counted_at", "INTEGER");
+  addColumn(db, "united_fleet", "first_read_taken_back_at", "INTEGER");
 
   if (!tableExists(db, "upcoming_flights")) {
     db.query(
@@ -1509,7 +1517,8 @@ export function getRecentInstalls(
   limit = 25,
   perAirlineCap?: number
 ): RecentInstall[] {
-  const cols = "airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound";
+  const cols = `airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound,
+    ${firstReadStampSql("starlink_planes")} AS first_read_at`;
   const filter = `${equippedSql("starlink_planes")} AND ${INSTALL_FILTER}`;
   if (perAirlineCap && perAirlineCap > 0) {
     const q = withAirline(
@@ -1519,7 +1528,7 @@ export function getRecentInstalls(
     );
     return db
       .query(
-        `SELECT airline, TailNumber, Aircraft, OperatedBy, DateFound FROM (${q.sql})
+        `SELECT airline, TailNumber, Aircraft, OperatedBy, DateFound, first_read_at FROM (${q.sql})
          WHERE rn <= ? ORDER BY DateFound DESC LIMIT ?`
       )
       .all(...q.params, perAirlineCap, limit) as RecentInstall[];
@@ -2079,6 +2088,9 @@ export type FlightAssignmentRow = Flight & {
   settled_negative: number;
   /** united_fleet.verified_wifi for settled-negative tails (names the actual provider). */
   settled_wifi: string | null;
+  /** When the tail was counted on its first Starlink read, while that count
+   * waits for the next read (database/first-read.ts); null otherwise. */
+  first_read_counted_at?: number | null;
 };
 
 /**
@@ -2102,7 +2114,8 @@ export function getFlightAssignments(
   const q = withAirline(
     `SELECT uf.*, sp.Aircraft as aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi,
        CASE WHEN _neg.tail_number IS NOT NULL THEN 1 ELSE 0 END as settled_negative,
-       _neg.verified_wifi as settled_wifi
+       _neg.verified_wifi as settled_wifi,
+       ${firstReadStampSql("sp")} AS first_read_counted_at
      FROM upcoming_flights uf
      INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
      ${settledNegativeJoin("_neg", "sp.TailNumber", "sp.airline")}
@@ -3440,9 +3453,10 @@ export function getFleetEntryByTail(
   verified_wifi: string | null;
   verified_at: number | null;
   aircraft_type: string | null;
+  first_read_counted_at: number | null;
 } | null {
   const q = withAirline(
-    "SELECT starlink_status, verified_wifi, verified_at, aircraft_type FROM united_fleet WHERE tail_number = ?",
+    "SELECT starlink_status, verified_wifi, verified_at, aircraft_type, first_read_counted_at FROM united_fleet WHERE tail_number = ?",
     airline,
     "",
     [tail]
@@ -4421,10 +4435,16 @@ export function computeWifiConsensus(
   );
   if (confirmed === null) return NONE_ONLY_AFTER_STARLINK;
   if (confirmed.length > 0) {
-    return holdEstablishedStarlink(
-      settleConsensus(confirmed, rule),
-      () => starlinkHistory(db, tailNumber, sources, opts.airline),
-      unixNow()
+    const now = unixNow();
+    return withFirstRead(
+      holdEstablishedStarlink(
+        settleConsensus(confirmed, rule),
+        () => starlinkHistory(db, tailNumber, sources, opts.airline),
+        now
+      ),
+      confirmed,
+      rule,
+      () => sheetListsTail(db, tailNumber, opts.airline, now)
     );
   }
 
@@ -4445,6 +4465,249 @@ export function computeWifiConsensus(
     reason: `legacy obs only (${n} pre-tail_confirmed rows) — display-only, not settling`,
     rule: "legacy_only",
   };
+}
+
+/**
+ * How old the newest good sheet import may be for its rows to count as the
+ * sheet listing a tail now. The import runs hourly and a refused read keeps
+ * the old rows, so past this a row says what the sheet said then, not that it
+ * still does.
+ */
+export const SHEET_LISTING_CURRENT_SECS = 6 * 3600;
+
+const sheetFed = (code: string) => AIRLINES[code]?.lastUpdatedOwner === "sheet-scrape";
+
+/** The airline's sheet import last succeeded inside SHEET_LISTING_CURRENT_SECS. */
+function sheetImportCurrent(db: Database, airline: string, now: number): boolean {
+  const last = readSourceState(db, "sheet_scrape", airline)?.lastSuccessAt ?? null;
+  return last !== null && last / 1000 > now - SHEET_LISTING_CURRENT_SECS;
+}
+
+/**
+ * The community sheet's own row lists the tail with Starlink, as of a current
+ * import: the second source the first-read count needs. A row our discovery
+ * or a type rule wrote is our own word, not the sheet's.
+ */
+export function sheetListsTail(
+  db: Database,
+  tail: string,
+  airline: AirlineFilter,
+  now = unixNow()
+): boolean {
+  return airlineCodes(airline).some(
+    (code) =>
+      sheetFed(code) &&
+      sheetImportCurrent(db, code, now) &&
+      db
+        .query(
+          `SELECT 1 FROM starlink_planes WHERE TailNumber = ? AND airline = ? AND ${INDEPENDENT_LISTING_WHERE}`
+        )
+        .get(tail, code) != null
+  );
+}
+
+/**
+ * The ordinary settle with the first-read rule laid over it (first-read.ts).
+ * `sheetLists` is asked last and only when the reads already have the shape.
+ */
+function withFirstRead(
+  settled: WifiConsensus,
+  obs: ConsensusObservation[],
+  rule: ConsensusRule,
+  sheetLists: () => boolean
+): WifiConsensus {
+  const d = firstReadDecision(obs, true, settled.verdict, (o) => settleConsensus(o, rule));
+  if (!d || !sheetLists()) return settled;
+  return { ...settled, verdict: d.verdict, reason: d.reason, rule: d.rule };
+}
+
+/**
+ * The one rule a backtest replays: a tail's clean, tail-confirmed reads in
+ * the trailing window (newest first) and whether the sheet lists it, to the
+ * verdict and the rule that gave it. No database, no clock. It leaves out
+ * only the hold on established tails (three Starlink reads over three days),
+ * which no tail on its first reads can meet.
+ */
+export function settleReads(
+  obs: Array<{ has_starlink: number; wifi_provider: string }>,
+  sheetLists: boolean
+): WifiConsensus {
+  return withFirstRead(
+    settleConsensus(obs, DEFAULT_CONSENSUS_RULE),
+    obs,
+    DEFAULT_CONSENSUS_RULE,
+    () => sheetLists
+  );
+}
+
+export interface FirstReadEvent {
+  tail: string;
+  airline: string;
+  outcome: "counted" | "confirmed" | "taken_back";
+  reason: "first_read" | "second_read" | "other_provider" | "sheet_delisted" | "sheet_stale";
+}
+
+function emitFirstRead(e: FirstReadEvent, path: "verifier" | "reconcile"): void {
+  metrics.increment(COUNTERS.FIRST_READ_COUNT, {
+    outcome: e.outcome,
+    reason: e.reason,
+    path,
+    airline: normalizeAirlineTag(e.airline),
+  });
+}
+
+const isFirstReadRule = (rule: string | undefined): rule is FirstReadRule =>
+  rule === "first_read" || rule === "first_read_taken_back";
+
+/**
+ * The one writer of a first-read count, called with a tail's consensus every
+ * time one is computed for writing (a check's settle, the hourly reconcile).
+ *
+ * Making the count: the roster's stale 'negative' drops to 'unknown' and the
+ * listing's other-provider verdict is cleared, so the listing is what counts
+ * the tail (sql/equipped.ts evidence 5, "listed"), and the read is stamped.
+ * Nothing is marked confirmed or verified. A hangar note that still holds the
+ * listing is the sheet saying the jet is in for its fit: no count is made.
+ *
+ * Ending it, on a tail that carries the stamp: an ordinary Starlink verdict
+ * confirms it; a verdict of another provider takes it back, and writes that
+ * provider to the listing and the roster so the sheet's row cannot keep the
+ * tail counted; the sheet dropping the row takes it back too.
+ */
+export function applyFirstRead(
+  db: Database,
+  tail: string,
+  airline: string,
+  consensus: WifiConsensus,
+  path: "verifier" | "reconcile",
+  now = unixNow()
+): FirstReadEvent | null {
+  const row = db
+    .query(
+      "SELECT starlink_status, fleet, airline, first_read_counted_at FROM united_fleet WHERE tail_number = ? AND airline = ?"
+    )
+    .get(tail, airline) as {
+    starlink_status: string | null;
+    fleet: string | null;
+    airline: string | null;
+    first_read_counted_at: number | null;
+  } | null;
+  if (!row) return null;
+  const standing = row.first_read_counted_at !== null;
+  const counted = () =>
+    db
+      .query(
+        `SELECT 1 FROM starlink_planes sp WHERE sp.TailNumber = ? AND sp.airline = ? AND ${equippedSql("sp")}`
+      )
+      .get(tail, airline) != null;
+
+  let event: FirstReadEvent | null = null;
+  if (consensus.rule === "first_read") {
+    if (standing || counted()) return null;
+    const noteHolds = db.query(`SELECT ${modHoldSql("?1", "?2")} AS held`).get(tail, airline) as {
+      held: number;
+    };
+    if (noteHolds.held) return null;
+    const readAt = (
+      db
+        .query(
+          `SELECT MAX(checked_at) AS at FROM starlink_verification_log
+           WHERE tail_number = ? AND airline = ? AND tail_confirmed = 1 AND has_starlink = 1
+             AND ${CLEAN_OBSERVATION_WHERE}`
+        )
+        .get(tail, airline) as { at: number | null }
+    ).at;
+    db.transaction(() => {
+      db.query(
+        `UPDATE starlink_planes SET verified_wifi = NULL, verified_at = ?
+         WHERE TailNumber = ? AND airline = ? AND verified_wifi IS NOT NULL`
+      ).run(now, tail, airline);
+      if (row.starlink_status === "negative") {
+        db.query(
+          `UPDATE united_fleet SET starlink_status = 'unknown', verified_wifi = NULL
+           WHERE tail_number = ? AND airline = ?`
+        ).run(tail, airline);
+      }
+      if (!counted()) return;
+      db.query(
+        `UPDATE united_fleet SET first_read_counted_at = ?, first_read_taken_back_at = NULL
+         WHERE tail_number = ? AND airline = ?`
+      ).run(readAt ?? now, tail, airline);
+      event = { tail, airline, outcome: "counted", reason: "first_read" };
+    })();
+    if (row.starlink_status === "negative") emitFleetStatusChange(row, "unknown");
+  } else if (standing) {
+    if (consensus.verdict === "Starlink") {
+      db.query(
+        "UPDATE united_fleet SET first_read_counted_at = NULL WHERE tail_number = ? AND airline = ?"
+      ).run(tail, airline);
+      event = { tail, airline, outcome: "confirmed", reason: "second_read" };
+    } else if (consensus.verdict !== null) {
+      const provider = consensus.verdict;
+      const sheetRow =
+        db
+          .query(
+            `SELECT 1 FROM starlink_planes WHERE TailNumber = ? AND airline = ? AND ${INDEPENDENT_LISTING_WHERE}`
+          )
+          .get(tail, airline) != null;
+      // With the sheet's row in a current import the first-read rule would
+      // still stand, unless a read broke it.
+      const reason = !sheetRow
+        ? "sheet_delisted"
+        : sheetImportCurrent(db, airline, now)
+          ? "other_provider"
+          : "sheet_stale";
+      db.transaction(() => {
+        db.query(
+          "UPDATE starlink_planes SET verified_wifi = ?, verified_at = ? WHERE TailNumber = ? AND airline = ?"
+        ).run(provider, now, tail, airline);
+        db.query(
+          `UPDATE united_fleet SET starlink_status = 'negative', verified_wifi = ?, verified_at = ?,
+                  first_read_counted_at = NULL, first_read_taken_back_at = ?
+           WHERE tail_number = ? AND airline = ?`
+        ).run(provider, now, now, tail, airline);
+      })();
+      emitFleetStatusChange(row, "negative");
+      event = { tail, airline, outcome: "taken_back", reason };
+    }
+  }
+  if (!event) return null;
+  emitFirstRead(event, path);
+  info(`FIRST READ: ${tail} ${event.outcome} (${event.reason}; ${consensus.reason})`);
+  return event;
+}
+
+/**
+ * First-read counts whose sheet row is gone: the sheet took the listing back
+ * before our checks settled the tail. With no listing nothing counts the
+ * tail, so only the stamp is closed; the roster stays 'unknown' and the next
+ * read decides. A stale import is not a withdrawal and closes nothing.
+ */
+function closeDelistedFirstReads(db: Database, now: number): FirstReadEvent[] {
+  const gone = db
+    .query(
+      `SELECT uf.tail_number AS tail, uf.airline FROM united_fleet uf
+       WHERE uf.first_read_counted_at IS NOT NULL AND uf.airline IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM starlink_planes sp
+           WHERE sp.TailNumber = uf.tail_number AND sp.airline = uf.airline
+             AND ${independentListingSql("sp")}
+         )`
+    )
+    .all() as Array<{ tail: string; airline: string }>;
+  const events = gone
+    .filter((g) => sheetFed(g.airline) && sheetImportCurrent(db, g.airline, now))
+    .map((g): FirstReadEvent => ({ ...g, outcome: "taken_back", reason: "sheet_delisted" }));
+  const close = db.query(
+    `UPDATE united_fleet SET first_read_counted_at = NULL, first_read_taken_back_at = ?
+     WHERE tail_number = ? AND airline = ?`
+  );
+  for (const e of events) {
+    close.run(now, e.tail, e.airline);
+    emitFirstRead(e, "reconcile");
+    info(`FIRST READ: ${e.tail} taken_back (sheet_delisted)`);
+  }
+  return events;
 }
 
 export function consensusToFleetStatus(verdict: string | null): StarlinkStatus | null {
@@ -4691,15 +4954,21 @@ export function settleOfficiallyCompleteType(
  * before a fix deployed, or any other path that adds obs without triggering
  * consensus. Runs with the hourly sync — cheap enough to be the safety net.
  */
-export function reconcileConsensus(db: Database, now = unixNow()): number {
+export function reconcileConsensus(
+  db: Database,
+  now = unixNow(),
+  /** Filled with the first-read counts this sweep made, confirmed or took back. */
+  firstReads: FirstReadEvent[] = []
+): number {
   const airlines = (
     db.query("SELECT DISTINCT airline FROM starlink_planes").values() as [string][]
   ).map(([a]) => a);
+  firstReads.push(...closeDelistedFirstReads(db, now));
   const retrofits = retrofittedNegatives(db, now);
   let healed = 0;
   for (const airline of airlines) {
     const skip = new Set(retrofits.filter((r) => r.airline === airline).map((r) => r.tail_number));
-    healed += reconcileAirlineConsensus(db, airline, now, skip);
+    healed += reconcileAirlineConsensus(db, airline, now, skip, firstReads);
   }
   return healed + demoteNegatives(db, retrofits, now);
 }
@@ -4717,7 +4986,8 @@ function reconcileAirlineConsensus(
   db: Database,
   airline: string,
   now: number,
-  skip: ReadonlySet<string>
+  skip: ReadonlySet<string>,
+  firstReads: FirstReadEvent[]
 ): number {
   const rule = DEFAULT_CONSENSUS_RULE;
   const obsByTail = new Map<string, ConsensusObservation[]>();
@@ -4738,9 +5008,20 @@ function reconcileAirlineConsensus(
   }
   const listed = db
     .query(
-      "SELECT TailNumber AS tail, verified_wifi AS current FROM starlink_planes WHERE airline = ?"
+      `SELECT TailNumber AS tail, verified_wifi AS current, (${INDEPENDENT_LISTING_WHERE}) AS sheet_row
+       FROM starlink_planes WHERE airline = ?`
     )
-    .all(airline) as Array<{ tail: string; current: string | null }>;
+    .all(airline) as Array<{ tail: string; current: string | null; sheet_row: number }>;
+  const sheetCurrent = sheetFed(airline) && sheetImportCurrent(db, airline, now);
+  const stamped = new Set(
+    (
+      db
+        .query(
+          "SELECT tail_number FROM united_fleet WHERE airline = ? AND first_read_counted_at IS NOT NULL"
+        )
+        .values(airline) as [string][]
+    ).map(([t]) => t)
+  );
 
   let histories: Map<string, StarlinkHistory> | null = null;
   const historyOf = (tail: string): StarlinkHistory | null => {
@@ -4749,17 +5030,26 @@ function reconcileAirlineConsensus(
   };
 
   let disputed = 0;
-  const heal = listed.flatMap(({ tail, current }) => {
+  // Every first-read verdict, and every verdict on a tail that carries the
+  // stamp, goes to applyFirstRead: it makes, confirms or takes back the count.
+  const firstRead: Array<{ tail: string; settled: WifiConsensus }> = [];
+  const heal = listed.flatMap(({ tail, current, sheet_row }) => {
     const window = obsByTail.get(tail);
     if (!window) return [];
     const obs = discountRegionalFlaps(window, () => hasPriorUnitedStarlink(db, tail, airline));
     if (!obs?.length) return [];
-    const settled = holdEstablishedStarlink(settleConsensus(obs, rule), () => historyOf(tail), now);
+    const settled = withFirstRead(
+      holdEstablishedStarlink(settleConsensus(obs, rule), () => historyOf(tail), now),
+      obs,
+      rule,
+      () => sheetCurrent && sheet_row === 1
+    );
     if (settled.rule === "disputed_hold") disputed++;
     const { verdict } = settled;
-    if (verdict === null || verdict === current) return [];
     // A retrofit being demoted this sweep must not be re-settled negative by it.
-    if (verdict !== "Starlink" && skip.has(tail)) return [];
+    if (verdict !== null && verdict !== "Starlink" && skip.has(tail)) return [];
+    if (isFirstReadRule(settled.rule) || stamped.has(tail)) firstRead.push({ tail, settled });
+    if (verdict === null || verdict === current) return [];
     return [{ tail, current, verdict, settled }];
   });
 
@@ -4773,6 +5063,10 @@ function reconcileAirlineConsensus(
     "UPDATE united_fleet SET starlink_status = ?, verified_wifi = ? WHERE tail_number = ? AND airline = ?"
   );
   db.transaction(() => {
+    for (const f of firstRead) {
+      const event = applyFirstRead(db, f.tail, airline, f.settled, "reconcile", now);
+      if (event) firstReads.push(event);
+    }
     for (const h of heal) {
       updateVerifiedWifi(db, h.tail, airline, h.verdict);
       if (skip.has(h.tail)) continue;
@@ -5020,6 +5314,9 @@ export function getListedNotCounted(
                AND checked_at >= COALESCE(
                  CAST(strftime('%s', substr(${sp}.DateFound, 1, 10)) AS INTEGER), 0)
             ) AS checks_since_listed,
+            (SELECT uf.first_read_taken_back_at FROM united_fleet uf
+             WHERE uf.tail_number = ${sp}.TailNumber AND uf.airline = ${sp}.airline
+            ) AS first_read_taken_back_at,
             (${INSTALL_FILTER}) AS dated
      FROM ${sp}
      WHERE ${listedNotCountedSql(sp)}`,
@@ -5059,6 +5356,7 @@ export function getListedNotCounted(
       observed_wifi: why.observedWifi,
       observed_at: why.observedWifi === null ? null : fromListing ? r.listing_at : r.settled_at,
       checks_since_listed: r.checks_since_listed,
+      first_read_taken_back_at: r.first_read_taken_back_at,
     });
   }
   out.sort(
@@ -5461,6 +5759,18 @@ export function isSettledStarlink(db: Database, tailNumber: string, airline: str
 const UNSETTLED_RECHECK_SECS = 36 * 3600;
 
 /**
+ * The pace, for both jobs, between readings of a tail whose newest reading is
+ * Starlink and that is not settled Starlink yet: daily, the pace the verifier
+ * already keeps for a listing our reads dispute. After one Starlink read a
+ * listed tail's verdict cleared, it stopped being "disputed" and fell to the
+ * three-day pace (N17303, N77571 and N71411 waited 65 to 83 hours for a second
+ * read, with flights to read it through). It moves when a tail is read, not
+ * whether: every read still claims its slot from the check budget.
+ */
+const AWAITING_SETTLE_RECHECK_HOURS = 24;
+const AWAITING_SETTLE_RECHECK_SECS = AWAITING_SETTLE_RECHECK_HOURS * 3600;
+
+/**
  * Two readings of united.com minutes apart are one look at the same page, but
  * the consensus counts each. A tail still being settled can be read by the
  * verifier (it is listed) and by discovery (it was moved to the front of the
@@ -5475,6 +5785,16 @@ const UNSETTLED_RECHECK_SECS = 36 * 3600;
  * were. A reading that already changed the consensus away from the roster's
  * status never waits: that discovery check is what writes the change to the
  * roster.
+ *
+ * A tail no count includes yet waits in one state only: its newest reading is
+ * its first Starlink one, where a second look at the same page minutes later
+ * is the pair this exists to stop, and the daily pace is what that tail is on
+ * anyway. Otherwise it is read as soon as it is due. In particular the prompt
+ * reading the hourly job queues once a tail's two newest readings are Starlink
+ * is the reading that counts it, and this put it off 35 hours on nine of the
+ * 25 tails found in the nine days to 26 Nov 2026. A tail the site already
+ * counts loses nothing by waiting: the wait decides only how soon its listing
+ * reads as verified.
  */
 export function settleReadNotBefore(
   db: Database,
@@ -5485,7 +5805,7 @@ export function settleReadNotBefore(
 ): number | null {
   const last = db
     .query(
-      `SELECT checked_at, tail_confirmed, (${CLEAN_OBSERVATION_WHERE}) AS clean
+      `SELECT checked_at, tail_confirmed, has_starlink, (${CLEAN_OBSERVATION_WHERE}) AS clean
        FROM starlink_verification_log
        WHERE tail_number = ? AND source = ?
        ORDER BY checked_at DESC, id DESC LIMIT 1`
@@ -5493,16 +5813,38 @@ export function settleReadNotBefore(
     .get(plane.tail_number, source) as {
     checked_at: number;
     tail_confirmed: number | null;
+    has_starlink: number | null;
     clean: number;
   } | null;
   if (!last || !last.clean || last.tail_confirmed !== 1) return null;
   if (last.checked_at > now || last.checked_at <= now - withinSecs) return null;
+  const counted =
+    db
+      .query(
+        `SELECT 1 FROM starlink_planes sp
+         WHERE sp.TailNumber = ? AND sp.airline = 'UA' AND ${equippedSql("sp")}`
+      )
+      .get(plane.tail_number) != null;
+  if (!counted) {
+    if (last.has_starlink !== 1) return null;
+    const before = db
+      .query(
+        `SELECT has_starlink FROM starlink_verification_log
+         WHERE tail_number = ? AND source = ? AND tail_confirmed = 1 AND ${CLEAN_OBSERVATION_WHERE}
+         ORDER BY checked_at DESC, id DESC LIMIT 1 OFFSET 1`
+      )
+      .get(plane.tail_number, source) as { has_starlink: number } | null;
+    if (before?.has_starlink === 1) return null;
+  }
   const settled = consensusToFleetStatus(
     computeWifiConsensus(db, plane.tail_number, { sources: OBSERVED_WIFI_SOURCES, airline: "UA" })
       .verdict
   );
   if (settled !== null && settled !== plane.starlink_status) return null;
-  return last.checked_at + UNSETTLED_RECHECK_SECS;
+  return (
+    last.checked_at +
+    (last.has_starlink === 1 ? AWAITING_SETTLE_RECHECK_SECS : UNSETTLED_RECHECK_SECS)
+  );
 }
 
 /** Put a tail's discovery turn off until `at`. Only the due time moves. */
@@ -5592,6 +5934,8 @@ export function updateFleetVerificationResult(
     verifiedWifi: string | null;
     error?: string | null;
     needsMoreObs?: boolean;
+    /** This check read Starlink and the tail is not settled Starlink yet. */
+    awaitingSettle?: boolean;
   },
   now = unixNow()
 ): void {
@@ -5634,6 +5978,11 @@ export function updateFleetVerificationResult(
   }
   if (!result.error && result.starlinkStatus !== "confirmed" && rtsUntil && rtsUntil > now)
     nextCheckDelay = Math.min(nextCheckDelay, 24 * 3600);
+  // A tail whose older reads still outvote one Starlink read settles
+  // 'negative' here and would wait out the negative plan (N35407 waited 293
+  // hours for its second read); an undecided one would wait a day and a half.
+  if (!result.error && result.awaitingSettle)
+    nextCheckDelay = Math.min(nextCheckDelay, AWAITING_SETTLE_RECHECK_SECS);
 
   const jitter = (Math.random() - 0.5) * 0.2 * nextCheckDelay;
   const nextCheckAfter = now + nextCheckDelay + jitter;

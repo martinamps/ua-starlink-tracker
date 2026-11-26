@@ -23,6 +23,7 @@ import {
   getMeta,
   migrate,
   negativeRecheckPlan,
+  reconcileConsensus,
   recordAirborneSightings,
   setMeta,
   updateDatabase,
@@ -32,6 +33,8 @@ import {
   SHEET_LISTING_NOTED_SECS,
   gapChecksPerDay,
 } from "../src/database/discovery-cadence";
+import { recordSourceSuccess } from "../src/database/source-health";
+import { equippedSql } from "../src/database/sql/equipped";
 import { metrics } from "../src/observability";
 import { runDiscoveryBatch } from "../src/scripts/fleet-discovery";
 import { runVerifierTick } from "../src/scripts/starlink-verifier";
@@ -104,6 +107,21 @@ function sheetOf(tails: readonly string[]) {
 /** The seeded listings become sheet rows, so the sync replaces them in place. */
 function listingsFromSheet(db: Database): void {
   db.query("UPDATE starlink_planes SET sheet_gid = '100', sheet_type = 'B737'").run();
+}
+
+/** The hourly sheet job's read and its sweep, as sheet-scrape.ts runs them. */
+function hourlySheetJob(db: Database, sheet: ReturnType<typeof sheetOf>): void {
+  expect(updateDatabase(db, 1000, sheet, STATS, "UA")).toBeNull();
+  recordSourceSuccess(db, "sheet_scrape", "UA");
+  reconcileConsensus(db);
+}
+
+function isCounted(db: Database, tail: string): boolean {
+  return (
+    db
+      .query(`SELECT 1 FROM starlink_planes sp WHERE sp.TailNumber = ? AND ${equippedSql("sp")}`)
+      .get(tail) != null
+  );
 }
 
 function fleetRow(db: Database, tail: string) {
@@ -257,8 +275,8 @@ describe("plan, allowance and sheet bump together, under the ceiling", () => {
             if (withFlight.has(tail)) fleet.scheduleFlight(db, tail, now);
           }
         }
-        // The real hourly sheet sync, every hour, whether or not anything is new.
-        expect(updateDatabase(db, 1000, sheetOf(listed), STATS, "UA")).toBeNull();
+        // The real hourly sheet sync and its sweep, every hour, whether or not anything is new.
+        hourlySheetJob(db, sheetOf(listed));
         for (const r of returns) {
           if (r.at !== now) continue;
           for (const tail of recordAirborneSightings(db, "UA", r.tails, now, SWEEP_SECS)) {
@@ -356,13 +374,15 @@ describe("plan, allowance and sheet bump together, under the ceiling", () => {
         expect(mine.length).toBeGreaterThanOrEqual(1);
         expect(mine[0].at - at).toBeLessThanOrEqual(2 * DISCOVERY_BEAT);
         if (!withFlight.has(tail)) expect(mine[0].by).toBe("discovery");
-        // One reading, not two a minute apart: the next keeps discovery's day-and-a-half pace.
+        // One reading, not two a minute apart: the next comes on the daily
+        // pace (the verifier's 24 hours, spread a third either way by tail).
         for (let i = 1; i < mine.length; i++) {
-          expect(mine[i].at - mine[i - 1].at).toBeGreaterThanOrEqual(36 * 0.9 * HOUR);
+          expect(mine[i].at - mine[i - 1].at).toBeGreaterThanOrEqual(24 * 0.67 * HOUR);
         }
-        // One Starlink reading against two older ones of another provider
-        // settles nothing: the tail is still held as it was.
-        expect(fleetRow(db, tail).starlink_status).toBe("negative");
+        // The sheet lists it and our one reading is Starlink: counted on that
+        // reading, and nothing is settled by it.
+        expect(isCounted(db, tail)).toBe(true);
+        expect(fleetRow(db, tail).starlink_status).not.toBe("confirmed");
       }
       expect(skips.by.just_read ?? 0).toBeGreaterThanOrEqual(2);
       // Moved once, at the listing: thirty-odd later syncs left it alone.
@@ -422,7 +442,7 @@ describe("discovery and a tail either job has just read", () => {
     return { db, fleet, tail, addRead };
   }
 
-  test("a clean reading two hours old stands in for discovery's own: no check, the next a day and a half after it", async () => {
+  test("a first Starlink reading two hours old stands in for discovery's own: no check, the next a day after it", async () => {
     const { db, fleet, tail, addRead } = setup();
     fleet.retrofit(tail);
     addRead(2, { starlink: true });
@@ -438,7 +458,7 @@ describe("discovery and a tail either job has just read", () => {
     expect(stats.held).toBeNull();
     expect(skips.by).toEqual({ just_read: 1 });
     expect(unitedBudgetState(db).used).toBe(usedBefore);
-    expect(fleetRow(db, tail).next_check_after).toBe(T0 - 2 * HOUR + 36 * HOUR);
+    expect(fleetRow(db, tail).next_check_after).toBe(T0 - 2 * HOUR + 24 * HOUR);
     expect(fleetRow(db, tail).starlink_status).toBe("negative");
 
     // When that time comes the reading is made.
@@ -460,11 +480,39 @@ describe("discovery and a tail either job has just read", () => {
     db.close();
   });
 
+  test("a tail we do not count is read at once after a reading of another provider", async () => {
+    // Nothing to protect: no second reading of that page can count it early.
+    const { db, fleet, tail, addRead } = setup();
+    addRead(2);
+    const stats = await runDiscoveryBatch(db, 1, fleet.discovery);
+    expect(stats.deferred).toBe(0);
+    expect(fleet.checks.map((c) => c.tail)).toEqual([tail]);
+    db.close();
+  });
+
+  test("a tail we do not count is read at once when its two newest readings are Starlink", async () => {
+    // The hourly job queues this reading the moment the pair is in: it is the
+    // one that counts the tail. Put off, it came 35 hours late.
+    const { db, fleet, tail, addRead } = setup();
+    fleet.retrofit(tail);
+    addRead(300);
+    addRead(200);
+    addRead(26, { starlink: true });
+    addRead(0.5, { starlink: true });
+    expect(isCounted(db, tail)).toBe(false);
+    const stats = await runDiscoveryBatch(db, 1, fleet.discovery);
+    expect(stats.deferred).toBe(0);
+    expect(fleet.checks.map((c) => c.tail)).toEqual([tail]);
+    expect(fleetRow(db, tail).starlink_status).toBe("confirmed");
+    expect(isCounted(db, tail)).toBe(true);
+    db.close();
+  });
+
   test("a failed check, a reading of another aircraft, or one from yesterday puts nothing off", async () => {
     for (const newest of [
       () => ({ hoursAgo: 1, over: { error: "timeout" } }),
       () => ({ hoursAgo: 1, over: { confirmed: 0 } }),
-      () => ({ hoursAgo: 13, over: {} }),
+      () => ({ hoursAgo: 13, over: { starlink: true } }),
     ]) {
       const { db, fleet, tail, addRead } = setup();
       const { hoursAgo, over } = newest();
@@ -492,9 +540,12 @@ interface Trial {
  * One tail held as not Starlink, read as another provider every
  * `intervalDays`, is fitted and listed by the sheet at T0. Both jobs and the
  * hourly sync then run until the roster counts it. Returns the hours from the
- * listing to that moment, and the checks it took.
+ * listing to that moment, the hours to the first count that includes it, and
+ * the checks it took with the times between them.
  */
-async function hoursToCounted(t: Trial): Promise<{ hours: number | null; reads: number }> {
+async function hoursToCounted(
+  t: Trial
+): Promise<{ hours: number | null; counted: number | null; reads: number; gaps: number[] }> {
   const db = makeFreshDb();
   setSystemTime(new Date(T0_MS));
   const fleet = seedFleet(db, T0, { equipped: 3, unequipped: 16, noFlightEvery: 0 });
@@ -520,7 +571,7 @@ async function hoursToCounted(t: Trial): Promise<{ hours: number | null; reads: 
   fleet.retrofit(tail);
   fleet.scheduleFlight(db, tail, T0);
   const sheet = sheetOf([...fleet.equipped, tail]);
-  updateDatabase(db, 1000, sheet, STATS, "UA");
+  hourlySheetJob(db, sheet);
   if (!t.bump) {
     // The code before this change: the listing leaves the tail's turn where it was.
     db.query(
@@ -529,6 +580,10 @@ async function hoursToCounted(t: Trial): Promise<{ hours: number | null; reads: 
   }
 
   let countedAt: number | null = null;
+  let firstCountedAt: number | null = null;
+  const noteCount = () => {
+    if (firstCountedAt === null && isCounted(db, tail)) firstCountedAt = nowSec();
+  };
   const END = T0 + 14 * DAY;
   await runClock({
     db,
@@ -539,33 +594,47 @@ async function hoursToCounted(t: Trial): Promise<{ hours: number | null; reads: 
     discoveryEverySec: 450,
     verifierTick: async () => {
       if (countedAt !== null) return;
-      if ((nowSec() - T0) % HOUR === 0 && nowSec() > T0)
-        updateDatabase(db, 1000, sheet, STATS, "UA");
+      if ((nowSec() - T0) % HOUR === 0 && nowSec() > T0) hourlySheetJob(db, sheet);
       await runVerifierTick(db, fleet.verifier);
+      noteCount();
     },
     discoveryTick: async () => {
       if (countedAt !== null) return;
       await runDiscoveryBatch(db, 1, fleet.discovery);
+      noteCount();
       if (fleetRow(db, tail).starlink_status === "confirmed") countedAt = nowSec();
     },
   });
-  const reads = fleet.checks.filter((c) => c.tail === tail).length;
+  const mine = fleet.checks.filter((c) => c.tail === tail);
   db.close();
-  return { hours: countedAt === null ? null : (countedAt - T0) / HOUR, reads };
+  const hoursFrom = (at: number | null) => (at === null ? null : (at - T0) / HOUR);
+  return {
+    hours: hoursFrom(countedAt),
+    counted: hoursFrom(firstCountedAt),
+    reads: mine.length,
+    gaps: mine.slice(1).map((c, i) => (c.at - mine[i].at) / HOUR),
+  };
 }
 
 describe("a sheet-listed tail we held as not Starlink: hours until it is counted", () => {
-  test("moved to the front, it is counted after three readings a day and a half apart", async () => {
+  test("moved to the front, it is counted on its first reading and settled after three, each on the daily pace", async () => {
     // Read as another provider every 14 days, last 7 days ago: two such
     // readings inside the 30 days the consensus looks at, so three Starlink
-    // readings in a row are needed with the bump exactly as without it.
+    // readings in a row settle it, with the bump exactly as without it.
     const on = await hoursToCounted({ intervalDays: 14, phase: 0.5, bump: true, index: 0 });
     const off = await hoursToCounted({ intervalDays: 14, phase: 0.5, bump: false, index: 0 });
-    expect(on.reads).toBeGreaterThanOrEqual(3);
+    // The sheet lists it, so the first Starlink reading counts it: minutes
+    // after the listing, not days.
+    expect(on.counted as number).toBeLessThanOrEqual(0.25);
+    expect(off.counted as number).toBeGreaterThanOrEqual(on.counted as number);
+    expect(on.reads).toBe(3);
     expect(off.reads).toBeGreaterThanOrEqual(3);
-    // Two gaps of 36 hours, each spread by 10%.
-    expect(on.hours as number).toBeGreaterThanOrEqual(2 * 36 * 0.9);
-    expect(on.hours as number).toBeLessThanOrEqual(2 * 36 * 1.1 + 1);
+    // No two readings of one page: every gap is a day, spread a third either
+    // way by tail for the verifier and a tenth for discovery.
+    for (const gap of on.gaps) {
+      expect(gap).toBeGreaterThanOrEqual(24 * 0.67);
+      expect(gap).toBeLessThanOrEqual(24 * 1.33 + 1);
+    }
     expect(off.hours as number).toBeGreaterThanOrEqual(on.hours as number);
   }, 60_000);
 

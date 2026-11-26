@@ -64,6 +64,9 @@ export interface RecentInstall {
   Aircraft: string;
   OperatedBy: string;
   DateFound: string;
+  /** Unix seconds of the one Starlink read the tail is counted on, while that
+   * count waits for the next read (database/first-read.ts); null otherwise. */
+  first_read_at?: number | null;
 }
 
 /** A sheet listing our own check has not confirmed: shown apart, never counted. */
@@ -76,6 +79,8 @@ export interface ReportedInstall extends RecentInstall {
   observed_at: number | null;
   /** Clean reads of ours since the day the listing was first seen. */
   checks_since_listed: number;
+  /** Unix seconds when a first-read count of this tail was taken back; null if none was. */
+  first_read_taken_back_at?: number | null;
 }
 
 /** A newly equipped tail's first observed revenue departure (first_flights). */

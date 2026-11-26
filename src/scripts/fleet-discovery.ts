@@ -22,6 +22,7 @@ import {
   deferConfirmedRecheck,
   flightNumberHasData,
   getFleetDiscoveryStats,
+  getFleetEntryByTail,
   getMeta,
   getNextPlanesToVerify,
   initializeDatabase,
@@ -322,6 +323,15 @@ export async function verifyPlane(
               starlinkStatus = "negative";
             } else {
               needsMoreObs = true;
+              // A first-read count drops the roster's stale 'negative' in the
+              // settle above; writing the status this check started with
+              // would put it back.
+              if (consensus?.rule === "first_read") {
+                starlinkStatus =
+                  (getFleetEntryByTail(db, plane.tail_number)?.starlink_status as
+                    | StarlinkStatus
+                    | undefined) ?? prevStatus;
+              }
             }
           }
 
@@ -330,6 +340,11 @@ export async function verifyPlane(
             verifiedWifi: consensus ? consensus.verdict : plane.verified_wifi,
             error: verdict.observation.error ?? undefined,
             needsMoreObs,
+            // The page showed Starlink and the tail is not settled yet: the
+            // next read is what settles it, so it comes on the daily pace
+            // whatever the 30-day share says of the older reads.
+            awaitingSettle:
+              verdict.trusted && result.hasStarlink === true && starlinkStatus !== "confirmed",
           });
         })();
 
