@@ -766,7 +766,7 @@ export const COUNTERS = {
   // A sheet-listed tail counted on our first Starlink read (first-read.ts),
   // and how each such count ended. tags: outcome (counted|confirmed|
   //   taken_back), reason (first_read for counted; second_read for confirmed;
-  //   other_provider|sheet_delisted|sheet_stale for taken_back), path (verifier|reconcile),
+  //   other_provider|sheet_delisted for taken_back), path (verifier|reconcile),
   //   airline. taken_back over counted is the rule's error rate: none in the
   //   30 days it was backtested on.
   FIRST_READ_COUNT: "consensus.first_read_count",

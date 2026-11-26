@@ -23,7 +23,12 @@ import {
   updateDatabase,
   updateFleetVerificationResult,
 } from "../src/database/database";
-import { firstReadDecision, firstReadNote } from "../src/database/first-read";
+import {
+  FIRST_READ_MAX_AGE_SECS,
+  firstReadDecision,
+  firstReadNote,
+  firstReadTakenBackNote,
+} from "../src/database/first-read";
 import { recordSourceSuccess } from "../src/database/source-health";
 import { equippedSql, verifiedEquippedSql } from "../src/database/sql/equipped";
 import { COUNTERS, metrics } from "../src/observability/metrics";
@@ -137,13 +142,14 @@ const verified = (db: Database, tail: string) =>
 const roster = (db: Database, tail: string) =>
   db
     .query(
-      "SELECT starlink_status, verified_wifi, first_read_counted_at, first_read_taken_back_at, next_check_after FROM united_fleet WHERE tail_number = ?"
+      "SELECT starlink_status, verified_wifi, first_read_counted_at, first_read_taken_back_at, first_read_taken_back_reason, next_check_after FROM united_fleet WHERE tail_number = ?"
     )
     .get(tail) as {
     starlink_status: string;
     verified_wifi: string | null;
     first_read_counted_at: number | null;
     first_read_taken_back_at: number | null;
+    first_read_taken_back_reason: string | null;
     next_check_after: number;
   };
 const listing = (db: Database, tail: string) =>
@@ -161,6 +167,21 @@ function retrofit(db: Database, tail: string): void {
   read(db, tail, "Viasat");
   at(T0);
   hourlySheet(db, [tail]);
+}
+
+/** A clean, tail-confirmed read of ours stored at `atSec`, with no settle run. */
+function storedRead(db: Database, tail: string, atSec: number, provider: string): void {
+  db.query(
+    `INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, airline)
+     VALUES (?, 'united', ?, ?, ?, 1, 'UA')`
+  ).run(tail, atSec, provider === "Starlink" ? 1 : 0, provider);
+}
+
+/** The hourly job's sweep with no new sheet read: the import is as old as it was. */
+function sweepOnly(db: Database): FirstReadEvent[] {
+  const events: FirstReadEvent[] = [];
+  reconcileConsensus(db, undefined, events);
+  return events;
 }
 
 describe("the sheet alone never counts a tail (guard 1)", () => {
@@ -234,8 +255,114 @@ describe("the sheet alone never counts a tail (guard 1)", () => {
     read(db, "N76528", "Starlink");
     expect(counted(db, "N76528")).toBe(false);
     expect(roster(db, "N76528").first_read_counted_at).toBeNull();
+    // No count, so nothing of it is written: the roster keeps what we held.
+    expect(roster(db, "N76528")).toMatchObject({
+      starlink_status: "negative",
+      verified_wifi: "Viasat",
+    });
+    expect(sweepOnly(db)).toEqual([]);
+    expect(roster(db, "N76528").starlink_status).toBe("negative");
     expect(points).toEqual([]);
     db.close();
+  });
+
+  test("the hourly job does not take a row our own discovery wrote for the sheet's listing", () => {
+    const db = makeFreshDb();
+    rosterNegative(db, "N47330");
+    at(T0 - 7 * DAY);
+    read(db, "N47330", "Viasat");
+    at(T0);
+    hourlySheet(db, []);
+    db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, DateFound, TailNumber, OperatedBy, fleet, sheet_gid, airline)
+       VALUES ('Boeing 737-900', 'StrLnk', '2026-11-01', 'N47330', 'United Airlines', 'mainline', 'discovery', 'UA')`
+    ).run();
+    later(HOUR);
+    read(db, "N47330", "Starlink");
+    // The sheet import is current and does not list the tail; only our row does.
+    expect(hourlySheet(db, [])).toEqual([]);
+    expect(counted(db, "N47330")).toBe(false);
+    expect(roster(db, "N47330")).toMatchObject({
+      starlink_status: "negative",
+      first_read_counted_at: null,
+    });
+    expect(points).toEqual([]);
+    db.close();
+  });
+
+  test("the hourly job makes no count on an import that is not current", () => {
+    const db = makeFreshDb();
+    retrofit(db, "N14527");
+    // Seven hours with no sheet read, then our first Starlink read.
+    later(7 * HOUR);
+    read(db, "N14527", "Starlink");
+    expect(sweepOnly(db)).toEqual([]);
+    expect(counted(db, "N14527")).toBe(false);
+    expect(roster(db, "N14527")).toMatchObject({
+      starlink_status: "negative",
+      first_read_counted_at: null,
+    });
+    expect(points).toEqual([]);
+    // The import returns with the row still there: now it is the sheet's word.
+    later(HOUR);
+    expect(hourlySheet(db, ["N14527"]).map((e) => e.outcome)).toEqual(["counted"]);
+    db.close();
+  });
+});
+
+describe("the one read has an age limit", () => {
+  test("a Starlink read older than the limit is not counted when the sheet lists the tail", () => {
+    const db = makeFreshDb();
+    rosterNegative(db, "N55555");
+    storedRead(db, "N55555", T0 - 28 * DAY, "Viasat");
+    storedRead(db, "N55555", T0 - 27 * DAY, "Viasat");
+    // The check's real case was a read 26 days old; an hour past the limit is enough.
+    storedRead(db, "N55555", T0 - FIRST_READ_MAX_AGE_SECS - HOUR, "Starlink");
+    expect(hourlySheet(db, ["N55555"])).toEqual([]);
+    expect(counted(db, "N55555")).toBe(false);
+    expect(roster(db, "N55555")).toMatchObject({
+      starlink_status: "negative",
+      first_read_counted_at: null,
+    });
+    expect(computeWifiConsensus(db, "N55555", { airline: "UA" }).rule).not.toBe("first_read");
+    expect(points).toEqual([]);
+    db.close();
+  });
+
+  test("a read inside the limit is counted, and stamped with its own date", () => {
+    const db = makeFreshDb();
+    rosterNegative(db, "N55556");
+    storedRead(db, "N55556", T0 - 28 * DAY, "Viasat");
+    const readAt = T0 - FIRST_READ_MAX_AGE_SECS + HOUR;
+    storedRead(db, "N55556", readAt, "Starlink");
+    expect(hourlySheet(db, ["N55556"]).map((e) => e.outcome)).toEqual(["counted"]);
+    expect(counted(db, "N55556")).toBe(true);
+    expect(roster(db, "N55556").first_read_counted_at).toBe(readAt);
+    db.close();
+  });
+
+  test("a standing count does not lapse when its read passes the limit", () => {
+    const db = makeFreshDb();
+    retrofit(db, "N673UA");
+    later(HOUR);
+    read(db, "N673UA", "Starlink");
+    later(FIRST_READ_MAX_AGE_SECS + DAY);
+    expect(hourlySheet(db, ["N673UA"])).toEqual([]);
+    expect(computeWifiConsensus(db, "N673UA", { airline: "UA" }).rule).toBe("first_read");
+    expect(counted(db, "N673UA")).toBe(true);
+    expect(outcomes()).toEqual(["counted:first_read"]);
+    db.close();
+  });
+
+  test("the pure rule takes the read's age", () => {
+    const S = { has_starlink: 1, wifi_provider: "Starlink" };
+    const V = { has_starlink: 0, wifi_provider: "Viasat" };
+    expect(settleReads([S, V, V], true, FIRST_READ_MAX_AGE_SECS).rule).toBe("first_read");
+    expect(settleReads([S, V, V], true, FIRST_READ_MAX_AGE_SECS + 1).rule).not.toBe("first_read");
+    // The age limits making a count, never taking one back.
+    expect(settleReads([V, S], true, FIRST_READ_MAX_AGE_SECS + 1).rule).toBe(
+      "first_read_taken_back"
+    );
   });
 });
 
@@ -288,6 +415,9 @@ describe("a listed tail is counted on our first Starlink read (guards 2, 3, 4)",
     expect(events.map((e) => `${e.tail}:${e.outcome}`)).toEqual(["N17327:counted"]);
     expect(counted(db, "N17327")).toBe(true);
     expect(roster(db, "N17327").starlink_status).toBe("unknown");
+    // One read marks nothing verified, on this path as on a check's own.
+    expect(listing(db, "N17327")?.verified_wifi).toBeNull();
+    expect(verified(db, "N17327")).toBe(false);
     expect(points[0]).toMatchObject({
       outcome: "counted",
       reason: "first_read",
@@ -417,6 +547,235 @@ describe("the count is taken back (guards 1, 2, 6)", () => {
   });
 });
 
+describe("the second read comes within about a day, whichever job made the first (guard 4)", () => {
+  test("a count on a check's read moves discovery's turn to a day after that read", () => {
+    const db = makeFreshDb();
+    retrofit(db, "N11206");
+    // The listing's own move is long spent and discovery's routine turn is ten
+    // days off, so the verifier makes the first read.
+    db.query("UPDATE united_fleet SET next_check_after = ? WHERE tail_number = 'N11206'").run(
+      T0 + 10 * DAY
+    );
+    later(HOUR);
+    read(db, "N11206", "Starlink");
+    expect(roster(db, "N11206").first_read_counted_at).toBe(clock);
+    expect(roster(db, "N11206").next_check_after).toBe(clock + DAY);
+    db.close();
+  });
+
+  test("a count the hourly job makes does the same, from the read's own time", () => {
+    const db = makeFreshDb();
+    rosterNegative(db, "N17327");
+    at(T0 - 7 * DAY);
+    read(db, "N17327", "Viasat");
+    at(T0);
+    read(db, "N17327", "Starlink");
+    expect(roster(db, "N17327").next_check_after).toBe(T0 + 7 * DAY);
+    // The listing was noted before, so it does not move the turn itself.
+    db.query("UPDATE united_fleet SET sheet_listed_at = ? WHERE tail_number = 'N17327'").run(T0);
+    later(5 * HOUR);
+    hourlySheet(db, ["N17327"]);
+    expect(counted(db, "N17327")).toBe(true);
+    expect(roster(db, "N17327").next_check_after).toBe(T0 + DAY);
+    db.close();
+  });
+
+  test("a turn already sooner is left where it is: the count never puts a read off", () => {
+    const db = makeFreshDb();
+    retrofit(db, "N14527");
+    db.query("UPDATE united_fleet SET next_check_after = ? WHERE tail_number = 'N14527'").run(
+      T0 + 3 * HOUR
+    );
+    later(HOUR);
+    read(db, "N14527", "Starlink");
+    expect(counted(db, "N14527")).toBe(true);
+    expect(roster(db, "N14527").next_check_after).toBe(T0 + 3 * HOUR);
+    db.close();
+  });
+});
+
+describe("a stale sheet import neither makes nor ends a count", () => {
+  /** Enough older reads that the ordinary rule still says Viasat after two Starlink ones. */
+  function countedWithLongHistory(db: Database, tail: string): void {
+    retrofit(db, tail);
+    for (let d = 20; d < 25; d++) storedRead(db, tail, T0 - d * DAY, "Viasat");
+    db.query("UPDATE starlink_planes SET DateFound = '2026-11-01'").run();
+    later(HOUR);
+    read(db, tail, "Starlink");
+    expect(counted(db, tail)).toBe(true);
+  }
+  const HOST = SITES.united.canonicalHost;
+  const page = async (db: Database, path: string) =>
+    (await createApp(db).dispatch(req(path, HOST))).text();
+
+  test("a second Starlink read 25 hours after the last import leaves the count standing", async () => {
+    const db = makeFreshDb();
+    countedWithLongHistory(db, "N16234");
+    later(DAY);
+    const second = read(db, "N16234", "Starlink");
+    // The ordinary rule alone would say Viasat here (seven of nine reads).
+    expect(
+      settleReads(
+        Array(2)
+          .fill({ has_starlink: 1, wifi_provider: "Starlink" })
+          .concat(Array(7).fill({ has_starlink: 0, wifi_provider: "Viasat" })),
+        false
+      ).verdict
+    ).toBe("Viasat");
+    expect(second).toMatchObject({ rule: "first_read", verdict: null });
+    expect(counted(db, "N16234")).toBe(true);
+    expect(roster(db, "N16234")).toMatchObject({
+      starlink_status: "unknown",
+      first_read_taken_back_at: null,
+    });
+    expect(roster(db, "N16234").first_read_counted_at).not.toBeNull();
+    // The hourly sweep, still with no import, agrees with the check.
+    expect(sweepOnly(db)).toEqual([]);
+    expect(counted(db, "N16234")).toBe(true);
+    expect(outcomes()).toEqual(["counted:first_read"]);
+    const feed = await page(db, "/feed.xml");
+    const entry = feed.split("<entry>").find((e) => e.includes("N16234")) ?? "";
+    expect(entry).toContain("now has Starlink");
+    expect(feed).not.toContain("Correction");
+    expect(await page(db, "/newly-equipped")).not.toContain("Correction");
+
+    // The import returns: nothing to count again, nothing flapped.
+    later(HOUR);
+    expect(hourlySheet(db, ["N16234"])).toEqual([]);
+    later(DAY);
+    expect(read(db, "N16234", "Starlink")?.verdict).toBe("Starlink");
+    expect(outcomes()).toEqual(["counted:first_read", "confirmed:second_read"]);
+    db.close();
+  });
+
+  test("with the import stale a read of another provider still takes it back, worded as that", async () => {
+    const db = makeFreshDb();
+    countedWithLongHistory(db, "N16234");
+    later(DAY);
+    read(db, "N16234", "Viasat");
+    expect(counted(db, "N16234")).toBe(false);
+    expect(roster(db, "N16234")).toMatchObject({
+      starlink_status: "negative",
+      first_read_taken_back_reason: "other_provider",
+    });
+    expect(outcomes()).toEqual(["counted:first_read", "taken_back:other_provider"]);
+    expect(await page(db, "/feed.xml")).toContain(
+      "A later check read another provider, so the count was taken back."
+    );
+    db.close();
+  });
+
+  test("the ordinary rule outvoting a Starlink read is no reason to take a count back", () => {
+    const db = makeFreshDb();
+    countedWithLongHistory(db, "N16234");
+    // A read of another provider stored with no settle, then a Starlink read:
+    // the first-read shape is broken and the ordinary rule says Viasat, but
+    // the newest read agrees with the count and the sheet's row is there.
+    storedRead(db, "N16234", clock + 30 * 60, "Viasat");
+    later(HOUR);
+    const c = read(db, "N16234", "Starlink");
+    expect(c?.verdict).toBe("Viasat");
+    expect(roster(db, "N16234").first_read_counted_at).not.toBeNull();
+    expect(roster(db, "N16234").first_read_taken_back_at).toBeNull();
+    expect(outcomes()).toEqual(["counted:first_read"]);
+    db.close();
+  });
+});
+
+describe("a correction is worded by why the count was taken back", () => {
+  test("each reason has its own sentence, and none claims a read that did not happen", () => {
+    const at0 = utc("2026-11-02T01:00:00Z");
+    const other = firstReadTakenBackNote(at0, "other_provider");
+    const delisted = firstReadTakenBackNote(at0, "sheet_delisted");
+    expect(other).toContain("Correction (2026-11-02)");
+    expect(other).toContain("A later check read another provider");
+    expect(delisted).toContain("dropped its listing");
+    expect(delisted).not.toContain("another provider");
+    expect(firstReadTakenBackNote(at0, null)).not.toContain("another provider");
+  });
+
+  test("the sheet dropping the row is stored and told as that, when the row returns and we hold the tail", async () => {
+    const db = makeFreshDb();
+    retrofit(db, "N78009");
+    db.query("UPDATE starlink_planes SET DateFound = '2026-11-01'").run();
+    later(HOUR);
+    read(db, "N78009", "Starlink");
+    later(HOUR);
+    hourlySheet(db, []);
+    expect(roster(db, "N78009").first_read_taken_back_reason).toBe("sheet_delisted");
+    // The row returns and our next reads name Viasat: the ordinary rule holds
+    // the tail, and the list of listings we do not count shows the correction.
+    later(HOUR);
+    hourlySheet(db, ["N78009"]);
+    db.query("UPDATE starlink_planes SET DateFound = '2026-11-01'").run();
+    later(DAY);
+    read(db, "N78009", "Viasat");
+    expect(counted(db, "N78009")).toBe(false);
+    const reported = getListedNotCounted(db, "UA", { scope: "tail" }).find(
+      (r) => r.TailNumber === "N78009"
+    );
+    expect(reported?.first_read_taken_back_reason).toBe("sheet_delisted");
+    const feed = await (
+      await createApp(db).dispatch(req("/feed.xml", SITES.united.canonicalHost))
+    ).text();
+    const entry = feed.split("<entry>").find((e) => e.includes("N78009")) ?? "";
+    expect(entry).toContain("dropped its listing");
+    expect(entry).not.toContain("A later check read another provider");
+    db.close();
+  });
+});
+
+describe("a check that finds the sheet's row gone", () => {
+  test("takes the count back as the sheet's withdrawal, not as a read of another provider", () => {
+    const db = makeFreshDb();
+    retrofit(db, "N16234");
+    for (let d = 20; d < 25; d++) storedRead(db, "N16234", T0 - d * DAY, "Viasat");
+    later(HOUR);
+    read(db, "N16234", "Starlink");
+    // The import has dropped the row and its sweep has not run yet.
+    db.query("DELETE FROM starlink_planes WHERE TailNumber = 'N16234'").run();
+    later(HOUR);
+    expect(read(db, "N16234", "Starlink")?.verdict).toBe("Viasat");
+    expect(roster(db, "N16234")).toMatchObject({
+      first_read_counted_at: null,
+      first_read_taken_back_reason: "sheet_delisted",
+    });
+    expect(outcomes()).toEqual(["counted:first_read", "taken_back:sheet_delisted"]);
+    db.close();
+  });
+});
+
+describe("a read of no Wi-Fi neither confirms a count nor takes it back", () => {
+  test("six daily reads of None after the first Starlink read: counted, unverified, one metric point", () => {
+    const db = makeFreshDb();
+    retrofit(db, "N16234");
+    later(HOUR);
+    read(db, "N16234", "Starlink");
+    const stamp = roster(db, "N16234").first_read_counted_at;
+    for (let i = 0; i < 6; i++) {
+      later(DAY);
+      hourlySheet(db, ["N16234"]);
+      const c = read(db, "N16234", "None");
+      expect(c).toMatchObject({ rule: "first_read", verdict: null });
+      expect(counted(db, "N16234")).toBe(true);
+      expect(verified(db, "N16234")).toBe(false);
+    }
+    expect(roster(db, "N16234")).toMatchObject({
+      starlink_status: "unknown",
+      first_read_counted_at: stamp,
+      first_read_taken_back_at: null,
+    });
+    expect(outcomes()).toEqual(["counted:first_read"]);
+    // A named provider after them still takes it back.
+    later(DAY);
+    hourlySheet(db, ["N16234"]);
+    read(db, "N16234", "Viasat");
+    expect(counted(db, "N16234")).toBe(false);
+    expect(outcomes()).toEqual(["counted:first_read", "taken_back:other_provider"]);
+    db.close();
+  });
+});
+
 describe("the decision is a pure function of the reads and the listing", () => {
   const S = { has_starlink: 1, wifi_provider: "Starlink" };
   const V = { has_starlink: 0, wifi_provider: "Viasat" };
@@ -464,6 +823,11 @@ describe("how a first-read count is told, until the next read", () => {
     expect(note).toContain("united.com");
     expect(note).toContain("2026-11-20");
     expect(note).not.toMatch(/verified|confirmed that/i);
+    // It promises the two ways a count ends, not what "the next check" does:
+    // a read of no Wi-Fi does neither, and a second read may not settle it.
+    expect(note).not.toMatch(/the next (one|check|read)/i);
+    expect(note).toContain("names another provider");
+    expect(note).toContain("drops the listing");
   });
 
   test("the install log and a flight's assignment carry the read while the count stands", () => {
@@ -555,7 +919,7 @@ describe("what a visitor is told while the count stands, and after it is taken b
     expect(now).not.toContain("now has Starlink");
     expect(now).toContain("reported with Starlink, not yet confirmed");
     expect(now).toContain("Correction");
-    expect(now).toContain("no longer counted");
+    expect(now).toContain("A later check read another provider, so the count was taken back.");
     db.close();
   });
 });

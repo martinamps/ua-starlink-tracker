@@ -2698,7 +2698,7 @@ const feedXml: Handler = (ctx) => {
     <updated>${i.updated}</updated>
     <category term="reported"/>
     <summary>${escapeXml(
-      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) is listed with Starlink on the community-maintained fleet sheet, where this tracker first saw it on ${i.DateFound.slice(0, 10)} — the date this tracker first read the listing, not necessarily the day it was added. ${capitalize(reportedClause(i, "this tracker's"))}, so the aircraft is not confirmed and is not in the tracker's Starlink count.${i.first_read_taken_back_at ? ` ${firstReadTakenBackNote(i.first_read_taken_back_at, AIRLINES[i.airline]?.verifySite)}` : ""}`
+      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) is listed with Starlink on the community-maintained fleet sheet, where this tracker first saw it on ${i.DateFound.slice(0, 10)} — the date this tracker first read the listing, not necessarily the day it was added. ${capitalize(reportedClause(i, "this tracker's"))}, so the aircraft is not confirmed and is not in the tracker's Starlink count.${i.first_read_taken_back_at ? ` ${firstReadTakenBackNote(i.first_read_taken_back_at, i.first_read_taken_back_reason, AIRLINES[i.airline]?.verifySite)}` : ""}`
     )}</summary>
   </entry>`,
     };

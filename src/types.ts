@@ -81,6 +81,8 @@ export interface ReportedInstall extends RecentInstall {
   checks_since_listed: number;
   /** Unix seconds when a first-read count of this tail was taken back; null if none was. */
   first_read_taken_back_at?: number | null;
+  /** Why it was: our later read named another provider, or the sheet dropped the row. */
+  first_read_taken_back_reason?: "other_provider" | "sheet_delisted" | null;
 }
 
 /** A newly equipped tail's first observed revenue departure (first_flights). */

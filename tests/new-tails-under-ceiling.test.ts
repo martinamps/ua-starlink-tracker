@@ -628,14 +628,24 @@ describe("a sheet-listed tail we held as not Starlink: hours until it is counted
     expect(on.counted as number).toBeLessThanOrEqual(0.25);
     expect(off.counted as number).toBeGreaterThanOrEqual(on.counted as number);
     expect(on.reads).toBe(3);
-    expect(off.reads).toBeGreaterThanOrEqual(3);
     // No two readings of one page: every gap is a day, spread a third either
     // way by tail for the verifier and a tenth for discovery.
     for (const gap of on.gaps) {
       expect(gap).toBeGreaterThanOrEqual(24 * 0.67);
       expect(gap).toBeLessThanOrEqual(24 * 1.33 + 1);
     }
-    expect(off.hours as number).toBeGreaterThanOrEqual(on.hours as number);
+    // Without the bump the listing leaves discovery's turn a week off and the
+    // verifier makes the first reading. The count itself then moves that turn
+    // to a day after the reading: left to the verifier's own pace the second
+    // reading came at 49 hours and the tail settled at 99. So the bump no
+    // longer decides how soon the tail settles: both take two daily gaps.
+    expect(off.counted as number).toBeLessThanOrEqual(0.25);
+    expect(off.reads).toBe(3);
+    expect(off.hours as number).toBeLessThanOrEqual(2 * (24 * 1.33 + 1));
+    for (const gap of off.gaps) {
+      expect(gap).toBeGreaterThanOrEqual(24 * 0.67);
+      expect(gap).toBeLessThanOrEqual(24 * 1.33 + 1);
+    }
   }, 60_000);
 
   test.skipIf(!RUN_BACKTEST)(

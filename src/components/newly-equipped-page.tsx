@@ -133,7 +133,7 @@ function ReportedRow({
         Not confirmed: {reportedClause(row)}
         {row.observed_at ? `, last checked ${monthDay(row.observed_at)}` : ""}.
         {row.first_read_taken_back_at
-          ? ` ${firstReadTakenBackNote(row.first_read_taken_back_at, AIRLINES[row.airline]?.verifySite)}`
+          ? ` ${firstReadTakenBackNote(row.first_read_taken_back_at, row.first_read_taken_back_reason, AIRLINES[row.airline]?.verifySite)}`
           : ""}
       </div>
     </div>
