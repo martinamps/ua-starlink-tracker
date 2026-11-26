@@ -24,6 +24,11 @@
  *
  * A refused claim is not queued: the job sits the tick out and asks again on
  * its next one. Nothing here can start a check, so the count can only fall.
+ *
+ * A claim is followed by endUnitedCheck once its check has ended and written
+ * its log row. A claim whose check never ended (the process was stopped while
+ * the page loaded) has no log row, and the boot read needs to know that: see
+ * logSurplus.
  */
 
 import type { Database } from "bun:sqlite";
@@ -51,6 +56,14 @@ export const UNITED_SETTLE_RESERVE = Math.ceil(UNITED_DAILY_CHECK_BUDGET / 24);
 const HOUR_MS = 3600 * 1000;
 const WINDOW_MS = 24 * HOUR_MS;
 const LEDGER_KEY = "united_check_budget";
+/** Start times of claims whose check has not ended, kept beside the ledger. */
+const UNDER_WAY_KEY = "united_check_under_way";
+/**
+ * The most checks one stop can cut short: the verifier's, discovery's and a
+ * hand-forced run's. The boot read believes no more unended claims than this,
+ * so a caller that never calls endUnitedCheck costs three slots, not a day's.
+ */
+const MAX_UNDER_WAY = 3;
 
 export type UnitedCheckClass = "settle" | "reconfirm" | "manual";
 type GatedClass = Exclude<UnitedCheckClass, "manual">;
@@ -85,15 +98,31 @@ function parseLedger(raw: string | null): number[] | null {
  * counted too. A check this version made is in both, a little later in the
  * log, so the surplus can run a few over at an hour's edge: it can only close
  * the budget sooner, never open it.
+ *
+ * `unended` are claims an earlier process made and never saw end: they have
+ * no log row, so they stand for none. Counted as logged, such a claim hid one
+ * of the older version's checks in the hour a revert began, and a day later
+ * the count ran one or two over.
  */
 const unledgered = new WeakMap<Database, number[]>();
+/** This process's own claims whose check has not ended, oldest first. */
+const underWay = new WeakMap<Database, number[]>();
 
-function logSurplus(db: Database, ledger: readonly number[], now: number): number[] {
+function logSurplus(
+  db: Database,
+  ledger: readonly number[],
+  unended: readonly number[],
+  now: number
+): number[] {
   const since = now - WINDOW_MS;
   const hourOf = (ms: number) => Math.floor(ms / HOUR_MS);
   const ledgered = new Map<number, number>();
+  const noRow = [...unended];
   for (const s of ledger) {
-    if (s > since) ledgered.set(hourOf(s), (ledgered.get(hourOf(s)) ?? 0) + 1);
+    if (s <= since) continue;
+    const at = noRow.indexOf(s);
+    if (at >= 0) noRow.splice(at, 1);
+    else ledgered.set(hourOf(s), (ledgered.get(hourOf(s)) ?? 0) + 1);
   }
   const surplus: number[] = [];
   // Oldest first, so an hour's surplus is its newest log rows. Which rows of
@@ -121,7 +150,12 @@ function loadStarts(db: Database, now: number): number[] {
     ledger ??
     getRecentUnitedCheckTimes(db, Math.floor((now - WINDOW_MS) / 1000)).map((s) => s * 1000);
   // With no ledger the log is already the count: nothing is left unledgered.
-  if (!unledgered.has(db)) unledgered.set(db, ledger ? logSurplus(db, ledger, now) : []);
+  if (!unledgered.has(db)) {
+    // Whatever is still under way on boot was left by a process that is gone.
+    const left = parseLedger(getMeta(db, UNDER_WAY_KEY, "UA")) ?? [];
+    const unended = left.sort((a, b) => a - b).slice(-MAX_UNDER_WAY);
+    unledgered.set(db, ledger ? logSurplus(db, ledger, unended, now) : []);
+  }
   // A start stamped ahead of the clock (the clock was set back) still counts,
   // until the clock has passed it by a full window.
   return starts.filter((s) => s > now - WINDOW_MS);
@@ -171,9 +205,34 @@ export function claimUnitedCheck(db: Database, cls: UnitedCheckClass, now = Date
     if (cls !== "manual" && !stateOf(countedStarts(db, starts, now), now).open[cls]) return false;
     starts.push(now);
     setMeta(db, LEDGER_KEY, JSON.stringify(starts), "UA");
+    const open = (parseLedger(getMeta(db, UNDER_WAY_KEY, "UA")) ?? []).filter(
+      (s) => s > now - WINDOW_MS
+    );
+    setMeta(db, UNDER_WAY_KEY, JSON.stringify([...open, now]), "UA");
+    underWay.set(db, [...(underWay.get(db) ?? []), now]);
     emitUsed(countedStarts(db, starts, now).length);
     return true;
   })();
+}
+
+/**
+ * The check a claim was made for has ended, and its log row is written (a
+ * failed check writes one too). Call it once per granted claim, in a finally.
+ * It takes this process's oldest open claim: two checks that end out of order
+ * swap times a tick apart, and the number left open is still right. Never
+ * throws: a missed call only makes the next boot count a slot more.
+ */
+export function endUnitedCheck(db: Database): void {
+  const at = underWay.get(db)?.shift();
+  if (at === undefined) return;
+  try {
+    db.transaction(() => {
+      const open = parseLedger(getMeta(db, UNDER_WAY_KEY, "UA")) ?? [];
+      const i = open.indexOf(at);
+      if (i >= 0) open.splice(i, 1);
+      setMeta(db, UNDER_WAY_KEY, JSON.stringify(open), "UA");
+    })();
+  } catch {}
 }
 
 /** A job had an aircraft due and the budget stopped it: one per tick sat out. */

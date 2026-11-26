@@ -32,6 +32,7 @@ import {
   UNITED_RECONFIRM_HOURLY_PACE,
   UNITED_SETTLE_RESERVE,
   claimUnitedCheck,
+  endUnitedCheck,
   unitedBudgetState,
 } from "../src/scripts/united-check-budget";
 import { makeFreshDb, utc } from "./helpers";
@@ -261,7 +262,8 @@ describe("the ledger", () => {
         offsetMin = 0,
         revertMin,
         perHour,
-      }: { offsetMin?: number; revertMin: number; perHour: number },
+        cutShort = false,
+      }: { offsetMin?: number; revertMin: number; perHour: number; cutShort?: boolean },
       logLagSec = 0,
       daysAfter = 1
     ) {
@@ -269,18 +271,22 @@ describe("the ledger", () => {
       const path = join(dir, "db.sqlite");
       const made: number[] = [];
       let n = 0;
-      const takeAll = (handle: Database, from: number, to: number) => {
+      // `stoppedAt`: the process is stopped there, while the page of its last
+      // check loads. That check started, so it counts, and it wrote no log row.
+      const takeAll = (handle: Database, from: number, to: number, stoppedAt?: number) => {
         for (let t = from; t < to; t += 60) {
           if (claimUnitedCheck(handle, "settle", t * 1000)) {
             made.push(t);
+            if (stoppedAt !== undefined && t + 60 >= stoppedAt) return;
             logCheck(handle, t + logLagSec, n++);
+            endUnitedCheck(handle);
           }
         }
       };
       try {
         const revertAt = T0 + DAY + offsetMin * 60;
         const returnAt = revertAt + revertMin * 60;
-        withBoot(path, (handle) => takeAll(handle, T0, revertAt));
+        withBoot(path, (handle) => takeAll(handle, T0, revertAt, cutShort ? revertAt : undefined));
         withBoot(path, (handle) => {
           for (let t = revertAt; t < returnAt; t += Math.floor(HOUR / perHour)) {
             made.push(t);
@@ -366,6 +372,127 @@ describe("the ledger", () => {
       },
       30_000
     );
+
+    // Finding 2a of the second look. The check under way when a revert starts
+    // is claimed and never logged. Counted as logged, it stood for one of the
+    // older version's log rows in that hour, so that check went uncounted and
+    // a day later a rolling 24 hours held 365.
+    test.each([
+      [30, 360, 20],
+      [30, 25, 20],
+      [20, 40, 30],
+      [45, 14, 60],
+      [50, 9, 120],
+      [10, 45, 6],
+      [30, 720, 18],
+    ])(
+      "a revert %i minutes into an hour that cuts a check short, for %i minutes at %i checks an hour: none of this version's checks passes the ceiling",
+      (offsetMin, revertMin, perHour) => {
+        const { made, returnAt, seenOnReturn, inWindowOnReturn } = revertFor(
+          { offsetMin, revertMin, perHour, cutShort: true },
+          0,
+          2
+        );
+        // The check that was cut short and every one of the older version's.
+        expect(seenOnReturn).toBe(inWindowOnReturn);
+        expect(made.some((t) => t >= returnAt + DAY)).toBe(true);
+        expect(busiestAfterReturn(made, returnAt)).toBeLessThanOrEqual(UNITED_DAILY_CHECK_BUDGET);
+      },
+      30_000
+    );
+
+    test("a claim that is never ended costs the next boot at most three slots, and never opens one", () => {
+      const dir = mkdtempSync(join(tmpdir(), "united-revert-"));
+      const path = join(dir, "db.sqlite");
+      try {
+        // Forty checks, each logged, none ended: a caller that forgot to.
+        withBoot(path, (handle) => {
+          for (let i = 0; i < 40; i++) {
+            expect(claimUnitedCheck(handle, "settle", (T0 + i * 300) * 1000)).toBe(true);
+            logCheck(handle, T0 + i * 300 + 20, i);
+          }
+        });
+        const now = (T0 + 40 * 300) * 1000;
+        const used = withBoot(path, (handle) => unitedBudgetState(handle, now).used);
+        expect(used).toBeGreaterThanOrEqual(40);
+        expect(used).toBeLessThanOrEqual(43);
+        // A list nobody can read is no list: the count is the ledger's and the log's.
+        for (const raw of ["not json", '{"a":1}', '["x"]', "[null]"]) {
+          withBoot(path, (handle) => setMeta(handle, "united_check_under_way", raw, "UA"));
+          expect(withBoot(path, (handle) => unitedBudgetState(handle, now).used)).toBe(40);
+        }
+        // Times that are in no ledger stand for nothing.
+        withBoot(path, (handle) => setMeta(handle, "united_check_under_way", "[1,2,3]", "UA"));
+        expect(withBoot(path, (handle) => unitedBudgetState(handle, now).used)).toBe(40);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("the list of unended claims can only add to the count a boot reads", () => {
+      // Random ledgers, logs and lists: the same file read with the list and
+      // without it. The list may close the budget sooner, never open it.
+      let seed = 20261126;
+      const rand = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 2 ** 32;
+      };
+      const now = T0_MS + 2 * DAY * 1000;
+      const dir = mkdtempSync(join(tmpdir(), "united-list-"));
+      let added = 0;
+      try {
+        for (let run = 0; run < 60; run++) {
+          const path = join(dir, `${run}.sqlite`);
+          const starts = Array.from({ length: Math.floor(rand() * 300) }, () =>
+            Math.floor(now - rand() * 26 * HOUR * 1000)
+          ).sort((a, b) => a - b);
+          withBoot(path, (handle) => {
+            setMeta(handle, "united_check_budget", JSON.stringify(starts), "UA");
+            const rows = Math.floor(rand() * 400);
+            for (let i = 0; i < rows; i++) {
+              logCheck(handle, Math.floor((now - rand() * 26 * HOUR * 1000) / 1000), i);
+            }
+          });
+          const without = withBoot(path, (handle) => unitedBudgetState(handle, now).used);
+          const picked = starts.filter(() => rand() < 0.1);
+          const listed = [...picked, ...(rand() < 0.3 ? [now - 5, 12, now + 99_000] : [])];
+          withBoot(path, (handle) =>
+            setMeta(handle, "united_check_under_way", JSON.stringify(listed), "UA")
+          );
+          const withList = withBoot(path, (handle) => unitedBudgetState(handle, now).used);
+          expect(withList).toBeGreaterThanOrEqual(without);
+          expect(withList - without).toBeLessThanOrEqual(3);
+          added += withList - without;
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+      expect(added).toBeGreaterThan(0);
+    });
+
+    test("ending a check clears its own claim and nothing else, and never throws", () => {
+      const db = makeFreshDb();
+      const open = () => JSON.parse(getMeta(db, "united_check_under_way", "UA") ?? "[]");
+      endUnitedCheck(db);
+      expect(open()).toEqual([]);
+      setMeta(db, "united_check_under_way", JSON.stringify([T0_MS - 5000]), "UA");
+      expect(claimUnitedCheck(db, "settle", T0_MS)).toBe(true);
+      expect(claimUnitedCheck(db, "settle", T0_MS + 1000)).toBe(true);
+      expect(open()).toEqual([T0_MS - 5000, T0_MS, T0_MS + 1000]);
+      endUnitedCheck(db);
+      expect(open()).toEqual([T0_MS - 5000, T0_MS + 1000]);
+      endUnitedCheck(db);
+      endUnitedCheck(db);
+      expect(open()).toEqual([T0_MS - 5000]);
+      // A claim made a day later drops what has left the window.
+      expect(claimUnitedCheck(db, "settle", T0_MS + DAY * 1000)).toBe(true);
+      expect(open()).toEqual([T0_MS + DAY * 1000]);
+      setMeta(db, "united_check_under_way", "not json", "UA");
+      endUnitedCheck(db);
+      expect(open()).toEqual([]);
+      db.close();
+      expect(() => endUnitedCheck(db)).not.toThrow();
+    });
 
     test("the log can only add to the count: a ledger the log trails is counted whole", () => {
       const dir = mkdtempSync(join(tmpdir(), "united-revert-"));

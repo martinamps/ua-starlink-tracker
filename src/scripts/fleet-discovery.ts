@@ -56,6 +56,7 @@ import { pingIndexNow } from "./indexnow";
 import {
   type UnitedCheckClass,
   claimUnitedCheck,
+  endUnitedCheck,
   recordUnitedCheckHeld,
   unitedBudgetState,
 } from "./united-check-budget";
@@ -493,6 +494,8 @@ export async function verifyPlane(
 
         // Return null to allow batch processing to continue
         return null;
+      } finally {
+        endUnitedCheck(db);
       }
     },
     { tail_number: plane.tail_number }
