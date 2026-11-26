@@ -23,8 +23,15 @@ const StarlinkTrackerLib = (() => {
       airlineName: "Virgin Atlantic",
       marker: "Virgin Atlantic",
       statesType: true,
+      ownNames: Object.freeze(["Virgin Atlantic Airways", "Virgin Atlantic"]),
     }),
-    SK: Object.freeze({ iata: "SK", airlineName: "SAS", marker: "SAS", statesType: true }),
+    SK: Object.freeze({
+      iata: "SK",
+      airlineName: "SAS",
+      marker: "SAS",
+      statesType: true,
+      ownNames: Object.freeze(["Scandinavian Airlines System", "Scandinavian Airlines", "SAS"]),
+    }),
   });
 
   const CARRIER_CODES = Object.freeze(Object.keys(TRACKED_CARRIERS));
@@ -180,12 +187,42 @@ const StarlinkTrackerLib = (() => {
     return seg.destination === origin ? undefined : { origin, destination: seg.destination };
   }
 
-  // An aircraft type as a results card prints it, whole: the lookahead refuses
-  // a match that stops short of the type's end ("Airbus A350 900"), since a
-  // clipped type could read as another one.
-  const AIRCRAFT_TYPE_RE =
-    /\b(?:Airbus A\d{3}(?:-\d{3,4})?(?:neo|XLR|LR)?|Boeing 7\d7(?:-\d{1,3}(?:ER|LR)?)?(?: MAX(?: \d{1,2})?)?|Embraer E?\d{3}(?:-E2)?|Bombardier CRJ ?\d{3,4}|Canadair RJ ?\d{3,4}|ATR ?\d{2}(?:-\d{3})?)(?![ -]?[A-Za-z0-9])/g;
+  // An aircraft type as a results card prints it, and nothing else: a field
+  // is a type only when the whole field is one. A type is never cut out of a
+  // longer run of text, since a cut type ("Airbus A350" out of "Airbus
+  // A350/900") can read as another aircraft.
+  const WHOLE_TYPE_RE =
+    /^(?:Airbus A\d{3}(?:-\d{3,4})?(?:neo|XLR|LR)?|Boeing 7\d7(?:-\d{1,3}(?:ER|LR)?)?(?: MAX(?: \d{1,2})?)?|Embraer E?\d{3}(?:-E2)?|Bombardier CRJ ?\d{3,4}|Canadair RJ ?\d{3,4}|ATR ?\d{2}(?:-\d{3})?)$/;
+  // Any sign that a field speaks of an aircraft. A field with one that is not
+  // a whole type is a type we cannot read, and the card then states none.
+  const AIRCRAFT_WORD_RE =
+    /\b(?:airbus|boeing|embraer|bombardier|canadair|atr|de havilland|dash|saab|fokker|mcdonnell|douglas|comac|sukhoi|cessna|pilatus|beechcraft|dornier|tupolev|antonov|ilyushin|avro|bae|mitsubishi|crj|erj|dreamliner|a[23]\d{2}\w*)\b/i;
+  // A field that would lengthen the type before it: "900", "-1000", "neo".
+  const TRAILING_VARIANT_RE =
+    /^[-/]? ?(?:\d{3,4}[A-Za-z]{0,3}|neo|XLR|LR|ER|XWB|MAX(?: \d{1,2})?)$/i;
   const TYPE_TEXT_RE = /^[A-Za-z0-9 -]{1,40}$/;
+  const MAX_CARD_TEXT = 20000;
+
+  const DASHES_RE = /[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g;
+  const INVISIBLE_RE = /[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g;
+  const FIELD_BREAK_RE = /[\n\r\v\f\u0085\u2028\u2029\u00b7\u2022\u2219\u22c5|]+/;
+
+  /**
+   * A card's text as fields: one per line or dot-separated part, with every
+   * kind of space folded to a plain space and every kind of dash to a hyphen
+   * first, so "A350" + no-break space + "900" is one field, not a type and a
+   * stray number.
+   */
+  function cardFields(text) {
+    if (typeof text !== "string" || text.length > MAX_CARD_TEXT) return null;
+    return text
+      .normalize("NFKC")
+      .replace(INVISIBLE_RE, "")
+      .replace(DASHES_RE, "-")
+      .split(FIELD_BREAK_RE)
+      .map((field) => field.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+  }
 
   function typeOf(value) {
     return typeof value === "string" && TYPE_TEXT_RE.test(value) ? value : null;
@@ -197,18 +234,82 @@ const StarlinkTrackerLib = (() => {
     return Boolean(carrier && TRACKED_CARRIERS[carrier].statesType);
   }
 
+  // Words an operating-carrier line uses, and the shape "by Delta" / "for
+  // United Express" / "as SAS Link". Wider than the one phrase on purpose: a
+  // word matched by mistake costs a badge, a line missed gives a wrong one.
+  const OPERATOR_WORD_RE =
+    /\b(?:operat\w*|crew\w*|leas(?:e|ed|ing)|wet[- ]?leas\w*|code[- ]?shar\w*|behalf|dba|flown|partner\w*|subsidiar\w*|affiliat\w*|franchis\w*)\b|d\/b\/a|trading as|doing business/i;
+  const BY_A_NAME_RE = /\b(?:[Bb][Yy]|[Ff][Oo][Rr]|[Aa][Ss])\s+\p{Lu}/u;
+  const AIRLINE_WORD_RE = /\bair ?lines?\b|\bairways\b|\baviation\b/i;
+  const ENGLISH_PAGE_RE = /^en(?:[-_]|$)/i;
+  // Words an English results card prints and a card in another language does
+  // not: the page's declared language alone is not trusted.
+  const ENGLISH_CARD_RE =
+    /\b(?:hr|legroom|emissions|layover|overnight|travel time|select flight)\b/i;
+
+  function escapeRe(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
   /**
-   * The one aircraft type a card's visible text states, or null. Null unless
-   * the card shows a single flight (`segmentCount` 1): with two legs nothing
-   * says which leg a type belongs to. Null when the text says "Operated by":
-   * the airline's statement is about its own aircraft, and a partner's
-   * aircraft of the same type is not covered. Null when two different types
-   * appear. Every doubt ends in no type, so in no badge.
+   * Does any of this text name an airline other than `carrier`, or say that
+   * someone flies the aircraft for it? English wording only: the caller reads
+   * a type on an English page and on no other. "Operated by Virgin Atlantic"
+   * as a whole field is the airline flying its own flight and is let through;
+   * "Operated by SAS Connect" is not, since that names another operator.
    */
-  function statedAircraftType(text, segmentCount) {
-    if (typeof text !== "string" || segmentCount !== 1) return null;
-    if (/operated by/i.test(text)) return null;
-    const found = new Set(text.match(AIRCRAFT_TYPE_RE) ?? []);
+  function namesAnotherOperator(fields, carrier) {
+    const own = TRACKED_CARRIERS[carrier].ownNames;
+    const ownRe = new RegExp(`\\b(?:${own.map(escapeRe).join("|")})\\b`, "gi");
+    const selfOperated = new RegExp(`^operated by (?:${own.map(escapeRe).join("|")})$`, "i");
+    for (const field of fields) {
+      if (selfOperated.test(field)) continue;
+      if (OPERATOR_WORD_RE.test(field) || BY_A_NAME_RE.test(field)) return true;
+      if (AIRLINE_WORD_RE.test(field.replace(ownRe, " "))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The one aircraft type a card states for the flight `card.flightNumber`,
+   * or null. Every doubt ends in no type, so in no badge:
+   *
+   *  - `card.decoded` must be true: the card's own itinerary data said how
+   *    many flights it shows. A count guessed from text can be wrong, and the
+   *    type could then be another flight's.
+   *  - `card.segmentCount` must be 1: with two legs nothing says which leg a
+   *    type belongs to.
+   *  - `card.lang` must be English, and the card's own text must read as
+   *    English. The airline's statement is about its own aircraft, so a card
+   *    that names another operator must send nothing, and we can only
+   *    recognise such a line in a language we read. Any other page language,
+   *    or none, sends no type.
+   *  - Neither the text nor `card.labels` (the card's aria-labels) may name
+   *    another airline or operator (namesAnotherOperator).
+   *  - Exactly one type, and every field that speaks of an aircraft must be a
+   *    whole type we know: a type followed by anything (" 900", "/900",
+   *    " (Sharklets)") is refused, never shortened.
+   */
+  function statedAircraftType(text, card) {
+    if (!card || card.decoded !== true || card.segmentCount !== 1) return null;
+    if (typeof card.lang !== "string" || !ENGLISH_PAGE_RE.test(card.lang)) return null;
+    const carrier = detectCarrier(card.flightNumber);
+    if (!carrier || !TRACKED_CARRIERS[carrier].statesType) return null;
+    const fields = cardFields(text);
+    const labels = cardFields(card.labels ?? "");
+    if (!fields || !labels) return null;
+    if (!fields.some((field) => ENGLISH_CARD_RE.test(field))) return null;
+    if (namesAnotherOperator(fields, carrier) || namesAnotherOperator(labels, carrier)) return null;
+
+    const found = new Set();
+    for (let i = 0; i < fields.length; i++) {
+      if (WHOLE_TYPE_RE.test(fields[i])) {
+        if (i + 1 < fields.length && TRAILING_VARIANT_RE.test(fields[i + 1])) return null;
+        found.add(fields[i]);
+      } else if (AIRCRAFT_WORD_RE.test(fields[i])) {
+        return null;
+      }
+    }
     if (found.size !== 1) return null;
     return typeOf([...found][0]);
   }

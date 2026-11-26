@@ -98,10 +98,18 @@ depends on the airline:
   answers only for an aircraft type the caller states, so the extension reads
   the type from the card's visible text and sends it as `aircraft_type`.
   Google Flights shows the type only once a card's details are open, so a
-  closed card gets no badge. The type is sent only when the card shows one
-  flight, names exactly one aircraft type, and does not say "Operated by":
-  a partner airline's aircraft under a `VS` or `SK` number is not covered by
-  the airline's statement, whatever its type. A gray "Starlink (likely)" then
+  closed card gets no badge. A partner airline's aircraft under a `VS` or
+  `SK` number is not covered by the airline's statement, whatever its type, so
+  the reader sends a type only when every doubt is ruled out
+  (`statedAircraftType` in `lib.js`): the card's own itinerary data decoded
+  and shows one flight; the page is in English and the card reads as English
+  (an operating-carrier line can only be recognised in a language we read, so
+  on Google Flights in any other language Virgin Atlantic and SAS get no
+  badge); neither the card's text nor its aria-labels name another airline or
+  operator ("Operated by", "Plane and crew by", any "by/for/as" followed by a
+  name, any other "Airlines" or "Airways"); and the card states exactly one
+  aircraft type, as a whole field. A type followed by anything ("Airbus A350
+  900", "Airbus A320neo (Sharklets)") is refused, never shortened. A gray "Starlink (likely)" then
   appears for an "Airbus A350" or "Airbus A350-1000" on Virgin Atlantic and an
   "Airbus A320neo" on SAS; "Airbus A320" alone, any other type, and no type
   get no badge and are never dimmed. No other airline's request carries

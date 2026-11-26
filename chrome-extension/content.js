@@ -92,9 +92,23 @@
     }`;
   }
 
-  /** The one aircraft type the card's visible text states, or null. */
-  function statedTypeOn(card, segmentCount) {
-    return lib.statedAircraftType(card.innerText || "", segmentCount);
+  /**
+   * The one aircraft type the card states for `flightNumber`, or null. The
+   * reader gets the page's language and the card's aria-labels too: it sends
+   * nothing unless it can rule out another operator (lib.statedAircraftType).
+   */
+  function statedTypeOn(card, flightNumber, segmentCount, decoded) {
+    const labels = [];
+    for (const el of card.querySelectorAll("[aria-label]")) {
+      labels.push(el.getAttribute("aria-label") || "");
+    }
+    return lib.statedAircraftType(card.innerText || "", {
+      flightNumber,
+      segmentCount,
+      decoded,
+      lang: document.documentElement.lang || "",
+      labels: labels.join("\n"),
+    });
   }
 
   function attrFlightNumber(card, codes) {
@@ -111,7 +125,9 @@
 
   /**
    * Flight segments for one card as {segments: [{flightNumber, date|null}],
-   * complete}, most-reliable source first. `complete` is false when the
+   * complete, decoded}, most-reliable source first. `decoded` is true only
+   * when the card's own itinerary data gave the segments: a count guessed from
+   * text is good enough to look a flight up, never to read its aircraft type. `complete` is false when the
    * itinerary has a leg we cannot judge (untracked carrier, or more legs than
    * we look up): the weakest-leg rule cannot vouch for such a card, so it gets
    * no badge. The heuristic paths only ever see our own carriers and are
@@ -132,6 +148,7 @@
       return {
         segments: tim.segments.slice(0, MAX_SEGMENTS_PER_CARD),
         complete: tim.untrackedLegs === 0 && tim.segments.length <= MAX_SEGMENTS_PER_CARD,
+        decoded: true,
       };
     }
 
@@ -139,10 +156,12 @@
     // named on the card may be matched out of its text or attribute soup.
     const text = cardText(card);
     const codes = lib.carriersNamedIn(text);
-    if (codes.length === 0) return { segments: [], complete: true };
+    if (codes.length === 0) return { segments: [], complete: true, decoded: false };
 
     const flightNumber = attrFlightNumber(card, codes);
-    if (flightNumber) return { segments: [{ flightNumber, date: null }], complete: true };
+    if (flightNumber) {
+      return { segments: [{ flightNumber, date: null }], complete: true, decoded: false };
+    }
 
     return {
       segments: lib
@@ -150,6 +169,7 @@
         .slice(0, MAX_SEGMENTS_PER_CARD)
         .map((fn) => ({ flightNumber: fn, date: null })),
       complete: true,
+      decoded: false,
     };
   }
 
@@ -325,7 +345,7 @@
   /** True when the card needs no further passes. */
   async function processCard(card, pageDate, budget, gen) {
     const signature = cardSignature(card);
-    const { segments, complete } = extractSegments(card);
+    const { segments, complete, decoded } = extractSegments(card);
     if (segments.length === 0 || !complete) {
       // Nothing tracked here, or a leg we cannot judge — settled for this card.
       removeBadge(card);
@@ -339,7 +359,9 @@
     // The aircraft type the card itself shows, read only for an airline that
     // is answered by stated type, and only on a one-flight card.
     const wantsType = segments.some((seg) => lib.wantsAircraftType(seg.flightNumber));
-    const statedType = wantsType ? statedTypeOn(card, segments.length) : null;
+    const statedType = wantsType
+      ? statedTypeOn(card, segments[0].flightNumber, segments.length, decoded)
+      : null;
     const types = segments.map((seg) =>
       lib.wantsAircraftType(seg.flightNumber) ? statedType : null
     );

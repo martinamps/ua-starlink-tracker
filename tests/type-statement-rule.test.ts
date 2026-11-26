@@ -570,27 +570,202 @@ describe("the extension, 2.5.0", () => {
     }
   });
 
+  // One Virgin Atlantic or SAS flight on an English page, its itinerary data
+  // decoded: the only card a type is ever read from.
+  const vsCard = { flightNumber: "VS3", segmentCount: 1, decoded: true, lang: "en-GB" };
+  const skCard = { flightNumber: "SK903", segmentCount: 1, decoded: true, lang: "en" };
+  // Every made-up card carries a duration as an English page prints it,
+  // which the reader takes as its sign that the card is in English.
+  const english = (text: string) => `7 hr 55 min\n${text}`;
+  const readVs = (text: string, over: Record<string, unknown> = {}) =>
+    extLib.statedAircraftType(english(text), { ...vsCard, ...over });
+  const readSk = (text: string, over: Record<string, unknown> = {}) =>
+    extLib.statedAircraftType(english(text), { ...skCard, ...over });
+
   test("a type is read off a card only when the card can mean one aircraft", () => {
-    const read = extLib.statedAircraftType;
-    expect(read("Virgin Atlantic · Economy · Airbus A350-1000 · VS 3", 1)).toBe("Airbus A350-1000");
-    expect(read("SAS\nEconomy\nAirbus A320neo\nSK 903", 1)).toBe("Airbus A320neo");
-    expect(read("SAS · Airbus A320 · SK 903", 1)).toBe("Airbus A320");
+    expect(readVs("Virgin Atlantic · Economy · Airbus A350-1000 · VS 3")).toBe("Airbus A350-1000");
+    expect(readSk("SAS\nEconomy\nAirbus A320neo\nSK 903")).toBe("Airbus A320neo");
+    expect(readSk("SAS · Airbus A320 · SK 903")).toBe("Airbus A320");
     // The same type printed twice is still one type.
-    expect(read("Airbus A350 · VS 3 … Airbus A350", 1)).toBe("Airbus A350");
+    expect(readVs("Airbus A350 · VS 3\nAirbus A350")).toBe("Airbus A350");
     // Two flights on the card: nothing says which leg the type belongs to.
-    expect(read("Airbus A350 · VS 3", 2)).toBeNull();
-    // A partner's aircraft: the statement is not about it, whatever its type.
-    expect(read("Virgin Atlantic · Operated by Delta · Airbus A350 · VS 3925", 1)).toBeNull();
-    expect(read("SAS · operated by Cityjet · Airbus A320neo", 1)).toBeNull();
+    expect(readVs("Airbus A350 · VS 3", { segmentCount: 2 })).toBeNull();
+    expect(readVs("Airbus A350 · VS 3", { segmentCount: 0 })).toBeNull();
     // Two different types, or none.
-    expect(read("Airbus A350 · Boeing 787", 1)).toBeNull();
-    expect(read("Virgin Atlantic · VS 3 · 7 hr 55 min", 1)).toBeNull();
-    // A type that may be clipped is refused, not shortened to another type.
-    expect(read("Airbus A350 900 · VS 3", 1)).toBeNull();
-    expect(read("Airbus A320 neo", 1)).toBeNull();
-    expect(read("Airbus A320neo", 1)).toBe("Airbus A320neo");
-    expect(read("Airbus A321neo", 1)).toBe("Airbus A321neo");
-    expect(read(null, 1)).toBeNull();
+    expect(readVs("Airbus A350 · Boeing 787")).toBeNull();
+    expect(readVs("Virgin Atlantic · VS 3 · 7 hr 55 min")).toBeNull();
+    expect(readSk("Airbus A321neo")).toBe("Airbus A321neo");
+    // Only for an airline answered by stated type.
+    expect(readVs("Airbus A350 · UA 3", { flightNumber: "UA3" })).toBeNull();
+    expect(readVs("Airbus A350", { flightNumber: "DL30" })).toBeNull();
+    expect(extLib.statedAircraftType(null, vsCard)).toBeNull();
+    expect(extLib.statedAircraftType(english("Airbus A350"), null)).toBeNull();
+    expect(extLib.statedAircraftType(english("Airbus A350"), 1)).toBeNull();
+    expect(readVs(`${"x ".repeat(100000)}\nAirbus A350`)).toBeNull();
+  });
+
+  // Finding 1b of the second look: the guard knew "Operated by" in English
+  // only, so a partner's A350 under a VS number got the badge on a German,
+  // French or Swedish page, and under "Plane and crew by" in English.
+  test("a card on a page that is not in English states no type", () => {
+    expect(readVs("Virgin Atlantic\nAirbus A350\nVS 3")).toBe("Airbus A350");
+    for (const lang of ["de", "de-DE", "fr", "sv-SE", "nb", "da", "es-419", "ja", "", "english"]) {
+      expect(readVs("Virgin Atlantic\nAirbus A350\nVS 3", { lang })).toBeNull();
+      expect(readSk("SAS\nAirbus A320neo\nSK 903", { lang })).toBeNull();
+    }
+    for (const lang of [undefined, null, 7, ["en"]]) {
+      expect(readVs("Virgin Atlantic\nAirbus A350\nVS 3", { lang })).toBeNull();
+    }
+    // The second look's own cards, on the page language they would be seen in.
+    expect(readVs("Airbus A350\nDurchgeführt von Delta", { lang: "de" })).toBeNull();
+    expect(readVs("Airbus A350\nExploité par Delta", { lang: "fr" })).toBeNull();
+    expect(readSk("Airbus A320neo\nFlygs av Air France", { lang: "sv" })).toBeNull();
+    for (const lang of ["en", "en-US", "en-GB", "EN-au", "en_CA"]) {
+      expect(readVs("Virgin Atlantic\nAirbus A350\nVS 3", { lang })).toBe("Airbus A350");
+    }
+    // A page that says it is English while its cards are not: the card's own
+    // words must be English too, or the operator's line could be in any
+    // language.
+    const raw = (text: string) => extLib.statedAircraftType(text, vsCard);
+    expect(raw("Virgin Atlantic\n7 hr 55 min\nAirbus A350\nVS 3")).toBe("Airbus A350");
+    expect(raw("Virgin Atlantic\nAirbus A350\nVS 3")).toBeNull();
+    expect(raw("7 Std. 55 Min.\nAirbus A350\nDurchgeführt von Delta")).toBeNull();
+    expect(raw("7 h 55 min\nAirbus A350\nExploité par Delta")).toBeNull();
+    expect(raw("7 tim 55 min\nAirbus A350\nflygs av cityjet")).toBeNull();
+  });
+
+  test("an English card that names another operator states no type", () => {
+    expect(readSk("SAS\nAirbus A320neo\nSK 903")).toBe("Airbus A320neo");
+    for (const line of [
+      "Operated by Delta",
+      "operated by Cityjet",
+      "OPERATED BY DELTA",
+      "Plane and crew by Heston Airlines",
+      "Aircraft and crew provided by Xfly",
+      "Flown by Air France",
+      "Wet lease: Titan",
+      "Delta flying for Virgin Atlantic",
+      "CityJet DBA SAS",
+      "Operating as SAS Link",
+      "Operated by SAS Connect",
+      "Operated by Virgin Atlantic International",
+      "Codeshare with KLM",
+      "On behalf of SAS",
+      "British Airways",
+      "Delta Air Lines",
+      "Heston Airlines",
+    ]) {
+      expect(readVs(`Virgin Atlantic\nAirbus A350\nVS 3\n${line}`)).toBeNull();
+      expect(readVs(`Virgin Atlantic · ${line} · Airbus A350 · VS 3`)).toBeNull();
+      expect(readSk(`SAS\nAirbus A320neo\nSK 903\n${line}`)).toBeNull();
+      // Said only in an aria-label, it counts the same.
+      expect(readVs("Virgin Atlantic\nAirbus A350\nVS 3", { labels: line })).toBeNull();
+    }
+    // Operator wording in another language on a page that claims English
+    // still reads as a name after "by", "for" or "as" only by luck: the
+    // language gate above is what holds there, not this list.
+    expect(readVs("Airbus A350\nVS 3", { labels: 7 })).toBeNull();
+    // The airline's own name, and its own name as the operator, are no doubt.
+    expect(readVs("Virgin Atlantic Airways\nAirbus A350\nOperated by Virgin Atlantic")).toBe(
+      "Airbus A350"
+    );
+    expect(readSk("Scandinavian Airlines\nAirbus A320neo\nOperated by SAS")).toBe("Airbus A320neo");
+    expect(
+      readVs("Virgin Atlantic\nAirbus A350", {
+        labels: "Nonstop flight with Virgin Atlantic.\nSelect flight",
+      })
+    ).toBe("Airbus A350");
+  });
+
+  // Finding 1c: "Airbus A350 900" joined by a no-break space, a thin space,
+  // an en dash or a slash read as "Airbus A350", which the server calls a yes.
+  test("a type is read whole or not at all, whatever joins its parts", () => {
+    expect(readVs("Airbus A350\nVS 3")).toBe("Airbus A350");
+    // A space of any kind inside the name is a space.
+    expect(readVs("Airbus\u00a0A350\nVS 3")).toBe("Airbus A350");
+    expect(readVs("Airbus\u2009A350-1000")).toBe("Airbus A350-1000");
+    // A dash of any kind is a hyphen: the type is then the A350-900, whole.
+    for (const dash of [
+      "-",
+      "\u2010",
+      "\u2011",
+      "\u2012",
+      "\u2013",
+      "\u2014",
+      "\u2212",
+      "\uff0d",
+    ]) {
+      expect(readVs(`Airbus A350${dash}900`)).toBe("Airbus A350-900");
+      expect(readVs(`Airbus A350${dash}1000`)).toBe("Airbus A350-1000");
+    }
+    // Anything else after the type refuses it; it is never cut short.
+    for (const sep of [
+      " ",
+      "\u00a0",
+      "\u2009",
+      "\u202f",
+      "\u2007",
+      "\u3000",
+      "\t",
+      "/",
+      " / ",
+      ".",
+      ",",
+      "_",
+      "\u200b",
+      "\u00ad",
+      "\u2060",
+      "\ufeff",
+      " \u2013 ",
+      "\n",
+      " · ",
+      "\n-",
+      " (",
+    ]) {
+      expect(readVs(`Airbus A350${sep}900\nVS 3`)).toBeNull();
+      expect(readSk(`Airbus A320${sep}200N`)).toBeNull();
+    }
+    for (const text of [
+      "Airbus A350 900 · VS 3",
+      "Airbus A320 neo",
+      "Airbus A320\nneo",
+      "Airbus A320neo (Sharklets)",
+      "Airbus A350 XWB",
+      "Airbus A350F",
+      "Boeing 787-9 Dreamliner\nAirbus A350",
+      "De Havilland Dash 8\nAirbus A350",
+      "Fly our new Airbus A350 to New York\nAirbus A350",
+      "Airbus A350\nPreviously Airbus A350",
+      "Airbus A350\nA350-900",
+      "airbus a350",
+      "AIRBUS A350",
+      "Ａｉｒｂｕｓ Ａ３５０ ９００",
+    ]) {
+      expect(readVs(text)).toBeNull();
+    }
+    // Whatever is read is something the request will carry unchanged.
+    expect(readVs("Ａｉｒｂｕｓ Ａ３５０")).toBe("Airbus A350");
+  });
+
+  // Finding 1d: with the card's itinerary data undecoded, the fallback counts
+  // any card as one flight, so another flight's type could be sent.
+  test("a card whose itinerary data did not decode states no type", async () => {
+    expect(readVs("Virgin Atlantic\nAirbus A350\nVS 3")).toBe("Airbus A350");
+    for (const decoded of [false, undefined, null, 1, "true"]) {
+      expect(readVs("Virgin Atlantic\nAirbus A350\nVS 3", { decoded })).toBeNull();
+      expect(readVs("Airbus A350\nVS 3\nAirbus A350\nDL 30", { decoded })).toBeNull();
+      expect(readSk("SAS\nAirbus A320neo\nSK 903", { decoded })).toBeNull();
+    }
+    // The content script says how it got its segments on every path, and only
+    // the decoded one says yes.
+    const content = await Bun.file(`${import.meta.dir}/../chrome-extension/content.js`).text();
+    expect(content.match(/decoded: true/g)).toHaveLength(1);
+    expect(content.match(/decoded: false/g)).toHaveLength(3);
+    expect(content.match(/complete: /g)).toHaveLength(4);
+    expect(content).toContain(
+      "statedTypeOn(card, segments[0].flightNumber, segments.length, decoded)"
+    );
+    expect(content).toContain("lang: document.documentElement.lang");
   });
 
   test("only airlines answered by stated type have a card's type read", () => {

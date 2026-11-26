@@ -309,6 +309,20 @@ checks decide whether this feature works at all.
 - [ ] An SAS flight operated by a partner (a CRJ, Embraer or ATR, "Operated
       by"): no badge
 - [ ] A two-flight card on Virgin Atlantic or SAS: no badge
+- [ ] The same Virgin Atlantic A350 card with Google Flights in another
+      language (add `&hl=de`, `&hl=fr` or `&hl=sv` to the address): no badge,
+      on purpose. Note the `lang` of the page's `<html>` element in DevTools,
+      and how the card says who operates a partner's flight in that language
+- [ ] A wet-lease card (an SAS or Virgin Atlantic number flown by another
+      company's aircraft and crew), details open, in English: no badge. Note
+      the operator line word for word ("Operated by …", "Plane and crew by …")
+- [ ] The exact characters around the type: in DevTools, select the type's
+      element and run `JSON.stringify($0.parentElement.innerText)` in the
+      console. Note what stands before and after the type (a line break, a
+      " · ", a no-break space `\u00a0`), whether a variant follows it
+      ("-1000", "(Sharklets)"), and whether the card prints a duration as
+      "7 hr 55 min": the reader takes "hr" and a few other words as its sign
+      that the card is in English
 - [ ] DevTools: the request to `/api/check-any-flight` carries
       `aircraft_type` only for `VS` and `SK` numbers, and a United, Alaska,
       Qatar or Aer Lingus request is unchanged
