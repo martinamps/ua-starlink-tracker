@@ -227,6 +227,7 @@ export function RoutesMap({
                       key={ap.code}
                       href={`/routes/${ap.code}`}
                       aria-label={title}
+                      data-departures={ap.departures}
                       className={
                         hit.phone ? undefined : "pointer-events-none sm:pointer-events-auto"
                       }
