@@ -836,7 +836,7 @@ const AIRLINE_DEFS = {
       statusLabel: "Mostly done",
       // Dated: an undated "has not started" outlives the rollout it describes.
       phaseNote:
-        "Air France says 70% of its fleet had its free Starlink Wi-Fi as of November 2026, and expects 80% by the end of 2026 and the whole fleet in 2027.",
+        "70% of the fleet had Air France's free Wi-Fi, which is Starlink, as of early November 2026; Air France expects 80% by the end of 2026 and the whole fleet in 2027.",
       // Freighters and programExclusions leave every AF denominator, so the
       // roster that remains is the programme's own.
       rosterIsProgramScope: true,
