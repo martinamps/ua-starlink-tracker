@@ -255,7 +255,7 @@ const CALENDAR_LAG =
   "Your calendar app fetches changes on its own schedule, from about hourly to once a day, so this is not an instant alert.";
 
 const CALENDAR_BUTTON =
-  "inline-flex min-h-11 items-center rounded border border-subtle bg-base px-3 text-sm text-primary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/50";
+  "inline-flex min-h-11 items-center rounded border border-neutral bg-base px-3 text-sm text-primary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/50";
 
 /**
  * The calendar offer. The two subscriptions keep fetching the feed; the file

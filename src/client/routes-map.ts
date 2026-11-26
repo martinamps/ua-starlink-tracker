@@ -19,7 +19,7 @@ const TAP_FRESH_MS = 1000;
 const GAP_PX = 8;
 
 const CHIP =
-  "flex min-h-11 flex-col items-center justify-center rounded border border-subtle bg-surface px-1 font-mono text-sm leading-tight text-primary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/50";
+  "flex min-h-11 flex-col items-center justify-center rounded border border-neutral bg-surface px-1 font-mono text-sm leading-tight text-primary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/50";
 const CHIP_COUNT = "text-xs text-muted tabular-nums";
 
 type Dot = MapDot & { link: SVGAElement };
