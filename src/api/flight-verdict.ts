@@ -26,6 +26,7 @@ import { memoPromise } from "../utils/ttl-cache";
 import {
   FR24_QUEUE_SHED_MESSAGE,
   FlightRadar24API,
+  type FlightRoute,
   Fr24UnavailableError,
   MIN_REQUEST_INTERVAL,
 } from "./flightradar24-api";
@@ -237,10 +238,15 @@ let fr24ThrottledUntil = 0;
 let fr24ThrottleStreak = 0;
 const lookupBudget = new LookupBudget();
 
-function countShed(flightNumber: string, reason: LookupShedReason, caller: LookupCaller): void {
+function countShed(
+  flightNumber: string,
+  reason: LookupShedReason,
+  caller: LookupCaller,
+  type: "assignments" | "routes" = "assignments"
+): void {
   metrics.increment(COUNTERS.VENDOR_REQUEST, {
     vendor: "fr24",
-    type: "assignments",
+    type,
     status: "shed",
     reason: normalizeLookupShedReason(reason),
     caller: normalizeLookupCaller(caller),
@@ -263,7 +269,9 @@ function fr24RequestShedReason(nowSec: number): "breaker" | "bucket" | null {
     FR24_REQUEST_BUCKET_PER_MIN,
     fr24Tokens + (elapsed * FR24_REQUEST_BUCKET_PER_MIN) / 60
   );
-  fr24TokensAt = nowSec;
+  // Never backwards: a caller holding an older reading (one that awaited a
+  // lookup first) would otherwise hand the next caller the same refill twice.
+  fr24TokensAt = Math.max(fr24TokensAt, nowSec);
   if (fr24Tokens < 1) return "bucket";
   fr24Tokens -= 1;
   return null;
@@ -293,6 +301,72 @@ function openFr24Breaker(nowSec: number): void {
   fr24ThrottleStreak++;
   fr24ThrottledUntil = Math.max(fr24ThrottledUntil, nowSec + backoff);
   warn(`FR24 throttled the request path; shedding live lookups for ${backoff / 60} min`);
+}
+
+type RouteFetcher = (flightNumber: string, targetDateUnix?: number) => Promise<FlightRoute[]>;
+const defaultRouteFetcher: RouteFetcher = (flightNumber, targetDateUnix) =>
+  fr24.getFlightRoutes(flightNumber, targetDateUnix, {
+    maxWaitMs: FR24_REQUEST_MAX_QUEUE_MS,
+    deadlineMs: FR24_REQUEST_DEADLINE_MS,
+  });
+let fetchRoutes: RouteFetcher = defaultRouteFetcher;
+
+/** Test seam; null restores the default. Resets the shared guards like setAssignmentFetcher. */
+export function setRouteFetcher(fetcher: RouteFetcher | null): void {
+  fetchRoutes = fetcher ?? defaultRouteFetcher;
+  resetFr24RequestGuards();
+}
+
+/**
+ * MCP's route lookup by flight number, behind the same request-path guards as
+ * the tail lookup: the caller's own share, the shared bucket, the breaker and
+ * a bounded queue wait. It once called FR24 with none of them, so a tool
+ * walking flight numbers reached the vendor past every limit the tail lookup
+ * keeps. null = a guard said no and FR24 was not asked; the caller answers
+ * from stored routes. An FR24 failure is [] (asked, nothing usable).
+ */
+export async function guardedFlightRoutes(
+  flightNumber: string,
+  targetDateUnix: number | undefined,
+  nowSec = unixNow()
+): Promise<FlightRoute[] | null> {
+  const asker = currentLookupAsker();
+  const caller = asker?.caller ?? "other";
+  const shareKey = asker?.key ?? null;
+  if (shareKey !== null && !lookupBudget.take(shareKey, lookupAllowance(caller), nowSec)) {
+    countShed(flightNumber, "budget", caller, "routes");
+    return null;
+  }
+  const settleShare = (asked: boolean) => {
+    if (shareKey !== null) lookupBudget.settle(shareKey, { asked });
+  };
+
+  const shed = fr24RequestShedReason(nowSec);
+  if (shed) {
+    settleShare(false);
+    countShed(flightNumber, shed, caller, "routes");
+    return null;
+  }
+
+  try {
+    const routes = await fetchRoutes(flightNumber, targetDateUnix);
+    settleShare(true);
+    fr24ThrottleStreak = 0;
+    return routes;
+  } catch (err) {
+    if (isQueueShed(err)) {
+      settleShare(false);
+      refundFr24Token();
+      countShed(flightNumber, "queue", caller, "routes");
+      return null;
+    }
+    settleShare(true);
+    // Read after the fetch: the breaker runs from when FR24 refused, not from
+    // when the lookup began up to a deadline earlier.
+    if (isFr24Throttle(err)) openFr24Breaker(unixNow());
+    warn(`FR24 route lookup failed for ${flightNumber}; answering from stored routes`, err);
+    return [];
+  }
 }
 
 export type SegmentConfidence = "verified" | "spreadsheet" | "disputed" | "negative" | "unknown";

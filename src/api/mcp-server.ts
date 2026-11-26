@@ -122,8 +122,11 @@ import {
   withLeg,
   withLegNote,
 } from "./check-flight-core";
-import { type FallbackSegment, cachedFlightAssignments } from "./flight-verdict";
-import { FlightRadar24API } from "./flightradar24-api";
+import {
+  type FallbackSegment,
+  cachedFlightAssignments,
+  guardedFlightRoutes,
+} from "./flight-verdict";
 import {
   QATAR_PUBLISHED_DAYS_FORWARD,
   dohDateISO,
@@ -1113,9 +1116,6 @@ function confidenceTag(nObs: number, confidence: string): string {
   return `(${nObs} observed departure${nObs === 1 ? "" : "s"} · ${confidence} confidence)`;
 }
 
-// Single shared FR24 client for route lookups. Module-level state is fine for
-// a long-lived server. Cache is best-effort — failures degrade to "ask the user".
-const fr24 = new FlightRadar24API();
 type RouteEntry = {
   origin: string;
   destination: string;
@@ -1195,6 +1195,9 @@ async function lookupFlightRoutes(
     return cached;
   }
   const variants = buildAirlineFlightNumberVariants(cfg, uaFlightNumber);
+  // Set when a guard kept L2 from asking FR24: whatever answers instead is
+  // kept only briefly, so the next ask may get the live route.
+  let shed = false;
 
   const promise = (async (): Promise<RouteEntry[]> => {
     // L0: the date's own legs from the tail-lookup cache check_flight's
@@ -1220,13 +1223,16 @@ async function lookupFlightRoutes(
       }));
     }
 
-    // L2: live FR24 lookup (best data, ~1wk forward). Persist result.
+    // L2: live FR24 lookup (best data, ~1wk forward), behind the tail lookup's
+    // guards. Persist result. A guard's no answers from stored routes below.
     const withinFr24Horizon =
       targetDateUnix === undefined || targetDateUnix <= now + FR24_ROUTE_HORIZON_SEC;
     if (withinFr24Horizon) {
       try {
-        const found = await fr24.getFlightRoutes(uaFlightNumber, targetDateUnix);
-        if (found.length > 0) {
+        // A fresh clock: L0 may have spent up to a lookup's deadline waiting.
+        const found = await guardedFlightRoutes(uaFlightNumber, targetDateUnix, unixNow());
+        if (found === null) shed = true;
+        else if (found.length > 0) {
           for (const r of found) {
             reader.cacheFlightRoute(
               uaFlightNumber,
@@ -1276,10 +1282,10 @@ async function lookupFlightRoutes(
       : [];
   })();
 
-  // An empty result stays for the short negative TTL; an error is evicted so
-  // the next request retries.
+  // An empty or shed result stays for the short negative TTL; an error is
+  // evicted so the next request retries.
   routeCache.set(cacheKey, promise, now, (s) =>
-    !s.ok ? 0 : s.value.length === 0 ? ROUTE_NEGATIVE_CACHE_TTL : ROUTE_CACHE_TTL
+    !s.ok ? 0 : s.value.length === 0 || shed ? ROUTE_NEGATIVE_CACHE_TTL : ROUTE_CACHE_TTL
   );
   return promise;
 }

@@ -6,7 +6,7 @@
  * response shape) without touching FR24.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { AIRLINES } from "../src/airlines/registry";
 import { resolveFlightVerdict } from "../src/api/check-flight-core";
 import {
@@ -407,11 +407,30 @@ describe("request-path lookups wait two slots inside the extension's timeout", (
         deadlineMs: FR24_REQUEST_DEADLINE_MS,
       })
     );
+    // The lookups measure their wait on Date.now(), and a real timer can wake
+    // a millisecond early by that clock (a 3,999 ms wait read as 9,001 ms in
+    // all). So the clock is held still and each timer, when it fires, moves
+    // it to exactly when it was due: the waits are real, their readings exact.
+    const realSetTimeout = globalThis.setTimeout;
+    setSystemTime(new Date());
+    globalThis.setTimeout = ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+      const due = Date.now() + (ms ?? 0);
+      return realSetTimeout(() => {
+        if (due > Date.now()) setSystemTime(new Date(due));
+        fn(...rest);
+      }, ms);
+    }) as typeof setTimeout;
     const now = Math.floor(Date.now() / 1000);
     const started = performance.now();
-    const results = await Promise.allSettled(
-      ["UA1", "UA2", "UA3"].map((fn) => cachedFlightAssignments(fn, now + 86400, now))
-    );
+    let results: PromiseSettledResult<unknown>[];
+    try {
+      results = await Promise.allSettled(
+        ["UA1", "UA2", "UA3"].map((fn) => cachedFlightAssignments(fn, now + 86400, now))
+      );
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      setSystemTime();
+    }
     const elapsed = performance.now() - started;
     expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled", "fulfilled"]);
     expect(timeouts.length).toBe(3);
