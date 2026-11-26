@@ -88,16 +88,17 @@ export function ShareBarRow({
             : []
         }
       />
-      <span className="text-right font-mono text-xs text-muted tabular-nums whitespace-nowrap">
-        {status ? (
-          status
-        ) : (
-          <>
-            {fmt(n)}/{fmt(total)} ·{" "}
-            <span className={n > 0 ? "text-accent" : ""}>{pct(n, total)}</span>
-          </>
-        )}
-      </span>
+      {status ? (
+        // Words, not a figure: longer than the 7rem column, so it wraps inside it.
+        <span className="text-right font-mono text-xs leading-tight text-muted break-words">
+          {status}
+        </span>
+      ) : (
+        <span className="text-right font-mono text-xs text-muted tabular-nums whitespace-nowrap">
+          {fmt(n)}/{fmt(total)} ·{" "}
+          <span className={n > 0 ? "text-accent" : ""}>{pct(n, total)}</span>
+        </span>
+      )}
     </li>
   );
 }

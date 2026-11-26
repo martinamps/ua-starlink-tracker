@@ -463,11 +463,14 @@ function withClampedMeta(vars: Record<string, string>): Record<string, string> {
 }
 
 /** index.html's look without its page machinery: the theme block (which
- * carries the @font-face rules) and stylesheet, but no scripts, analytics,
- * JSON-LD, social tags or canonical. A dead URL has nothing to canonicalize to
- * and nothing to measure. */
+ * carries the @font-face rules), the heading font's preload and the
+ * stylesheet, but no scripts, analytics, JSON-LD, social tags or canonical. A
+ * dead URL has nothing to canonicalize to and nothing to measure. The preload
+ * is part of the look: the fonts are `font-display: optional`, and without it
+ * the heading font arrives after first paint and the fallback stays. */
 function notFoundTemplate(template: string): string {
   const style = template.match(/<style>[\s\S]*?<\/style>/)?.[0] ?? "";
+  const fontPreload = template.match(/<link rel="preload" as="font"[^>]*>/)?.[0] ?? "";
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -477,6 +480,7 @@ function notFoundTemplate(template: string): string {
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="{{accentColor}}" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    ${fontPreload}
     {{stylesheetTag}}
     ${style}
   </head>

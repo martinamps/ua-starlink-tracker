@@ -126,6 +126,10 @@ describe("United ERJ-145 programme exclusion", () => {
       })
     );
     expect(html).toContain("Not in the programme");
+    // The words are wider than the figure column: they must be free to wrap in it.
+    const words = html.match(/<span class="([^"]*)">Not in the programme<\/span>/)?.[1];
+    expect(words).toBeDefined();
+    expect(words).not.toContain("whitespace-nowrap");
     expect(html).toContain("3 of 5 · 60%"); // regional total omits the five ERJ-145s
     expect(html).not.toContain("0/5");
     expect(html).toContain("0/2 ·"); // CRJ-200 still reads as pending

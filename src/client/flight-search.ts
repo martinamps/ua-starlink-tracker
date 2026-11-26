@@ -51,6 +51,7 @@ interface CheckAnyBody {
  * a basis is a floor ("≥40%"), without one an estimate ("40%"). Community
  * answers state only a firm yes: everything else is the server's own sentence.
  */
+// Inside a <p>, so the page's rule for a link in a sentence underlines it at rest.
 const sourceLink = (source: { label: string; url: string }) =>
   `<a href="${esc(source.url)}" rel="noopener" class="text-accent hover:underline">${esc(source.label)}</a>`;
 
@@ -58,11 +59,11 @@ const sourceLink = (source: { label: string; url: string }) =>
  * so it sits under the refusal in body text, not in a verdict colour. */
 export function airlineInfoHtml(info: AirlineInfo): string {
   const how = info.how_to_check
-    ? `<span class="mt-2 block text-secondary">To check for yourself: ${esc(info.how_to_check.text)} (${sourceLink(info.how_to_check.source)})</span>`
+    ? `<p class="mt-2 text-secondary">To check for yourself: ${esc(info.how_to_check.text)} (${sourceLink(info.how_to_check.source)})</p>`
     : "";
   return [
     `<span class="mt-2 block text-primary">${esc(info.lead)}.</span>`,
-    `<span class="block text-secondary">${esc(info.dated)}: ${esc(info.fact)} (${sourceLink(info.source)})</span>`,
+    `<p class="text-secondary">${esc(info.dated)}: ${esc(info.fact)} (${sourceLink(info.source)})</p>`,
     `<span class="mt-2 block text-muted">${esc(info.caveat)}</span>`,
     how,
     `<a href="${esc(info.page)}" class="mt-1 block py-2 text-accent hover:underline">${esc(info.airline)} and Starlink: every dated fact →</a>`,

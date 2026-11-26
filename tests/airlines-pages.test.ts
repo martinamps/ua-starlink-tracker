@@ -111,6 +111,14 @@ describe("hub /airlines index", () => {
     expect(Object.values(AIRLINES).filter(isHubContent)).toEqual(hubContentAirlines());
   });
 
+  test("the tracked table's figure cells can wrap: a source line alone is wider than a phone", async () => {
+    const body = await (await get("/airlines", hub.canonicalHost)).text();
+    const table = body.slice(body.indexOf("<table"), body.indexOf("</table>"));
+    const figureCells = table.match(/<td class="[^"]*text-right[^"]*text-primary[^"]*"/g) ?? [];
+    expect(figureCells.length).toBeGreaterThan(0);
+    for (const cell of figureCells) expect(cell).not.toContain("whitespace-nowrap");
+  });
+
   test("negative entries are grouped under an explicit not-Starlink section", async () => {
     const body = await (await get("/airlines", hub.canonicalHost)).text();
     expect(body).toContain("Not Starlink");

@@ -263,8 +263,7 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
         {fmt(published.count)}
         <span className="block text-xs text-muted">{ownCountAsOf(published)}</span>
         {published.reportedBy && (
-          // Two short lines: the cell does not wrap, and one long line
-          // widened the table past a phone's screen.
+          // Two short lines, so the credit never reads as part of the date.
           <span className="block text-xs text-muted">
             as reported by
             <span className="block">{published.reportedBy}</span>
@@ -286,7 +285,9 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
   if (shareIsPublishable(cfg, stat)) {
     return (
       <>
-        {fmt(stat.starlink)} of {fmt(stat.total)}{" "}
+        <span className="whitespace-nowrap">
+          {fmt(stat.starlink)} of {fmt(stat.total)}
+        </span>{" "}
         <span className="text-muted">({pct(stat.starlink, stat.total)})</span>
       </>
     );
@@ -370,7 +371,9 @@ export function AirlinesIndexPage({
                   <Td optional className="text-secondary">
                     {methodLabel(o.cfg)}
                   </Td>
-                  <Td numeric className="whitespace-nowrap text-primary">
+                  {/* Wraps: a figure's source line alone is wider than a phone, and
+                      a cell that could not wrap pushed the column off the panel. */}
+                  <Td numeric className="text-primary">
                     <EquippedCell o={o} />
                   </Td>
                   <Td numeric optional className="text-secondary">

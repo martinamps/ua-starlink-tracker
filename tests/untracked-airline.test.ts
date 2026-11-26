@@ -186,6 +186,13 @@ describe("the hub page's answer", () => {
     expect(html).toContain(`href="${info.page}"`);
   });
 
+  test("a source link sits in a paragraph, where a link in a sentence is underlined at rest", () => {
+    const html = airlineInfoHtml(info);
+    const inParagraphs = (html.match(/<p\b[^>]*>.*?<\/p>/g) ?? []).join("");
+    expect(inParagraphs).toContain(`href="${info.source.url.replace(/&/g, "&amp;")}"`);
+    expect(html.replace(/<p\b[^>]*>.*?<\/p>/g, "")).not.toMatch(/\(<a /);
+  });
+
   test("escapes every field", () => {
     const hostile = '<img src=x onerror="alert(1)">';
     const html = airlineInfoHtml({
