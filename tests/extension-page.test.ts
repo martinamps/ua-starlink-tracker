@@ -268,6 +268,22 @@ describe.skipIf(!CHROMIUM)("content.js in a page", () => {
     }
   );
 
+  inPage(
+    "closing the details again takes the type, and the badge, away",
+    closedCard("vs", "Virgin Atlantic", tim(VS3)),
+    async (run) => {
+      await run.append("vs", VS_OPEN);
+      expect((await run.badge("vs"))?.text).toBe("Starlink (likely)");
+      await run.page.evaluate(() => document.querySelector("#vs .details")?.remove());
+      await run.advance();
+      expect(await run.badge("vs")).toBeNull();
+      await run.append("vs", VS_OPEN);
+      expect((await run.badge("vs"))?.text).toBe("Starlink (likely)");
+      // Both answers were already held: opening it twice asks nothing new.
+      expect(typesAsked(run, "VS3")).toEqual([null, "Airbus A350"]);
+    }
+  );
+
   // Nothing says the opened details repeat the itinerary attribute, the one
   // thing that used to wake a pass.
   inPage(
