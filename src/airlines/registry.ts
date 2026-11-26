@@ -811,11 +811,11 @@ const AIRLINE_DEFS = {
       url: "https://www.flyertalk.com/forum/air-france-frequence-plus/2213677-complete-guide-air-france-fleet.html",
       author: "hellolaurent",
       fleetTarget: {
-        text: "Air France plans to have Starlink on its entire fleet by the end of 2026",
-        asOf: "2025-09-23",
+        text: "Air France aims for a fleet fully equipped with its free high-speed Wi-Fi in 2027",
+        asOf: "2026-11-03",
         source: {
-          label: "Aviation Week",
-          url: "https://aviationweek.com/air-transport/interiors-connectivity/air-france-pushes-ahead-starlink-connectivity-installations",
+          label: "Aeronews Global, reporting Air France",
+          url: "https://aeronewsglobal.com/more-destinations-for-air-frances-new-la-premiere-cabin-this-winter/",
         },
       },
     },
@@ -836,7 +836,7 @@ const AIRLINE_DEFS = {
       statusLabel: "Mostly done",
       // Dated: an undated "has not started" outlives the rollout it describes.
       phaseNote:
-        "70% of the fleet had Starlink as of October 2026; Air France expects 80% by the end of 2026 and the whole fleet in 2027.",
+        "70% of the fleet had Air France's free Wi-Fi, which is Starlink, as of early November 2026; Air France expects 80% by the end of 2026 and the whole fleet in 2027.",
       // Freighters and programExclusions leave every AF denominator, so the
       // roster that remains is the programme's own.
       rosterIsProgramScope: true,
