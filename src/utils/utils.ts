@@ -2,6 +2,8 @@ import { looksLikeValidTailNumber } from "../airlines/registry";
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { BROWSER_USER_AGENT } from "./constants";
 import { error as logError, warn } from "./logger";
+import { type ParsedModNote, parseModNote, utcToday } from "./sheet-mod-note";
+import type { SheetOrderRow } from "./subfleet-order";
 
 /**
  * CSV Fetch & Parse Logic
@@ -226,6 +228,18 @@ export function looksLikeStarlinkTypo(raw: string | null | undefined): boolean {
   );
 }
 
+/** The sheet's tail cell as a registration, or null when it isn't one. */
+function sheetRowTail(row: Record<string, string>): string | null {
+  const tail = (row["Reg #"] ?? "").trim().toUpperCase();
+  return looksLikeValidTailNumber(tail) ? tail : null;
+}
+
+/** The mainline tabs' hangar column; its header is long and hand-typed. */
+function statusCell(row: Record<string, string>): string | undefined {
+  const key = Object.keys(row).find((k) => /^status\b.*\bmod\b/i.test(k));
+  return key ? row[key] : undefined;
+}
+
 // Function to fetch all CSV data and filter for Starlink WiFi
 export async function fetchAllSheets(
   opts: {
@@ -233,13 +247,18 @@ export async function fetchAllSheets(
     listedGids?: ReadonlySet<string>;
     fetchTabs?: typeof fetchSheetTabs;
     fetchCsv?: typeof fetchSheetCsv;
+    /** UTC YYYY-MM-DD the hangar notes' year-less dates are read against. */
+    today?: string;
   } = {}
 ) {
   const {
     listedGids = new Set<string>(),
     fetchTabs = fetchSheetTabs,
     fetchCsv = fetchSheetCsv,
+    today = utcToday(),
   } = opts;
+  const modNotes = new Map<string, ParsedModNote & { tail: string }>();
+  const sheetOrder: SheetOrderRow[] = [];
   const exportUrls: Array<{ gid: number; fleet: string; docId: string }> = [];
   const blockingGids: number[] = [];
   for (const sheet of FLEET_SHEETS) {
@@ -279,6 +298,27 @@ export async function fetchAllSheets(
       let sheetType = "";
       if (rows.length > 0 && rows[0].Aircraft) {
         sheetType = rows[0].Aircraft.split("-")[0] || "Unknown";
+      }
+
+      // Every row, Starlink or not: a jet in the hangar still lists its old
+      // Wi-Fi, and install order is read across the whole sub-fleet.
+      for (const row of rows) {
+        const tail = sheetRowTail(row);
+        if (!tail) continue;
+        const note = parseModNote(
+          { note: statusCell(row), toReceiveStarlink: row["To Rcv Starlink"] },
+          today
+        );
+        if (note && !modNotes.has(tail)) modNotes.set(tail, { ...note, tail });
+        const fleetNumber = (row["AC #"] ?? "").trim();
+        if (/^\d{1,5}$/.test(fleetNumber)) {
+          sheetOrder.push({
+            tail,
+            group: `${sheet.gid}:${Object.values(row)[0] ?? ""}`,
+            fleetNumber: Number(fleetNumber),
+            listed: normalizeSheetWifi(row.WiFi, sheet.fleet) !== null,
+          });
+        }
       }
 
       // Filter for Starlink WiFi (both "StrLnk" for express and "Starlink" for mainline)
@@ -363,6 +403,8 @@ export async function fetchAllSheets(
   return {
     totalAircraftCount,
     starlinkAircraft,
+    modNotes: [...modNotes.values()],
+    sheetOrder,
     fleetStats: {
       express: {
         total: expressTotal,

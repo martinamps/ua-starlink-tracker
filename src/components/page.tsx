@@ -4,6 +4,12 @@
  * flights and the FAQ. The pieces live in home/; this file orders them.
  */
 import type { AirlineContent, ContentStats, HubHomeLinks } from "../airlines/content";
+import {
+  BY_TYPE_METHOD,
+  BY_TYPE_SUM_LABEL,
+  byTypeSumBasis,
+  trackingMethod,
+} from "../airlines/published-count";
 import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type { ProgrammeHeadline } from "../database/roster";
@@ -78,6 +84,8 @@ export function buildContentStats(input: {
     starlinkCount: programme?.equipped ?? input.starlinkCount,
     totalCount: programme?.total ?? input.totalCount,
     noun: programme?.noun,
+    airlineCount: programme?.airlineCount,
+    chartGaps: programme?.chartGaps,
     partners: programme?.partners.map((p) => ({
       label: p.label,
       starlink: p.equipped,
@@ -98,7 +106,9 @@ export function buildContentStats(input: {
  * Qatar), whose panel would otherwise carry id="starlink-stat". Dated from the
  * data's lastUpdated, never request time. Airline sites only: the hub has no
  * single-fleet number. Where the roster counts types the programme excludes,
- * it states the count alone.
+ * it states the count alone. An airline known by aircraft type has a sum of
+ * fleet-list rows, not a count of installs, so its sentence says what was
+ * added up and never "have Starlink".
  */
 function StatSentence({ site, stats }: { site: SiteConfig; stats: ContentStats }) {
   if (!stats.asOf || stats.totalCount === 0) return null;
@@ -108,17 +118,29 @@ function StatSentence({ site, stats }: { site: SiteConfig; stats: ContentStats }
     stats.totalCount,
     cfg.rollout.rosterIsProgramScope
   );
+  const noun = stats.noun ?? `${cfg.name} aircraft`;
+  const byType = trackingMethod(cfg) === "type";
+  const claim = byType
+    ? `are of ${byTypeSumBasis(cfg.code)}. They are ${BY_TYPE_METHOD}.`
+    : "have Starlink.";
   return (
     <p id="starlink-stat" className="text-sm text-secondary leading-relaxed">
       As of {stats.asOf}, <StatInline n={stats.starlinkCount} />
       {ratio ? (
         <>
           {" "}
-          of {fmt(stats.totalCount)} {stats.noun ?? `${cfg.name} aircraft`} (
-          {pct(stats.starlinkCount, stats.totalCount)}) have Starlink.
+          of {fmt(stats.totalCount)} {noun}
+          {/* No share for a by-type sum: a part of a list picked by a type
+              rule is not a share of aircraft counted (/fleet says the same). */}
+          {byType ? " on our fleet list" : ` (${pct(stats.starlinkCount, stats.totalCount)})`}{" "}
+          {claim}
         </>
       ) : (
-        <> {stats.noun ?? `${cfg.name} aircraft`} have Starlink.</>
+        <>
+          {" "}
+          {noun}
+          {byType && " on our fleet list"} {claim}
+        </>
       )}
       {stats.installs30d ? <> {fmt(stats.installs30d)} were added in the last 30 days.</> : null}
     </p>
@@ -263,10 +285,15 @@ export default function Page({
         flightsByTail={flightsByTail}
         permalinkAirline={airline}
         showFleetLink={features.fleetPage}
+        tailPages={features.tailPages}
         // /fleet lists the programme roster, partner jets included.
         fleetTotal={programme?.total ?? total}
         title={
-          programme && airline ? `${airline.shortName}-operated aircraft with Starlink` : undefined
+          programme && airline
+            ? `${airline.shortName}-operated aircraft with Starlink`
+            : airline && trackingMethod(airline) === "type"
+              ? BY_TYPE_SUM_LABEL
+              : undefined
         }
       />
 
@@ -274,7 +301,21 @@ export default function Page({
         <Section
           id="airports"
           title="Starlink departures by airport"
-          dek={`Top ${Math.min(12, airportDepartures.rows.length)} airports, ${airportDepartures.windowLabel}.`}
+          dek={
+            <>
+              Top {Math.min(12, airportDepartures.rows.length)} airports,{" "}
+              {airportDepartures.windowLabel}.
+              {features.airportPages && features.routesPage && (
+                <>
+                  {" "}
+                  <a href="/routes#airports" className={LINK}>
+                    Every airport, ranked by day
+                  </a>
+                  .
+                </>
+              )}
+            </>
+          }
           wide
         >
           <AirportBars rows={airportDepartures.rows} linked={features.airportPages} />

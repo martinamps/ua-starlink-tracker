@@ -26,6 +26,7 @@
   color: #188038;
 }
 
+.starlink-wifi-badge--stated,
 .starlink-wifi-badge--predicted {
   background-color: #f1f3f4;
   color: #5f6368;

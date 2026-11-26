@@ -7,12 +7,15 @@
 import type { Database } from "bun:sqlite";
 import {
   getAllStarlinkPlanes,
+  getLastCheckTimes,
+  getSettledStarlinkTails,
   getUpcomingFlights,
   getVerificationStats,
   getWifiMismatches,
   initializeDatabase,
   logVerification,
   needsVerification,
+  verificationWindowHours,
 } from "../database/database";
 import {
   COUNTERS,
@@ -28,6 +31,15 @@ import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { logger } from "../utils/logger";
 import { sleep } from "../utils/sleep";
+import {
+  UNITED_BUDGET_UNGATED,
+  type UnitedBudgetState,
+  type UnitedCheckClass,
+  claimUnitedCheck,
+  endUnitedCheck,
+  recordUnitedCheckHeld,
+  unitedBudgetState,
+} from "./united-check-budget";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 import {
@@ -96,6 +108,10 @@ interface Plane {
 // retrofits united's feed hasn't caught up on — re-check daily instead of ~72h.
 const DISPUTED_RECHECK_HOURS = 24;
 
+// How far back the per-tail "last checked" read looks. Longer than any
+// re-check window, so a tail it does not return is due whatever its window.
+const LAST_CHECK_LOOKBACK_SECS = 8 * 24 * 3600;
+
 /**
  * Get planes that need United verification.
  * Queries the local DB directly (including mismatched planes with
@@ -105,23 +121,51 @@ const DISPUTED_RECHECK_HOURS = 24;
  * creating a one-way door where a single false-negative permanently
  * hid a plane.
  */
+interface PlaneToVerify {
+  plane: Plane;
+  flight: Flight;
+  recheckHours?: number;
+  budgetClass: UnitedCheckClass;
+}
+
+/**
+ * `open` is what the check budget allows this tick. A due plane whose class
+ * is closed is passed over, not returned: `held` names the class of the first
+ * one, so a tick that returns nothing can tell "nothing due" from "sat out".
+ */
 function getPlanesNeedingVerification(
   db: Database,
   limit: number,
-  forceAll = false
-): Array<{ plane: Plane; flight: Flight; recheckHours?: number }> {
-  const result: Array<{ plane: Plane; flight: Flight; recheckHours?: number }> = [];
+  forceAll = false,
+  open: UnitedBudgetState["open"] = UNITED_BUDGET_UNGATED
+): { toVerify: PlaneToVerify[]; held: "settle" | "reconfirm" | null } {
+  const result: PlaneToVerify[] = [];
+  let held: "settle" | "reconfirm" | null = null;
   const now = Math.floor(Date.now() / 1000);
 
   // Pull ALL planes from starlink_planes (including mismatches) — UA only;
   // HA is type-deterministic and AS uses alaska-json, neither needs united.com checks.
   // Disputed tails (sheet vs verified_wifi mismatch) go first so they self-heal
-  // ahead of routine re-checks.
+  // ahead of routine re-checks. After them, the tail left longest goes first:
+  // under the check budget more tails can be due than slots free, and a fixed
+  // order would re-check the head of the list for ever and never reach its end.
   const disputed = new Set(getWifiMismatches(db, "UA").map((m) => m.TailNumber));
+  const lastCheck = getLastCheckTimes(db, UNITED_SOURCE, now - LAST_CHECK_LOOKBACK_SECS);
   const planes = (getAllStarlinkPlanes(db, "UA") as Plane[]).sort(
-    (a, b) => Number(disputed.has(b.TailNumber)) - Number(disputed.has(a.TailNumber))
+    (a, b) =>
+      Number(disputed.has(b.TailNumber)) - Number(disputed.has(a.TailNumber)) ||
+      (lastCheck.get(a.TailNumber) ?? 0) - (lastCheck.get(b.TailNumber) ?? 0)
   );
+  // needsVerification's own test, answered from the one read above: it rules
+  // most planes out without a query each.
+  const isDue = (tail: string, recheckHours?: number) => {
+    const last = lastCheck.get(tail);
+    const windowSecs = verificationWindowHours(tail, UNITED_SOURCE, recheckHours) * 3600;
+    return last === undefined || last <= now - windowSecs;
+  };
   const allFlights = getUpcomingFlights(db, undefined, "UA");
+  // A disputed tail is still being settled, whatever verified_wifi says.
+  const settled = getSettledStarlinkTails(db, "UA");
 
   // Group flights by tail number
   const flightsByTail = new Map<string, Flight[]>();
@@ -135,6 +179,16 @@ function getPlanesNeedingVerification(
   for (const plane of planes) {
     if (result.length >= limit) break;
 
+    const budgetClass: UnitedCheckClass = forceAll
+      ? "manual"
+      : settled.has(plane.TailNumber) && !disputed.has(plane.TailNumber)
+        ? "reconfirm"
+        : "settle";
+    const closed = budgetClass !== "manual" && !open[budgetClass];
+    // One held plane is all a sat-out tick needs to know about; the rest of
+    // a closed class is not worth a query each.
+    if (closed && held) continue;
+
     const flights = flightsByTail.get(plane.TailNumber) || [];
     // Skip flights united.com can't resolve yet (lookup date too far out) —
     // checking them is a guaranteed "redirected to search page" error.
@@ -145,14 +199,25 @@ function getPlanesNeedingVerification(
     if (!candidate) continue;
 
     const recheckHours = disputed.has(plane.TailNumber) ? DISPUTED_RECHECK_HOURS : undefined;
-    if (!forceAll && !needsVerification(db, plane.TailNumber, UNITED_SOURCE, recheckHours)) {
+    // isDue reads UA rows only; needsVerification is the rule itself, and a
+    // plane it would refuse must not be picked (it would hold the tick's one
+    // place and never be checked).
+    if (
+      !forceAll &&
+      (!isDue(plane.TailNumber, recheckHours) ||
+        !needsVerification(db, plane.TailNumber, UNITED_SOURCE, recheckHours))
+    ) {
+      continue;
+    }
+    if (closed) {
+      held = budgetClass;
       continue;
     }
 
-    result.push({ plane, flight: candidate, recheckHours });
+    result.push({ plane, flight: candidate, recheckHours, budgetClass });
   }
 
-  return result;
+  return { toVerify: result, held };
 }
 
 /**
@@ -163,11 +228,24 @@ export async function verifyPlaneStarlink(
   tailNumber: string,
   flight: Flight,
   forceCheck = false,
-  context?: { aircraftType?: string | null; fleet?: string | null; recheckHours?: number },
+  context?: {
+    aircraftType?: string | null;
+    fleet?: string | null;
+    recheckHours?: number;
+    /** Unforced callers that do not say are held to the stricter class. */
+    budgetClass?: UnitedCheckClass;
+  },
   deps: VerifyPlaneStarlinkDeps = {}
 ): Promise<StarlinkCheckResult | null> {
   const checker = deps.checker ?? checkStarlinkStatusSubprocess;
   if (!forceCheck && !needsVerification(db, tailNumber, UNITED_SOURCE, context?.recheckHours)) {
+    return null;
+  }
+  // The claim is the last thing before the check: nothing below can decline to
+  // make it. A forced run is a person's, counted and not refused.
+  const budgetClass = forceCheck ? "manual" : (context?.budgetClass ?? "reconfirm");
+  if (!claimUnitedCheck(db, budgetClass)) {
+    if (budgetClass !== "manual") recordUnitedCheckHeld("verifier", budgetClass);
     return null;
   }
 
@@ -276,6 +354,8 @@ export async function verifyPlaneStarlink(
 
         // Return null to allow batch processing to continue
         return null;
+      } finally {
+        endUnitedCheck(db);
       }
     },
     { tail_number: tailNumber }
@@ -286,16 +366,35 @@ export async function verifyPlaneStarlink(
  * Run verification for planes that need checking
  * Fetches data from unitedstarlinktracker.com API
  */
-// Cheap pre-flight so the background loop can skip span creation on no-op ticks.
-export function hasVerificationWork(db: Database, maxPlanes: number, forceAll = false): boolean {
-  return getPlanesNeedingVerification(db, maxPlanes, forceAll).length > 0;
-}
-
 export async function runVerificationBatch(
   db: Database,
   maxPlanes = 5,
   delayMs = VERIFICATION_DELAY_MS,
-  forceAll = false
+  forceAll = false,
+  deps: VerifyPlaneStarlinkDeps = {}
+): Promise<{
+  checked: number;
+  starlink: number;
+  notStarlink: number;
+  errors: number;
+  skipped: number;
+}> {
+  // Get planes that need verification (from local DB, includes mismatches so they can self-heal)
+  const { toVerify } = getPlanesNeedingVerification(
+    db,
+    maxPlanes,
+    forceAll,
+    forceAll ? UNITED_BUDGET_UNGATED : unitedBudgetState(db).open
+  );
+  return verifyPicked(db, toVerify, delayMs, forceAll, deps);
+}
+
+async function verifyPicked(
+  db: Database,
+  toVerify: PlaneToVerify[],
+  delayMs: number,
+  forceAll: boolean,
+  deps: VerifyPlaneStarlinkDeps
 ): Promise<{
   checked: number;
   starlink: number;
@@ -305,9 +404,6 @@ export async function runVerificationBatch(
 }> {
   const stats = { checked: 0, starlink: 0, notStarlink: 0, errors: 0, skipped: 0 };
 
-  // Get planes that need verification (from local DB, includes mismatches so they can self-heal)
-  const toVerify = getPlanesNeedingVerification(db, maxPlanes, forceAll);
-
   if (toVerify.length === 0) {
     logger.debug("No planes need verification at this time");
     return stats;
@@ -316,12 +412,15 @@ export async function runVerificationBatch(
   logger.debug(`${toVerify.length} plane(s) need verification`);
 
   for (let i = 0; i < toVerify.length; i++) {
-    const { plane, flight, recheckHours } = toVerify[i];
-    const result = await verifyPlaneStarlink(db, plane.TailNumber, flight, forceAll, {
-      aircraftType: plane.Aircraft,
-      fleet: plane.fleet,
-      recheckHours,
-    });
+    const { plane, flight, recheckHours, budgetClass } = toVerify[i];
+    const result = await verifyPlaneStarlink(
+      db,
+      plane.TailNumber,
+      flight,
+      forceAll,
+      { aircraftType: plane.Aircraft, fleet: plane.fleet, recheckHours, budgetClass },
+      deps
+    );
 
     if (result === null) {
       stats.skipped++;
@@ -393,10 +492,59 @@ export function logSpreadsheetVerification(
  * With ~100 planes, full cycle takes ~100 minutes
  * Combined with 48-96hr jitter per plane, this spreads load nicely
  */
+const PLANES_PER_RUN = 1;
+
+/**
+ * One scheduler tick: at most PLANES_PER_RUN checks, and none when the check
+ * budget is closed to every plane that is due. A tick sat out is counted and
+ * dropped; the next tick asks afresh, at its usual time.
+ */
+export async function runVerifierTick(
+  db: Database,
+  deps: VerifyPlaneStarlinkDeps = {}
+): Promise<{ checked: number; held: "settle" | "reconfirm" | null }> {
+  // ~97% of ticks find nothing to do — skip span creation on no-op runs.
+  const { toVerify, held } = getPlanesNeedingVerification(
+    db,
+    PLANES_PER_RUN,
+    false,
+    unitedBudgetState(db).open
+  );
+  if (toVerify.length === 0) {
+    if (held) recordUnitedCheckHeld("verifier", held);
+    return { checked: 0, held };
+  }
+
+  let checked = 0;
+  await withSpan(
+    "starlink_verifier.run",
+    async (span) => {
+      const stats = await verifyPicked(db, toVerify, VERIFICATION_DELAY_MS, false, deps);
+      checked = stats.checked;
+
+      span.setTag("checked", stats.checked);
+      span.setTag("starlink", stats.starlink);
+      span.setTag("errors", stats.errors);
+
+      // See fleet-discovery: a no-change batch is a debug-level fact.
+      if (stats.starlink > 0 || stats.errors > 0) {
+        logger.info(
+          `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
+        );
+      } else if (stats.checked > 0) {
+        logger.debug(
+          `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
+        );
+      }
+    },
+    { "job.type": "background" }
+  );
+  return { checked, held: null };
+}
+
 export function startStarlinkVerifier(db: Database): JobHandle {
   const BASE_INTERVAL_MS = 60 * 1000; // 60 seconds
   const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
-  const PLANES_PER_RUN = 1;
 
   let runCount = 0;
   let lastHeartbeat = Date.now();
@@ -413,31 +561,7 @@ export function startStarlinkVerifier(db: Database): JobHandle {
       lastHeartbeat = now;
     }
 
-    // ~97% of ticks find nothing to do — skip span creation on no-op runs.
-    if (!hasVerificationWork(db, PLANES_PER_RUN)) return;
-
-    await withSpan(
-      "starlink_verifier.run",
-      async (span) => {
-        const stats = await runVerificationBatch(db, PLANES_PER_RUN, VERIFICATION_DELAY_MS);
-
-        span.setTag("checked", stats.checked);
-        span.setTag("starlink", stats.starlink);
-        span.setTag("errors", stats.errors);
-
-        // See fleet-discovery: a no-change batch is a debug-level fact.
-        if (stats.starlink > 0 || stats.errors > 0) {
-          logger.info(
-            `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
-          );
-        } else if (stats.checked > 0) {
-          logger.debug(
-            `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
-          );
-        }
-      },
-      { "job.type": "background" }
-    );
+    await runVerifierTick(db);
   };
 
   const handle = startJob({

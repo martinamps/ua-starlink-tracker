@@ -29,6 +29,40 @@ export function memo<T>(opts: MemoOptions) {
 }
 
 /**
+ * A TTL cache with a hard ceiling: at `maxEntries` a write evicts the entry
+ * read longest ago, expired or not. For values a caller's URL can mint (drawn
+ * pictures), where `memo`'s sweep-the-expired bound would let a crawler that
+ * outruns the TTL grow the map without limit.
+ */
+export function lruCache<T>(opts: MemoOptions) {
+  const entries = new Map<string, { value: T; at: number }>();
+  return {
+    get(key: string, nowSec = unixNow()): T | undefined {
+      const hit = entries.get(key);
+      if (!hit) return undefined;
+      entries.delete(key);
+      if (nowSec - hit.at >= opts.ttlSec) return undefined;
+      // Re-insert: a Map iterates in insertion order, so the first key is
+      // always the one read longest ago.
+      entries.set(key, hit);
+      return hit.value;
+    },
+    set(key: string, value: T, nowSec = unixNow()): void {
+      entries.delete(key);
+      while (entries.size >= opts.maxEntries) {
+        const oldest = entries.keys().next();
+        if (oldest.done) break;
+        entries.delete(oldest.value);
+      }
+      if (opts.maxEntries > 0) entries.set(key, { value, at: nowSec });
+    },
+    get size(): number {
+      return entries.size;
+    },
+  };
+}
+
+/**
  * Stale-while-revalidate, single-flight: a cold key computes inline; an
  * expired one is served as-is while one rebuild runs after the response. A
  * failed rebuild keeps the stale value and lets the next request retry.

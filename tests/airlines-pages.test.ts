@@ -23,6 +23,7 @@ import {
   formatFactDate,
 } from "../src/airlines/rollout-facts";
 import { factsHeadline } from "../src/components/airlines-page";
+import { dateRuns } from "../src/components/ui/format";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp, hubAirlinePageIndexable, hubUrlFamilies } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
@@ -109,6 +110,93 @@ describe("hub /airlines index", () => {
     // And the registry actually routes through that rule.
     expect(hubContentAirlines().every(isHubContent)).toBe(true);
     expect(Object.values(AIRLINES).filter(isHubContent)).toEqual(hubContentAirlines());
+  });
+
+  test("the tracked table's figure cells can wrap: a source line alone is wider than a phone", async () => {
+    const body = await (await get("/airlines", hub.canonicalHost)).text();
+    const table = body.slice(body.indexOf("<table"), body.indexOf("</table>"));
+    const figureCells = table.match(/<td class="[^"]*text-right[^"]*text-primary[^"]*"/g) ?? [];
+    expect(figureCells.length).toBeGreaterThan(0);
+    for (const cell of figureCells) expect(cell).not.toContain("whitespace-nowrap");
+  });
+
+  test("on a phone the stage sits under the airline's name, in every table: a third column cut the figures off at 360px", async () => {
+    const body = await (await get("/airlines", hub.canonicalHost)).text();
+    const tables = body.match(/<table[\s\S]*?<\/table>/g) ?? [];
+    expect(tables.length).toBeGreaterThanOrEqual(2);
+    for (const table of tables) {
+      const status = table.match(/<th[^>]*>Status<\/th>/)?.[0] ?? "";
+      expect(status).toContain("hidden sm:table-cell");
+      const rows = table.match(/<tr>[\s\S]*?<\/tr>/g)?.slice(1) ?? [];
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        const cells = row.match(/<td[\s\S]*?<\/td>/g) ?? [];
+        // The same pill twice: under the name below sm, in its own column from sm up.
+        const underName = cells[0].match(
+          /<span class="[^"]*sm:hidden[^"]*">(<span[^>]*><\/span>)<\/span>/
+        );
+        expect(underName).not.toBeNull();
+        expect(cells[1]).toContain("hidden sm:table-cell");
+        const inColumn = cells[1].match(/<span class="([^"]*)" style="([^"]*)">([^<]+)<\/span>/);
+        expect(inColumn).not.toBeNull();
+        const [, cls, style, words] = inColumn ?? [];
+        // Same colours and shape; the words come from the attribute.
+        expect(underName?.[1]).toBe(
+          `<span class="${cls} before:content-[attr(data-label)]" style="${style}" data-label="${words}"></span>`
+        );
+      }
+    }
+  });
+
+  // Finding 2f of the second look: with the stage printed once per layout, a
+  // reader without the stylesheet read "Installing Installing".
+  test("a row's markup says its stage once, and the stylesheet draws the phone copy", async () => {
+    const body = await (await get("/airlines", hub.canonicalHost)).text();
+    const tables = body.match(/<table[\s\S]*?<\/table>/g) ?? [];
+    expect(tables.length).toBeGreaterThanOrEqual(2);
+    const textOf = (html: string) =>
+      html
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    let rowsRead = 0;
+    for (const table of tables) {
+      for (const row of table.match(/<tr>[\s\S]*?<\/tr>/g)?.slice(1) ?? []) {
+        const stage = row.match(/data-label="([^"]+)"/)?.[1] ?? "";
+        expect(stage.length).toBeGreaterThan(0);
+        // The name and status cells: a summary further along may use the word too.
+        const cells = (row.match(/<td[\s\S]*?<\/td>/g) ?? []).slice(0, 2).join(" ");
+        expect(textOf(cells).split(stage)).toHaveLength(2);
+        rowsRead++;
+      }
+    }
+    expect(rowsRead).toBeGreaterThan(2);
+    const css = await Bun.file(`${import.meta.dir}/../static/tailwind.css`).text();
+    expect(css).toMatch(/content:\s*attr\(data-label\)/);
+  });
+
+  test("a figure's source line never breaks inside its date, and keeps its words", async () => {
+    const body = await (await get("/airlines", hub.canonicalHost)).text();
+    const table = body.slice(body.indexOf("<table"), body.indexOf("</table>"));
+    const lines =
+      table.match(/<span class="block text-xs text-muted[^"]*">[\s\S]*?<\/span>(?=<|$)/g) ?? [];
+    const dated = lines.filter((l) => /\b[A-Z][a-z]{2} \d{1,2}, \d{4}/.test(l));
+    expect(dated.length).toBeGreaterThan(0);
+    for (const line of dated) {
+      expect(line).toMatch(/<span class="whitespace-nowrap">[A-Z][a-z]{2} \d{1,2}, \d{4}<\/span>/);
+    }
+    const text = "18 A321neos, per Alaska's tracker as of Oct 26, 2026 and Nov 3";
+    expect(
+      dateRuns(text)
+        .map((r) => r.text)
+        .join("")
+    ).toBe(text);
+    expect(
+      dateRuns(text)
+        .filter((r) => r.date)
+        .map((r) => r.text)
+    ).toEqual(["Oct 26, 2026", "Nov 3"]);
+    expect(dateRuns("no date here")).toEqual([{ text: "no date here", date: false }]);
   });
 
   test("negative entries are grouped under an explicit not-Starlink section", async () => {

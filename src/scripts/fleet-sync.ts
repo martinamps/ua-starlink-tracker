@@ -4,12 +4,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import {
-  AIRLINES,
-  type AirlineConfig,
-  enabledAirlines,
-  lastUpdatedOwner,
-} from "../airlines/registry";
+import type { Browser } from "playwright";
+import { AIRLINES, type AirlineConfig, enabledAirlines } from "../airlines/registry";
 import {
   getMeta,
   initializeDatabase,
@@ -78,14 +74,7 @@ export function buildRoster(cfg: AirlineConfig, sources: RosterSource[]): Roster
   return [...byTail.values()];
 }
 
-/**
- * Sync fleet from FlightRadar24 to united_fleet table for one airline.
- */
-export async function syncFleetFromFR24(
-  db: Database,
-  cfg: AirlineConfig = AIRLINES.UA,
-  sharedBrowser?: import("playwright").Browser
-): Promise<{
+export interface FR24SyncResult {
   airline: string;
   success: boolean;
   total: number;
@@ -93,7 +82,19 @@ export async function syncFleetFromFR24(
   updated: number;
   rejected: number;
   error?: string;
-}> {
+}
+
+export const FR24_DEADLINE_ERROR = "deadline";
+
+/**
+ * Sync fleet from FlightRadar24 to united_fleet table for one airline.
+ */
+export async function syncFleetFromFR24(
+  db: Database,
+  cfg: AirlineConfig = AIRLINES.UA,
+  sharedBrowser?: Browser,
+  signal?: AbortSignal
+): Promise<FR24SyncResult> {
   const airlineTag = normalizeAirlineTag(cfg.code);
   return withSpan("fleet_sync.fr24", async (span) => {
     span.setTag("airline", airlineTag);
@@ -118,6 +119,10 @@ export async function syncFleetFromFR24(
       const scraped: RosterSource[] = [];
       for (const [i, src] of sources.entries()) {
         if (i > 0) await sleep(5000);
+        if (signal?.aborted) {
+          result.error = FR24_DEADLINE_ERROR;
+          return result;
+        }
         info(`Starting FR24 fleet sync for ${cfg.code} (${src.slug})...`);
         const scrapeResult = await scrapeFlightRadar24Fleet(src.slug, sharedBrowser);
         if (!scrapeResult.success) {
@@ -140,6 +145,13 @@ export async function syncFleetFromFR24(
         }
         info(`FR24 returned ${scrapeResult.aircraft.length} aircraft for ${cfg.code}/${src.slug}`);
         scraped.push({ subfleet: src.subfleet, aircraft: scrapeResult.aircraft });
+      }
+
+      // Past its deadline the caller has moved on: a late roster would write
+      // into united_fleet beside the next airline's run.
+      if (signal?.aborted) {
+        result.error = FR24_DEADLINE_ERROR;
+        return result;
       }
 
       const allAircraft = buildRoster(cfg, scraped);
@@ -199,12 +211,12 @@ export async function syncFleetFromFR24(
       result.total = admitted.length;
       result.success = true;
 
-      // Meta totals follow the lastUpdated owner: the sheet scrape owns
-      // UA's; for everyone else FR24 is the roster of record, so refresh
-      // meta here or it goes stale. (refreshFleetMeta itself only stamps
-      // lastUpdated for fleet-meta-owned airlines — QR's stays with the
-      // schedule ingester.)
-      if (lastUpdatedOwner(cfg.code) !== "sheet-scrape") refreshFleetMeta(db, cfg.code);
+      // The roster just changed, so the published totals follow it now, for
+      // every airline. /fleet reads the roster live; skipping UA here left
+      // its headline behind /fleet until the next hourly scrape.
+      // (refreshFleetMeta only stamps lastUpdated for fleet-meta-owned
+      // airlines, so UA's stays with the scrape and QR's with the ingester.)
+      refreshFleetMeta(db, cfg.code);
 
       span.setTag("planes.new", result.new);
       span.setTag("planes.updated", result.updated);
@@ -256,35 +268,120 @@ export async function syncFromSpreadsheet(db: Database): Promise<{
   return result;
 }
 
+/** The slowest healthy airline takes about 20 s. */
+export const FR24_AIRLINE_DEADLINE_MS = 120_000;
+const BROWSER_CLOSE_GRACE_MS = 10_000;
+
+export interface FullFleetDeps {
+  launch?: () => Promise<Browser>;
+  syncOne?: (
+    db: Database,
+    cfg: AirlineConfig,
+    browser: Browser,
+    signal: AbortSignal
+  ) => Promise<FR24SyncResult>;
+  airlines?: AirlineConfig[];
+  deadlineMs?: number;
+  gapMs?: number;
+  spreadsheet?: typeof syncFromSpreadsheet;
+}
+
+function failedSync(cfg: AirlineConfig, err: unknown): FR24SyncResult {
+  return {
+    airline: cfg.code,
+    success: false,
+    total: 0,
+    new: 0,
+    updated: 0,
+    rejected: 0,
+    error: err instanceof Error ? err.message : String(err),
+  };
+}
+
+async function closeBrowser(browser: Browser): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    browser.close().catch(() => {}),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, BROWSER_CLOSE_GRACE_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+}
+
 /**
  * Full fleet sync: FR24 (per enabled airline) + spreadsheet (UA-only)
+ *
+ * page.evaluate has no timeout, so a hung FR24 page never returns and the
+ * browser's ~1.7 GB stays held (24 Nov, Qatar). Each airline races a deadline;
+ * when it trips, the browser is closed (which rejects the hung call) and the
+ * next airline launches a fresh one.
  */
-export async function syncFullFleet(db: Database): Promise<{
-  fr24: Array<{
-    airline: string;
-    success: boolean;
-    total: number;
-    new: number;
-    updated: number;
-    rejected: number;
-    error?: string;
-  }>;
+export async function syncFullFleet(
+  db: Database,
+  deps: FullFleetDeps = {}
+): Promise<{
+  fr24: FR24SyncResult[];
   spreadsheet: { success: boolean; synced: number; error?: string };
 }> {
-  const fr24: Awaited<ReturnType<typeof syncFleetFromFR24>>[] = [];
-  const browser = await launchFR24Browser();
+  const {
+    launch = launchFR24Browser,
+    syncOne = syncFleetFromFR24,
+    airlines = enabledAirlines(),
+    deadlineMs = FR24_AIRLINE_DEADLINE_MS,
+    gapMs = 5000,
+    spreadsheet = syncFromSpreadsheet,
+  } = deps;
+  const fr24: FR24SyncResult[] = [];
+  let browser: Browser | null = null;
   try {
-    for (const [i, cfg] of enabledAirlines().entries()) {
+    for (const [i, cfg] of airlines.entries()) {
       if (!cfg.fr24Slug) continue;
-      if (i > 0) await sleep(5000);
-      fr24.push(await syncFleetFromFR24(db, cfg, browser));
+      if (i > 0) await sleep(gapMs);
+      try {
+        browser ??= await launch();
+      } catch (err) {
+        logError(`fleet-sync: FR24 browser launch failed (${cfg.code})`, err);
+        fr24.push(failedSync(cfg, err));
+        continue;
+      }
+
+      const abort = new AbortController();
+      const run = syncOne(db, cfg, browser, abort.signal).catch((err) => failedSync(cfg, err));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        run,
+        new Promise<typeof FR24_DEADLINE_ERROR>((resolve) => {
+          timer = setTimeout(() => resolve(FR24_DEADLINE_ERROR), deadlineMs);
+        }),
+      ]);
+      clearTimeout(timer);
+
+      if (outcome !== FR24_DEADLINE_ERROR) {
+        fr24.push(outcome);
+        continue;
+      }
+
+      abort.abort();
+      logError(
+        `fleet-sync: FR24 ${cfg.code} (${cfg.fr24Slug}) exceeded ${deadlineMs / 1000}s; closing browser`
+      );
+      metrics.increment(COUNTERS.SCRAPER_SYNC, {
+        source: "fr24",
+        airline: normalizeAirlineTag(cfg.code),
+        status: "timeout",
+      });
+      fr24.push(failedSync(cfg, FR24_DEADLINE_ERROR));
+      const hung = browser;
+      browser = null;
+      await closeBrowser(hung);
     }
   } finally {
-    await browser.close().catch(() => {});
+    if (browser) await closeBrowser(browser);
   }
 
   // Spreadsheet sync remains UA-only — no other airline has a community sheet.
-  const spreadsheetResult = await syncFromSpreadsheet(db);
+  const spreadsheetResult = await spreadsheet(db);
 
   return { fr24, spreadsheet: spreadsheetResult };
 }

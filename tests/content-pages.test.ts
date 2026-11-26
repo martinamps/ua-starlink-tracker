@@ -148,6 +148,18 @@ describe("intent pages", () => {
     expect(text).toContain(`${count.toLocaleString("en-US")} of `);
   });
 
+  // United's own instructions don't mention the ads before the connection;
+  // reviewers do. The page says whose report it is and its date, never a
+  // standing fact of ours.
+  test("/is-starlink-free gives the ad step as a named, dated review's report", async () => {
+    const { text } = await getText("/is-starlink-free", UA);
+    const said = text.replace(/<!-- -->/g, "");
+    expect(said).toMatch(
+      /A \w+ review dated [A-Z][a-z]{2} \d{1,2}, \d{4} reports [^.]*\bads\b[^.]*\./
+    );
+    expect(said).not.toMatch(/you watch [^.]*\bad\b/);
+  });
+
   test("/is-starlink-free emits no FAQPage — the homepage owns that question", async () => {
     // The block's questions had no visible Q&A (Google requires markup to match
     // rendered content) and its lead question duplicated the homepage FAQ's

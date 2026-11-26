@@ -1,9 +1,12 @@
 import { aircraftName } from "../airlines/aircraft-families";
 import { marketingFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
+import { firstReadNote, firstReadTakenBackNote } from "../database/first-read";
 import type { FirstFlight, PerAirlineStat, RecentInstall, ReportedInstall } from "../types";
+import { reportedClause } from "../utils/reported-reason";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION } from "./layout";
+import { tailHref } from "./tail-link";
 import { monthDay, shortDate } from "./ui/format";
 
 interface NewlyEquippedPageProps {
@@ -45,11 +48,29 @@ export function firstFlightLabel(first: FirstFlight): string {
   return `${fn} ${first.origin} → ${first.destination}`;
 }
 
+/** The tail, linked to its own page where this host has one. */
+function TailName({
+  site,
+  row,
+  tone,
+}: { site: SiteConfig; row: RecentInstall; tone: "text-accent" | "text-secondary" }) {
+  const href = tailHref(site, row.TailNumber, row.airline);
+  return href ? (
+    <a href={href} className={`font-mono text-sm ${tone} hover:underline`}>
+      {row.TailNumber}
+    </a>
+  ) : (
+    <span className={`font-mono text-sm ${tone}`}>{row.TailNumber}</span>
+  );
+}
+
 function InstallRow({
+  site,
   install,
   first,
   airlineName,
 }: {
+  site: SiteConfig;
   install: RecentInstall;
   first?: FirstFlight;
   airlineName: string;
@@ -62,7 +83,7 @@ function InstallRow({
       style={{ scrollMarginTop: "5rem" }}
     >
       <div className="flex items-baseline gap-3 flex-wrap">
-        <span className="font-mono text-sm text-accent">{install.TailNumber}</span>
+        <TailName site={site} row={install} tone="text-accent" />
         <span className="text-xs text-secondary">{aircraftName(install.Aircraft)}</span>
         {operator && <span className="text-xs text-muted hidden sm:inline">{operator}</span>}
         <span className="text-xs text-muted tabular-nums ml-auto">
@@ -79,11 +100,20 @@ function InstallRow({
           {monthDay(first.departed_at)}
         </div>
       )}
+      {install.first_read_at ? (
+        <div className="text-xs text-muted mt-1">
+          {firstReadNote(install.first_read_at, AIRLINES[install.airline]?.verifySite)}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function ReportedRow({ row, airlineName }: { row: ReportedInstall; airlineName: string }) {
+function ReportedRow({
+  site,
+  row,
+  airlineName,
+}: { site: SiteConfig; row: ReportedInstall; airlineName: string }) {
   const operator = operatorLabel(row.OperatedBy, airlineName);
   return (
     <div
@@ -92,7 +122,7 @@ function ReportedRow({ row, airlineName }: { row: ReportedInstall; airlineName: 
       style={{ scrollMarginTop: "5rem" }}
     >
       <div className="flex items-baseline gap-3 flex-wrap">
-        <span className="font-mono text-sm text-secondary">{row.TailNumber}</span>
+        <TailName site={site} row={row} tone="text-secondary" />
         <span className="text-xs text-secondary">{aircraftName(row.Aircraft)}</span>
         {operator && <span className="text-xs text-muted hidden sm:inline">{operator}</span>}
         <span className="text-xs text-muted tabular-nums ml-auto">
@@ -100,9 +130,11 @@ function ReportedRow({ row, airlineName }: { row: ReportedInstall; airlineName: 
         </span>
       </div>
       <div className="text-xs text-muted mt-1">
-        Not confirmed: our check still reads{" "}
-        <span className="text-secondary">{row.observed_wifi}</span>
+        Not confirmed: {reportedClause(row)}
         {row.observed_at ? `, last checked ${monthDay(row.observed_at)}` : ""}.
+        {row.first_read_taken_back_at
+          ? ` ${firstReadTakenBackNote(row.first_read_taken_back_at, row.first_read_taken_back_reason, AIRLINES[row.airline]?.verifySite)}`
+          : ""}
       </div>
     </div>
   );
@@ -160,6 +192,7 @@ export default function NewlyEquippedPage({
                 </div>
                 {g.rows.map((r) => (
                   <InstallRow
+                    site={site}
                     key={r.TailNumber}
                     install={r}
                     first={firstFlights[r.TailNumber]}
@@ -189,12 +222,13 @@ export default function NewlyEquippedPage({
             <div className={EYEBROW}>Reported, not yet confirmed</div>
             <p className="text-sm text-muted mb-3">
               The community fleet sheet lists these aircraft with Starlink, but our own check of the
-              airline's site still shows another provider. They are not in our count. An airline's
-              site can take several days to show a new install; each one moves to the list above
-              when our check agrees.
+              airline's site has not confirmed them: it reads something else, or has not read the
+              plane since the listing. They are not in our count. An airline's site can take several
+              days to show a new install; each one moves to the list above when our check agrees.
             </p>
             {reported.map((r) => (
               <ReportedRow
+                site={site}
                 key={r.TailNumber}
                 row={r}
                 airlineName={airlines.find((a) => a.code === r.airline)?.name ?? r.airline}

@@ -13,6 +13,7 @@ import {
   getRecentInstalls,
   getReportedInstalls,
   getWifiMismatches,
+  logVerification,
 } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { bodyOf, jsonOf, makeSyntheticDb, utc } from "./helpers";
@@ -50,9 +51,22 @@ beforeAll(() => {
   seed(db, "N10002", { verified: null, found: daysAgo(3) });
   seed(db, "N20001", { verified: "Viasat", found: daysAgo(2) });
   seed(db, "N20002", { verified: "Thales", found: daysAgo(1) });
-  // Not reported: a regional None flap, a listing past the age cap, a bulk
+  // Not reported: a regional None flap (a Starlink read on record, then
+  // "None"), a contradicted listing past the age cap, a bulk
   // seed row, and a sheet row that never said Starlink.
   seed(db, "N30001", { verified: "None", found: daysAgo(2) });
+  logVerification(db, {
+    tail_number: "N30001",
+    source: "united",
+    checked_at: utc(`${daysAgo(9)}T12:00:00Z`),
+    has_starlink: true,
+    wifi_provider: "Starlink",
+    aircraft_type: "Embraer E175",
+    flight_number: "UA5000",
+    error: null,
+    tail_confirmed: 1,
+    airline: "UA",
+  });
   seed(db, "N30002", { verified: "Viasat", found: daysAgo(REPORTED_MAX_AGE_DAYS + 5) });
   seed(db, "N30003", { verified: "Viasat", found: daysAgo(2), gid: "ua_seed" });
   seed(db, "N30004", { wifi: "Viasat", verified: "Viasat", found: daysAgo(2) });

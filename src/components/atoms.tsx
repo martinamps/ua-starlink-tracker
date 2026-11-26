@@ -5,6 +5,8 @@ import {
   ownCountCredit,
   publishedCount,
   trackingMethod,
+  typeSumCredit,
+  typeSumParts,
 } from "../airlines/published-count";
 import { AIRLINES, type AirlineConfig, airlineHomeUrl } from "../airlines/registry";
 import type { RolloutFactsStatus } from "../airlines/rollout-facts";
@@ -15,7 +17,7 @@ import { operatorName } from "./home/aircraft-list";
 import { ButtonLink, Chip, Eyebrow, Panel } from "./layout";
 import { fmt, monthDay, pct } from "./ui/format";
 import { Meter } from "./ui/meter";
-import { Pill, type Tone } from "./ui/tone";
+import { DrawnPill, Pill, type Tone } from "./ui/tone";
 
 export type { PerAirlineStat };
 
@@ -189,12 +191,19 @@ export function StagePill({ info }: { info: StageInfo }) {
   return <Pill tone={STAGE_TONE[info.stage]}>{info.label}</Pill>;
 }
 
+/** The stage again for another layout of the same row, its words drawn by the
+ * stylesheet (DrawnPill) so the row's markup says them once. */
+export function StagePillAgain({ info }: { info: StageInfo }) {
+  return <DrawnPill tone={STAGE_TONE[info.stage]} label={info.label} />;
+}
+
 /**
  * One row per tracked airline: name, standard stage, and a bar where the
  * fleet share is publishable. Where it isn't (the roster counts types the
  * programme excludes) the row gives the count and the airline's own note, never
  * a ratio that would make a finished rollout look two-thirds done. An airline
- * known by aircraft type shows its own dated figure or no count (see
+ * known by aircraft type shows its own dated figure, our sum of its source's
+ * whole-type counts, or no count (see
  * published-count.ts), and ranks by that.
  */
 export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
@@ -247,9 +256,12 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                   {fmt(published.count)}
                 </strong>{" "}
                 aircraft with Starlink
-                {published.basis === "airline" && (
+                {published.basis !== "tracked" && (
                   <>
-                    , {ownCountCredit(cfg, published)} (
+                    {published.basis === "airline"
+                      ? `, ${ownCountCredit(cfg, published)}`
+                      : `: ${typeSumParts(published)}, ${typeSumCredit(published)}`}{" "}
+                    {!published.reportedBy && "("}
                     <a
                       href={published.url}
                       target="_blank"
@@ -258,10 +270,11 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                     >
                       {published.sourceLabel}
                     </a>
-                    )
+                    {!published.reportedBy && ")"}
                   </>
                 )}
-                . {stat.phaseNote}
+                .{published.basis === "type-sum" && " The total is our sum of those counts."}{" "}
+                {stat.phaseNote}
               </p>
             )}
             {(stat.installs30d ?? 0) > 0 && (

@@ -35,6 +35,10 @@ export interface TargetScope {
   /** Names the roster when it is wider than the serving tenant ("Alaska and
    * Hawaiian"); null when the target is measured against this tenant alone. */
   label: string | null;
+  /** Set when the roster adds a partner known only by aircraft type to
+   * aircraft counted on this site: the two parts, each named for what it is
+   * (programmePartsText). The page prints these in place of one flat count. */
+  parts?: string | null;
 }
 
 export interface TargetProjection {
@@ -115,6 +119,13 @@ const MASS_DAY_MULTIPLE = 4;
 /** Percentile of the other days the multiple is taken of — the busy end of
  * normal, not the median, so a lumpy-but-real day is never mistaken for one. */
 const MASS_DAY_PERCENTILE = 0.9;
+
+/** The month arithmetic below throws on anything else, and a day that sorts
+ * ahead of the real ones would open the series. */
+const isCalendarDay = (day: unknown): day is string =>
+  typeof day === "string" &&
+  /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+  !Number.isNaN(Date.parse(`${day}T00:00:00Z`));
 
 const monthOf = (ms: number): string => new Date(ms).toISOString().slice(0, 7);
 
@@ -209,7 +220,7 @@ export function computeInstallRate(opts: {
   nowMs: number;
 }): InstallRateStats {
   const { equipped, total, targets, nowMs } = opts;
-  const { kept, excluded } = excludeMassWriteDays(opts.daily);
+  const { kept, excluded } = excludeMassWriteDays(opts.daily.filter((d) => isCalendarDay(d.day)));
   const months = zeroFillMonths(monthsFromDays(kept), nowMs);
 
   const currentMonth = monthOf(nowMs);

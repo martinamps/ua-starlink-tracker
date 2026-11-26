@@ -502,13 +502,14 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
       for (let day = 1; day <= 6; day++) {
         const dep = now - day * 86400;
         const second = day <= changedTrips ? "N9002" : "N9001";
-        db.run("INSERT INTO adsb_flight_draws VALUES (?, 'N9001', ?, ?)", [fn, dep, dep + 7200]);
-        db.run("INSERT INTO adsb_flight_draws VALUES (?, ?, ?, ?)", [
-          fn,
-          second,
-          dep + 3 * 3600,
-          dep + 5 * 3600,
-        ]);
+        db.run(
+          "INSERT INTO adsb_flight_draws (flight_number, tail_number, first_seen, last_seen) VALUES (?, 'N9001', ?, ?)",
+          [fn, dep, dep + 7200]
+        );
+        db.run(
+          "INSERT INTO adsb_flight_draws (flight_number, tail_number, first_seen, last_seen) VALUES (?, ?, ?, ?)",
+          [fn, second, dep + 3 * 3600, dep + 5 * 3600]
+        );
       }
     }
     expect(await grade("UA7790", { origin: "DEN", destination: "SAN" })).toBe("high");

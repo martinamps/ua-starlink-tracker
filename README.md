@@ -19,7 +19,7 @@ Live counts are on the sites, not here, because they change daily.
 - **[Fleet](https://unitedstarlinktracker.com/fleet)** — every aircraft by tail number, with a page per aircraft type.
 - **[Newly equipped](https://unitedstarlinktracker.com/newly-equipped)** — a log of aircraft as they are found, with an [Atom feed](https://unitedstarlinktracker.com/feed.xml).
 - **[Install pace](https://unitedstarlinktracker.com/install-rate)** and **[timeline](https://unitedstarlinktracker.com/timeline)** — how fast the rollout is going against what the airline said.
-- **Calendar feeds** — subscribe to one flight (`/cal/{flight}/{date}.ics`) and the event updates when its aircraft is assigned.
+- **Calendar feeds** — subscribe to one flight (`/cal/{flight}/{date}.ics`) and the event updates when its aircraft is assigned, and stays as a final record for a year after the flight.
 - **[Embeddable badge](https://unitedstarlinktracker.com/embed)** — an SVG with the live count, for other sites.
 - **[Open data](https://unitedstarlinktracker.com/methodology)** — the tail list as [CSV](https://unitedstarlinktracker.com/data/starlink-tails.csv) and JSON.
 

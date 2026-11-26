@@ -9,17 +9,26 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync, rmSync } from "node:fs";
 import {
   checkedPlaneByPlane,
+  ownCountCredit,
+  ownCountSourced,
+  partlyByType,
   publishedCount,
   statedCount,
   trackingMethod,
 } from "../src/airlines/published-count";
 import {
   type AirlineConfig,
+  airlineSlug,
   enabledAirlines,
   hubContentAirlines,
   hubLookupAirlines,
 } from "../src/airlines/registry";
-import { AIRLINE_FACTS, airlineOwnCount, airlineOwnTypeTotal } from "../src/airlines/rollout-facts";
+import {
+  AIRLINE_FACTS,
+  airlineOwnCount,
+  airlineOwnTypeSum,
+  airlineOwnTypeTotal,
+} from "../src/airlines/rollout-facts";
 import { createApp } from "../src/server/app";
 import {
   TEST_DB,
@@ -60,7 +69,7 @@ describe("the published-count rule", () => {
     for (const { cfg } of byType) {
       const p = publishedCount(cfg, 123456);
       expect(p.basis).not.toBe("tracked");
-      if (p.basis === "airline") {
+      if (p.basis === "airline" || p.basis === "type-sum") {
         expect(p.count).not.toBe(123456);
         expect(p.asOf).toMatch(/^\d{4}-\d{2}/);
         expect(p.url).toStartWith("https://");
@@ -82,6 +91,42 @@ describe("the published-count rule", () => {
       );
       expect(own === null).toBe(current.length === 0);
       if (own) expect(current.map((f) => f.asOf)).toContain(own.asOf);
+    }
+  });
+
+  test("a sum of whole types is its fact's stated counts, dated, and never outranks the airline's own figure", () => {
+    let sums = 0;
+    for (const entry of AIRLINE_FACTS) {
+      for (const f of entry.facts) {
+        if (!f.wholeTypes) continue;
+        expect(f.asOf, entry.slug).toBeDefined();
+        expect(f.wholeTypes.by.length, entry.slug).toBeGreaterThan(0);
+        // The fact states each count and calls the type complete; the sum
+        // itself is nobody's claim, so it is never an officialFleetCount.
+        for (const t of f.wholeTypes.types) expect(f.fact, entry.slug).toContain(`all ${t.count} `);
+        expect(f.officialFleetCount, entry.slug).toBeUndefined();
+      }
+      if (!entry.trackedCode) continue;
+      const sum = airlineOwnTypeSum(entry.trackedCode);
+      const current = entry.facts.filter(
+        (f) => !f.superseded && f.asOf && f.wholeTypes?.types.some((t) => t.count > 0)
+      );
+      expect(sum === null).toBe(current.length === 0);
+      if (!sum) continue;
+      sums++;
+      expect(current.map((f) => f.asOf)).toContain(sum.asOf);
+      expect(sum.parts.length).toBeGreaterThan(0);
+      expect(sum.count).toBe(sum.parts.reduce((a, p) => a + p.count, 0));
+      expect(sum.url).toStartWith("https://");
+    }
+    expect(sums).toBeGreaterThan(0);
+    for (const { cfg } of byType) {
+      const expected = airlineOwnCount(cfg.code)
+        ? "airline"
+        : airlineOwnTypeSum(cfg.code)
+          ? "type-sum"
+          : "type";
+      expect(publishedCount(cfg, 7).basis).toBe(expected);
     }
   });
 });
@@ -239,7 +284,9 @@ describe("hub home page", () => {
     const [, rollouts, checkable] =
       desc.match(/^(\d+) airlines .* Check a flight by number on (\d+) of them\.$/) ?? [];
     expect(desc).not.toContain("any flight");
-    expect(Number(checkable)).toBe(hubLookupAirlines().length);
+    // "By number": an airline answered by route (its own statement, no
+    // schedule held) can't be checked by number alone, so it isn't counted.
+    expect(Number(checkable)).toBe(hubLookupAirlines().filter((a) => !a.statementRule).length);
     expect(Number(checkable)).toBeLessThan(Number(rollouts));
     for (const cfg of hubLookupAirlines()) {
       const json = await jsonOf(
@@ -262,6 +309,73 @@ describe("hub home page", () => {
     }
   });
 
+  // "Not plane by plane" is the denial, and may name the airline it denies.
+  const INLINE = /<\/?(?:a|span|strong|em|b|i|abbr|time)\b[^>]*>/g;
+  const sentencesOf = (html: string) =>
+    html
+      .replace(/<(script|style)\b[\s\S]*?<\/\1>/g, "\n")
+      .replace(/<!-- -->/g, "")
+      .replace(INLINE, "")
+      .replace(/<[^>]+>/g, "\n")
+      .replace(/&#x27;/g, "'")
+      .split(/\n|(?<=\.)\s+/)
+      .map((s) => s.replace(/\bnot (?:checked )?plane by plane/gi, ""));
+  const saysPlaneByPlane = (s: string) => /plane[ -]by[ -]plane/i.test(s);
+
+  test("no hub page or /airlines description calls an airline with a type rule plane by plane", async () => {
+    const notPlaneByPlane = hubContentAirlines().filter((cfg) => !checkedPlaneByPlane(cfg));
+    if (!notPlaneByPlane.some(partlyByType)) {
+      throw new Error("no airline mixes a type rule with per-aircraft checks: nothing is tested");
+    }
+    const [home, index] = await Promise.all([bodyOf("/"), bodyOf("/airlines")]);
+    expect(home.status).toBe(200);
+    expect(index.status).toBe(200);
+    const sentences = [
+      ...sentencesOf(home.text),
+      ...sentencesOf(index.text),
+      ...descriptionsOf(index.text, "").flatMap((d) => d.split(/(?<=\.)\s+/)),
+    ];
+    expect(sentences.some(saysPlaneByPlane)).toBe(true);
+    for (const sentence of sentences.filter(saysPlaneByPlane)) {
+      for (const cfg of notPlaneByPlane) expect(sentence).not.toContain(cfg.shortName);
+    }
+    for (const cfg of notPlaneByPlane) {
+      // Alaska's row in the /airlines table, and its own page on the hub.
+      const at = index.text.indexOf(`>${cfg.name}</a>`);
+      expect(at).toBeGreaterThan(-1);
+      const row = index.text.slice(at, index.text.indexOf("</tr>", at));
+      expect(sentencesOf(row).some(saysPlaneByPlane)).toBe(false);
+      const page = await bodyOf(`/airlines/${airlineSlug(cfg)}`);
+      expect(page.status).toBe(200);
+      expect(sentencesOf(page.text).some(saysPlaneByPlane)).toBe(false);
+    }
+    for (const cfg of notPlaneByPlane.filter(partlyByType)) {
+      expect(
+        sentences.some((s) => s.includes(cfg.shortName) && /partly by aircraft type/.test(s))
+      ).toBe(true);
+    }
+  });
+
+  test("the sources answer on the hub home page calls no airline with a type rule per-aircraft", async () => {
+    const notPlaneByPlane = hubContentAirlines().filter((cfg) => !checkedPlaneByPlane(cfg));
+    const { text } = await bodyOf("/");
+    const answer =
+      text.match(
+        /"name":"How is this data collected\?","acceptedAnswer":\{"@type":"Answer","text":"([^"]*)"/
+      )?.[1] ?? "";
+    const sentences = answer.split(/(?<=\.)\s+/);
+    const perAircraft = (s: string) => saysPlaneByPlane(s) || /per aircraft/i.test(s);
+    expect(sentences.some(perAircraft)).toBe(true);
+    for (const sentence of sentences.filter(perAircraft)) {
+      for (const cfg of notPlaneByPlane) expect(sentence).not.toContain(cfg.shortName);
+    }
+    for (const cfg of notPlaneByPlane.filter(partlyByType)) {
+      expect(
+        sentences.some((s) => s.includes(cfg.shortName) && /partly by aircraft type/.test(s))
+      ).toBe(true);
+    }
+  });
+
   test("the most-planes answer ranks a by-type airline by its own dated figure or not at all", async () => {
     const { text } = await bodyOf("/");
     const answer =
@@ -272,9 +386,20 @@ describe("hub home page", () => {
     for (const { cfg } of byType) {
       const own = airlineOwnCount(cfg.code);
       const ranked = new RegExp(`${esc(cfg.name)}(, with| \\()`);
+      const sum = airlineOwnTypeSum(cfg.code);
       if (own) {
         expect(answer).toMatch(
           new RegExp(`${esc(cfg.name)}(, with | \\()[\\d,]+, its own figure as of \\w+`)
+        );
+      } else if (sum) {
+        // The sum never stands without its parts, who counted them and when.
+        expect(answer).toMatch(
+          new RegExp(
+            `${esc(cfg.name)}(, with | \\()[\\d,]+, our sum of [\\d,]+ [^.()]* per [^.()]+ as of \\w+ \\d`
+          )
+        );
+        expect(answer).toMatch(
+          new RegExp(`${esc(cfg.name)}[^.]* per-type counts a source gives\\.`)
         );
       } else {
         expect(answer).not.toMatch(ranked);
@@ -292,11 +417,101 @@ describe("hub home page", () => {
       expect(row).toContain("by aircraft type");
       const own = airlineOwnCount(cfg.code);
       if (own) {
-        expect(row).toMatch(/aircraft with Starlink, per [^<]+ as of \w+ \d/);
+        // The airline's page is credited to the airline; another publisher's
+        // report of the airline's figure names that publisher as the link.
+        expect(row).toMatch(
+          own.reportedBy
+            ? /aircraft with Starlink, the airline(&#x27;|')s own figure as of \w+ \d[^<]*, as reported by <a /
+            : /aircraft with Starlink, per [^<]+ as of \w+ \d/
+        );
+        if (own.reportedBy) expect(row).not.toContain(`per ${cfg.name}`);
         expect(row).toContain(`href="${own.url}"`);
+      } else if (airlineOwnTypeSum(cfg.code)) {
+        const sum = airlineOwnTypeSum(cfg.code);
+        expect(row).toMatch(/aircraft with Starlink: [\d,]+ [^<]*, per [^<]+ as of \w+ \d/);
+        expect(row).toContain(`href="${sum?.url}"`);
+        expect(row).toContain("The total is our sum");
       } else {
         expect(row).not.toContain("aircraft with Starlink");
       }
+    }
+  });
+});
+
+describe("Qatar's own figure on the hub home page", () => {
+  // Pinned on purpose, against the shapes-not-values habit: this figure comes
+  // from a source file, not the data snapshot, and a newer one must be a
+  // deliberate edit here too.
+  test("the row and the most-planes answer print 170, dated and sourced", async () => {
+    const qr = enabledAirlines().find((cfg) => cfg.code === "QR");
+    if (!qr) throw new Error("Qatar is not an enabled airline: nothing is tested");
+    const own = airlineOwnCount("QR");
+    expect(own).toMatchObject({ count: 170, asOf: "2026-11-16", sourceLabel: "The Peninsula" });
+
+    const { text } = await bodyOf("/");
+    const at = text.indexOf(`>${qr.name}</a>`);
+    expect(at).toBeGreaterThan(-1);
+    const row = text.slice(at, text.indexOf("</li>", at)).replace(/<!-- -->/g, "");
+    expect(own?.reportedBy).toBe("The Peninsula");
+    expect(row.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'")).toContain(
+      "170 aircraft with Starlink, the airline's own figure as of Nov 16, 2026, as reported by The Peninsula."
+    );
+    expect(row).not.toContain("per Qatar Airways");
+    expect(row).toContain(`href="${own?.url}"`);
+
+    const answer =
+      text.match(
+        /"name":"Which airline has the most Starlink planes\?","acceptedAnswer":\{"@type":"Answer","text":"([^"]*)"/
+      )?.[1] ?? "";
+    expect(answer).toMatch(
+      /Qatar Airways(, with | \()170, its own figure as of Nov 16, 2026, as reported by The Peninsula/
+    );
+  });
+
+  test("the /airlines table and MCP name the paper beside the figure too", async () => {
+    const { text } = await bodyOf("/airlines");
+    expect(text.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, " ")).toMatch(
+      /as of\s+Nov 16, 2026\s+as reported by The Peninsula/
+    );
+    const res = await app.dispatch(
+      mcpReq(HUB, "tools/call", { name: "get_fleet_stats", arguments: {} }, { query: "?scope=QR" })
+    );
+    const stats = toolText(await res.json()).text;
+    expect(stats).toContain(
+      "170 aircraft as of 2026-11-16 (as reported by The Peninsula: https://"
+    );
+  });
+});
+
+describe("crediting an airline's own figure", () => {
+  const cfg = { name: "Example Air" } as AirlineConfig;
+  const own = { count: 12, asOf: "2026-08-21", sourceLabel: "Example Air press release", url: "x" };
+  const relayed = { ...own, sourceLabel: "The Daily", reportedBy: "The Daily" };
+
+  test("from the airline's own page it is credited to the airline", () => {
+    expect(ownCountCredit(cfg, own)).toBe("per Example Air as of Aug 21, 2026");
+    expect(ownCountSourced(own)).toBe("as of Aug 21, 2026");
+  });
+
+  test("through another publisher it is the airline's figure as that publisher reported it", () => {
+    expect(ownCountCredit(cfg, relayed)).toBe(
+      "the airline's own figure as of Aug 21, 2026, as reported by"
+    );
+    expect(ownCountCredit(cfg, relayed)).not.toContain("per Example Air");
+    expect(ownCountSourced(relayed)).toBe("as of Aug 21, 2026, as reported by The Daily");
+  });
+
+  test("a second-hand source is marked on the stored fact, and only there", () => {
+    for (const entry of AIRLINE_FACTS) {
+      for (const f of entry.facts) {
+        // A page labelled as the airline's own is not another publisher's report.
+        if (f.source.secondHand) expect(f.source.label, entry.slug).not.toContain(entry.shortName);
+      }
+      if (!entry.trackedCode) continue;
+      const count = airlineOwnCount(entry.trackedCode);
+      if (!count) continue;
+      const fact = entry.facts.find((f) => f.source.url === count.url);
+      expect(count.reportedBy).toBe(fact?.source.secondHand ? fact.source.label : undefined);
     }
   });
 });
@@ -309,8 +524,14 @@ describe("hub /airlines", () => {
       const at = text.indexOf(`>${cfg.name}</a>`);
       expect(at).toBeGreaterThan(-1);
       const row = text.slice(at, text.indexOf("</tr>", at)).replace(/<!-- -->/g, "");
-      if (airlineOwnCount(cfg.code)) expect(row).toMatch(/[\d,]+<span[^>]*>as of \w+ \d/);
-      else expect(row).toContain("By type");
+      if (airlineOwnCount(cfg.code))
+        expect(row).toMatch(/[\d,]+<span[^>]*>as of (?:<span[^>]*>)?\w+ \d/);
+      else if (airlineOwnTypeSum(cfg.code)) {
+        expect(row).toMatch(
+          /[\d,]+<span[^>]*>[\d,]+ [^<]*, per [^<]+ as of (?:<span[^>]*>)?\w+ \d/
+        );
+        expect(text).toContain("our sum of the per-type counts");
+      } else expect(row).toContain("By type");
     }
   });
 });
@@ -330,7 +551,31 @@ describe("MCP fleet answers for a by-type airline", () => {
       expect(text).not.toMatch(/\d aircraft have Starlink WiFi/);
       const own = airlineOwnCount(cfg.code);
       if (own) expect(text).toContain(`${own.count} aircraft as of ${own.asOf}`);
+      const sum = own ? null : airlineOwnTypeSum(cfg.code);
+      if (sum) {
+        expect(text).toContain(`as of ${sum.asOf}`);
+        expect(text).toContain(`that is ${sum.count} aircraft, a total the source does not state`);
+        for (const p of sum.parts) expect(text).toContain(`${p.count} ${p.name}`);
+      }
     }
+  });
+
+  test("the hub's line for a by-type airline carries the same sourced figure", async () => {
+    const r = await app.dispatch(
+      mcpReq(HUB, "tools/call", { name: "get_fleet_stats", arguments: {} })
+    );
+    const text = toolText(await r.json()).text;
+    let lines = 0;
+    for (const { cfg } of byType) {
+      const line = text.split("\n").find((l) => l.startsWith(`**${cfg.name}**`));
+      if (!line) continue;
+      lines++;
+      expect(line).toContain("counted by aircraft type, not plane by plane");
+      const sum = airlineOwnCount(cfg.code) ? null : airlineOwnTypeSum(cfg.code);
+      if (sum)
+        expect(line).toContain(`that is ${sum.count} aircraft, a total the source does not state`);
+    }
+    expect(lines).toBeGreaterThan(0);
   });
 
   test("list_starlink_aircraft says its list is by type", async () => {

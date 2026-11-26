@@ -45,7 +45,16 @@ interface RolloutFactBase {
    * bare fetch). A reader who hits that wall still has something to open,
    * which is the entire promise of this file — a citation nobody can read is
    * not a receipt. Only ever a snapshot confirmed to exist and return 200. */
-  source: { label: string; url: string; mirror?: string };
+  source: {
+    label: string;
+    url: string;
+    mirror?: string;
+    /** The page is another publisher's report of what the airline said (a
+     * newspaper covering an announcement), not the airline's own page. A
+     * figure taken from it is still the airline's, and its credit names both:
+     * the airline's figure, as `label` reported it. */
+    secondHand?: true;
+  };
   /** Type-page slugs (/fleet/{slug}) this fact is shown on; "*" = every type
    * page of the airline. Absent = the fact stays on the airline pages only. */
   aircraftPages?: readonly string[];
@@ -63,6 +72,16 @@ interface RolloutFactBase {
    * only knows an airline by aircraft type, this dated figure is the one count
    * a ranking may print: a sum of fleet-list types is not a count of installs. */
   officialFleetCount?: number;
+  /** Types `fact` states as wholly fitted, each with its count as stated ("all
+   * 18 Airbus A321-200neo"), named as a sentence prints them. `officialCounts`
+   * is keyed by type-page slug, and an airline known only by type has no type
+   * pages. The hub adds these up for such an airline and prints the sum beside
+   * its parts, credited to `by` ("per Alaska's installation tracker"): the
+   * parts are the source's, the sum is this site's. */
+  wholeTypes?: {
+    by: string;
+    types: ReadonlyArray<{ name: string; count: number }>;
+  };
   /** Verbatim excerpt of `fact` a type page renders instead of the whole
    * claim, for facts whose other clauses are about a different fleet. */
   pageText?: string;
@@ -330,6 +349,23 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           url: "https://airlinegeeks.com/2026/06/25/alaska-hawaiian-expand-starlink-wifi-to-around-150-aircraft/",
         },
       },
+      {
+        // The chart's two Hawaiian rows: 18 and 24 connected, the pending
+        // column reading "Update complete". It prints no Hawaiian total.
+        fact: "Alaska's Starlink installation tracker lists all 18 Airbus A321-200neo and all 24 Airbus A330 aircraft as connected, with the update complete on both types.",
+        asOf: "2026-10-26",
+        source: {
+          label: "Alaska Airlines newsroom — Starlink tracker",
+          url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
+        },
+        wholeTypes: {
+          by: "Alaska's installation tracker",
+          types: [
+            { name: "A321neo", count: 18 },
+            { name: "A330", count: 24 },
+          ],
+        },
+      },
     ],
   },
   {
@@ -349,7 +385,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "The Peninsula",
           url: "https://thepeninsulaqatar.com/article/17/11/2026/qatar-airways-starlink-benefits-over-31-million-passengers",
+          secondHand: true,
         },
+        officialFleetCount: 170,
       },
       {
         fact: "Qatar Airways reached 150 Starlink-equipped widebodies, including the world's first Starlink-equipped Boeing 787-9 and the completed 787-8 sub-fleet, and remains on track to finish the 787 rollout by the end of 2026. The 777 programme was completed in nine months and the A350 programme in eight.",
@@ -564,7 +602,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // No tail count on purpose: FlyerTalk and aggregator counts disagree (1 to
     // 10 aircraft) and no first-party source publishes one.
     summary:
-      "Free in every cabin on all transatlantic routes; short-haul installs began November 23, 2026 (A320ceo EI-DVM, Spain, Portugal and Morocco first), with 29 short-haul aircraft due in early 2027.",
+      "Free on all transatlantic routes; short-haul installs began November 23, 2026 (A320ceo EI-DVM, Spain, Portugal and Morocco first), with 29 short-haul aircraft due in early 2027.",
     facts: [
       {
         fact: "Aer Lingus has started fitting Starlink to its short-haul fleet, beginning with Airbus A320ceo EI-DVM on select European services. 29 short-haul aircraft are expected to have it in early 2027, starting with flights to Spain, Portugal and Morocco. Wi-Fi is free.",
@@ -758,7 +796,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "100 aircraft equipped by October 2025, the world's largest Starlink 737 fleet; 787 installs are due to finish by the end of 2026. Free for WestJet Rewards members via TELUS.",
+      "100 of its 737s had Starlink by October 2025, the world's largest Starlink 737 fleet. WestJet's 2024 plan was to upgrade its wide-bodies by the end of 2026; its 787-9 page still listed Wi-Fi for a fee in November 2026. Free for WestJet Rewards members via TELUS.",
     facts: [
       {
         fact: "WestJet equipped its 100th aircraft with Wi-Fi presented by TELUS and powered by Starlink, the world's largest fleet of Starlink-equipped 737s, free for WestJet Rewards members.",
@@ -769,13 +807,35 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        // Announcement-day piece, never updated since; the plan it reports is
-        // the only thing it can support, so the fact is framed as one.
-        fact: "When WestJet announced the TELUS/Starlink partnership in July 2024 it said Boeing 787 installations would follow the 737 fleet and should be complete by the end of 2026.",
+        // WestJet has published no count newer than the October 2025 release
+        // and no word that its end-of-2025 737 target was met; this undated
+        // help page is its current wording, so the page says only that.
+        fact: "WestJet says WestJet Wi-Fi presented by TELUS is available in over 100 aircraft across its 737 fleet, and that travellers can look up their flight on the WestJet Flight Guide within 72 hours of departure to see whether it is available. On aircraft that offer WestJet Connect, Wi-Fi is for a fee.",
+        accessed: "2026-11-25",
+        source: {
+          label: "WestJet (Wi-Fi help page)",
+          url: "https://www.westjet.com/en-ca/help/westjet-wifi",
+        },
+      },
+      {
+        // The 2024 wide-body plan below ends with 2026; five weeks before that
+        // date WestJet's own 787-9 page still describes the older paid system.
+        fact: "WestJet's page for its 787-9 lists Wi-Fi access for a fee, with inflight entertainment on WestJet Connect.",
+        accessed: "2026-11-25",
+        source: {
+          label: "WestJet (787-9 Dreamliner page)",
+          url: "https://www.westjet.com/en-ca/aircraft/boeing-787-9-dreamliner",
+        },
+      },
+      {
+        // The announcement itself, so the plan is WestJet's wording and not a
+        // blog's reading of it. A plan is all a 2024 page can support, and
+        // WestJet has not said either date was met.
+        fact: "Announcing the TELUS partnership, WestJet said it planned to complete installation on its modern narrowbody fleet by the end of 2025, and that all wide-body aircraft were planned to be upgraded by the end of 2026.",
         asOf: "2024-07-24",
         source: {
-          label: "One Mile at a Time",
-          url: "https://onemileatatime.com/news/westjet-free-starlink-wi-fi/",
+          label: "WestJet news release",
+          url: "https://www.westjet.com/en-ca/news/2024/westjet-and-telus-form-partnership-to-revolutionize-guest-experi",
         },
       },
     ],
@@ -819,12 +879,23 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "Latin America's first Starlink airline: first flight July 4, 2026 (737 MAX 9 HP-9901CMP), fleet due by Q1 2027. Free for ConnectMiles elites and business class; others pay.",
+      "Latin America's first Starlink airline: first flight July 4, 2026 (737 MAX 9 HP-9901CMP). About one-quarter of the fleet was equipped by November 2026, with the rest expected by mid-2027, per its third-quarter results. Free for ConnectMiles elites and business class; others pay.",
     facts: [
       {
+        // Copa Holdings' own third-quarter release, as filed with the SEC
+        // (6-K, exhibit 99.1). It speaks for the company and names no
+        // executive; it gives a share of the fleet, not a count.
+        fact: "About one-quarter of Copa's fleet is equipped with Starlink, with full implementation expected by mid-2027, Copa Holdings said in its third-quarter results.",
+        asOf: "2026-11-18",
+        source: {
+          label: "Copa Holdings (Q3 2026 results, filed with the SEC)",
+          url: "https://www.sec.gov/Archives/edgar/data/1345105/000162828026075125/cpa3q26ex-991.htm",
+        },
+      },
+      {
         // copaair.com returns 401 to every automated client and has no archive
-        // snapshot, so both facts are re-sourced to reachable trade press.
-        fact: "Copa's first Starlink-equipped aircraft, a Boeing 737 MAX 9 registered HP-9901CMP, made its inaugural flight on July 4, 2026, with implementation across the fleet planned for the first quarter of 2027.",
+        // snapshot, so the launch facts are re-sourced to reachable trade press.
+        fact: "Copa's first Starlink-equipped aircraft, a Boeing 737 MAX 9 registered HP-9901CMP, made its inaugural flight on July 4, 2026.",
         asOf: "2026-07-06",
         source: {
           label: "Aviación al Día",
@@ -832,7 +903,17 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Copa became the first airline in Latin America to offer Starlink Wi-Fi, with the rollout expected to complete during the first quarter of 2027. Access is complimentary for ConnectMiles PreferMember Gold, Platinum and Presidential members, for Business Class passengers, and for customers with Starlink Residential or Starlink Roam subscriptions; all other passengers buy access through Starlink's onboard portal.",
+        // The November results moved the finish to mid-2027.
+        fact: "At the July 2026 launch, Copa planned to complete Starlink implementation across its entire fleet during the first quarter of 2027.",
+        asOf: "2026-07-06",
+        superseded: true,
+        source: {
+          label: "Aviación al Día",
+          url: "https://aviacionaldia.com/en/2026/07/copa-airlines-revolutionizes-inflight-connectivity-in-latin-america-first-starlink-high-speed-internet-equipped-aircraft-takes-off.html/amp",
+        },
+      },
+      {
+        fact: "Copa became the first airline in Latin America to offer Starlink Wi-Fi. Access is complimentary for ConnectMiles PreferMember Gold, Platinum and Presidential members, for Business Class passengers, and for customers with Starlink Residential or Starlink Roam subscriptions; all other passengers buy access through Starlink's onboard portal.",
         asOf: "2026-07-11",
         source: {
           label: "Future Travel Experience",
@@ -1037,7 +1118,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "complete",
     statusLabel: "Complete",
     summary:
-      "The first air carrier to adopt Starlink; all 40 active Embraer jets equipped by May 2023, free with no login.",
+      "The first air carrier to adopt Starlink: its then-active fleet of 40 Embraer jets was equipped by May 2023, and its ATR 42-600 turboprops by April 2026, on all their flights. Free with no login.",
     facts: [
       {
         // Was "first airline in the world to COMPLETE a Starlink rollout",
@@ -1052,7 +1133,18 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "JSX fully installed Starlink across its entire active fleet of 40 Embraer jets, with complimentary connectivity on all flights. It is Starlink's global launch customer, under an agreement to outfit up to 100 aircraft.",
+        // jsx.com answers 503 to automated clients; this page carries the
+        // announcement, CEO quote included. It names no fleet size, and no
+        // readable JSX page gives one newer than the 40 jets of 2023.
+        fact: "JSX rolled out Starlink across its fleet of ATR 42-600 turboprops, now available on all of their flights at no extra charge: customers connect by selecting the network name, without entering credit card details.",
+        asOf: "2026-04-27",
+        source: {
+          label: "50skyshades (JSX release)",
+          url: "https://50skyshades.com/news/airlines/jsx-becomes-first-to-offer-free-instant-access-starlink-wi-fi-across-its-atr-42-600-fleet",
+        },
+      },
+      {
+        fact: "By May 2023 JSX had fully installed Starlink across its entire active fleet, then 40 Embraer jets, with complimentary connectivity on all flights. It is Starlink's global launch customer, under an agreement to outfit up to 100 aircraft.",
         asOf: "2023-05-08",
         source: {
           label: "Private Jet Card Comparisons",
@@ -1623,6 +1715,9 @@ export interface AirlineOwnCount {
   asOf: string;
   sourceLabel: string;
   url: string;
+  /** The publisher that reported the airline's figure, when `url` is that
+   * publisher's page and not the airline's own. Named in every credit. */
+  reportedBy?: string;
 }
 
 /** The airline's own newest fleet-wide count, from the current dated fact that
@@ -1638,6 +1733,7 @@ export function airlineOwnCount(code: string): AirlineOwnCount | null {
     asOf: fact.asOf,
     sourceLabel: fact.source.label,
     url: fact.source.url,
+    ...(fact.source.secondHand ? { reportedBy: fact.source.label } : {}),
   };
 }
 
@@ -1652,6 +1748,33 @@ export function airlineOwnTypeTotal(code: string): { total: number; asOf: string
   if (!fact?.asOf || !fact.officialCounts) return null;
   const total = Object.values(fact.officialCounts).reduce((sum, n) => sum + n, 0);
   return { total, asOf: fact.asOf };
+}
+
+export interface AirlineOwnTypeSum extends AirlineOwnCount {
+  /** The counts the source states, one per wholly fitted type. `count` is
+   * their sum, which the source does not state. */
+  parts: ReadonlyArray<{ name: string; count: number }>;
+  /** Who states the parts, as a sentence credits them. */
+  by: string;
+}
+
+/** The airline's wholly fitted types added up, from its newest current dated
+ * fact that states any. A type the fact doesn't call complete adds nothing,
+ * and with no such type there is no sum. */
+export function airlineOwnTypeSum(code: string): AirlineOwnTypeSum | null {
+  const fact = (factsForCode(code)?.facts ?? [])
+    .filter((f) => !f.superseded && f.asOf && f.wholeTypes?.types.some((t) => t.count > 0))
+    .sort((a, b) => (b.asOf as string).localeCompare(a.asOf as string))[0];
+  if (!fact?.asOf || !fact.wholeTypes) return null;
+  const parts = fact.wholeTypes.types.filter((t) => t.count > 0);
+  return {
+    count: parts.reduce((sum, t) => sum + t.count, 0),
+    parts,
+    by: fact.wholeTypes.by,
+    asOf: fact.asOf,
+    sourceLabel: fact.source.label,
+    url: fact.source.url,
+  };
 }
 
 /** Entries with no tail-level tracking — the content-only part of the roster. */

@@ -16,14 +16,20 @@ export {
   normalizeWifiProvider,
   normalizeFleet,
   normalizeAirlineTag,
+  normalizeChartRejectReason,
   normalizeScopeTag,
   flightAirlineTag,
   normalizeCarrierPrefix,
   normalizeOpCarrier,
   normalizeProbeOutcome,
+  normalizeAirborneMatch,
   normalizeStarlinkStatus,
   classifyUserAgent,
   classifyRequest,
+  classifyVisitSource,
+  classifyLookupCaller,
+  normalizeLookupCaller,
+  normalizeLookupShedReason,
   normalizeExtVersion,
   requestClientTags,
   mcpClientTags,
@@ -35,4 +41,4 @@ export {
   normalizeLegEffect,
   normalizeEquipmentCodeTag,
 } from "./metrics";
-export type { Tags } from "./metrics";
+export type { LookupCaller, LookupShedReason, Tags } from "./metrics";

@@ -1,11 +1,15 @@
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
+import type { AirportRanking } from "../api/airport-ranking";
 import type { PopularFlight } from "../database/database";
 import type { AirportDepartures, RouteSchedule, RouteScheduleRow } from "../types";
 import { airportTimezone } from "../utils/airport-tz";
+import { AirportRankingPanel } from "./airport-ranking";
 import { PopularFlightsLinks } from "./atoms";
 import { AirportBars } from "./home/rollout";
 import type { Link } from "./layout";
 import { PageHeader, PageShell, Panel, Section, SectionTitle, Td, Th } from "./layout";
+import type { RouteNetwork } from "./routes-map/network";
+import { RoutesMap, showRouteMap } from "./routes-map/routes-map";
 import { fmt, utcDateTime, zonedDeparture } from "./ui/format";
 import { Meter } from "./ui/meter";
 
@@ -147,22 +151,29 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
 interface RoutesPageProps {
   schedule: RouteSchedule;
   airports?: AirportDepartures;
+  /** Per-day ranking of every airport; takes the place of the top-airport bars. */
+  ranking?: AirportRanking;
   site: SiteConfig;
   popularFlights?: PopularFlight[];
   pageLinks?: Link[];
   currentPath?: string;
   /** The data's own freshness stamp, never request time. */
   updatedAt?: string | null;
+  network?: RouteNetwork;
+  basemapHref?: string;
 }
 
 export default function RoutesPage({
   updatedAt,
   schedule,
   airports,
+  ranking,
   site,
   popularFlights = [],
   pageLinks,
   currentPath,
+  network,
+  basemapHref,
 }: RoutesPageProps) {
   const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
   const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
@@ -182,6 +193,17 @@ export default function RoutesPage({
         }
       />
 
+      {network && basemapHref && showRouteMap(network) && (
+        <RoutesMap
+          net={network}
+          basemapHref={basemapHref}
+          windowLabel={schedule.windowLabel}
+          updatedAt={updatedAt}
+          airportLinks={site.features.airportPages}
+          airlineLabel={shortName ? `${shortName} ` : ""}
+        />
+      )}
+
       {routes.length > 0 && (
         <section className="relative mx-auto mb-8 grid w-full max-w-6xl gap-8 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <div className="min-w-0">
@@ -197,7 +219,9 @@ export default function RoutesPage({
               </p>
             </Panel>
           </div>
-          {airports && airports.rows.length > 0 && (
+          {ranking && ranking.rows.length > 0 ? (
+            <AirportRankingPanel ranking={ranking} updatedAt={updatedAt} />
+          ) : airports && airports.rows.length > 0 ? (
             <div className="min-w-0">
               <SectionTitle>Busiest airports</SectionTitle>
               <p className="mt-1 text-sm text-secondary">By departure airport.</p>
@@ -205,7 +229,7 @@ export default function RoutesPage({
                 <AirportBars rows={airports.rows} columns={1} linked={site.features.airportPages} />
               </Panel>
             </div>
-          )}
+          ) : null}
         </section>
       )}
 

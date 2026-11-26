@@ -15,7 +15,13 @@ import {
 import type { Link } from "../../components/layout";
 import { TrackerLinks } from "../../components/tracker-links";
 import { fmt } from "../../components/ui/format";
-import { byPublishedCount, ownCountAsOf, publishedCount } from "../published-count";
+import {
+  byPublishedCount,
+  countingMethodSentences,
+  ownCountSourced,
+  publishedCount,
+  typeSumFigure,
+} from "../published-count";
 import { AIRLINES, SITES, airlineHomeUrl, publicAirlines } from "../registry";
 import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
@@ -120,7 +126,7 @@ function RouteComparePanel() {
           aria-label="From airport code"
           placeholder="From (SFO)"
           maxLength={3}
-          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
+          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
           required
         />
         <input
@@ -129,7 +135,7 @@ function RouteComparePanel() {
           aria-label="To airport code"
           placeholder="To (HNL)"
           maxLength={3}
-          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
+          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
           required
         />
         <button type="submit" className={buttonClass()}>
@@ -192,7 +198,7 @@ const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: 
           site={site}
           id="hub-check-flight"
           mode="check-any"
-          placeholder="UA1736, HA51, AS118, QR1…"
+          placeholder="UA1736, AS118, QR1…"
           prefillDate
           hideLabels
           withScript={false}
@@ -215,13 +221,8 @@ export const content: AirlineContent = {
 
   intro: () => (
     <>
-      {AIRLINE_FACTS.length} airlines, each with a dated source. We count{" "}
-      {list(
-        publicAirlines()
-          .filter((a) => !a.communitySource && a.rollout.rosterIsProgramScope)
-          .map((a) => a.shortName)
-      )}{" "}
-      plane by plane.
+      {AIRLINE_FACTS.length} airlines, each with a dated source.{" "}
+      {countingMethodSentences(publicAirlines())}
     </>
   ),
 
@@ -251,18 +252,22 @@ export const content: AirlineContent = {
             return cfg ? [{ ...r, published: publishedCount(cfg, r.starlink) }] : [];
           })
         );
-        // Only a count ranks: plane by plane, or the airline's own dated figure.
+        // Only a count ranks: plane by plane, the airline's own dated figure, or
+        // our sum of the whole-type counts its source gives.
         const figure = (r: (typeof rows)[number]) =>
           r.published.basis === "tracked"
             ? `${fmt(r.published.count)}${operatedBy(r.code)}`
             : r.published.basis === "airline"
-              ? `${fmt(r.published.count)}, its own figure ${ownCountAsOf(r.published)}`
-              : null;
+              ? `${fmt(r.published.count)}, its own figure ${ownCountSourced(r.published)}`
+              : r.published.basis === "type-sum"
+                ? typeSumFigure(r.published)
+                : null;
         const [top, ...rest] = rows.filter((r) => r.published.basis !== "type");
         if (!top) return <p>See the full list for each airline's count.</p>;
-        const names = (basis: "airline" | "type") =>
+        const names = (basis: "airline" | "type-sum" | "type") =>
           rows.filter((r) => r.published.basis === basis).map((r) => r.name);
         const ownFigure = names("airline");
+        const summed = names("type-sum");
         const unranked = names("type");
         return (
           <p>
@@ -283,6 +288,13 @@ export const content: AirlineContent = {
                 {list(ownFigure)} {ownFigure.length === 1 ? "is" : "are"} counted by aircraft type
                 here, so {ownFigure.length === 1 ? "that figure is" : "those figures are"} the
                 airline's own.{" "}
+              </>
+            )}
+            {summed.length > 0 && (
+              <>
+                {list(summed)} {summed.length === 1 ? "is" : "are"} counted by aircraft type here,
+                so {summed.length === 1 ? "that figure adds" : "those figures add"} up the per-type
+                counts a source gives.{" "}
               </>
             )}
             {unranked.length > 0 && (
@@ -366,10 +378,11 @@ export const content: AirlineContent = {
           q: "How is this data collected?",
           a: () => (
             <p>
-              Fleet rosters and flight schedules come from public aviation data. Starlink status is
-              confirmed per aircraft against each airline's own systems where they show it (United,
-              Alaska), and by aircraft type where the airline has finished whole types (Hawaiian,
-              Qatar). Other airlines get a status page with dated sources.
+              Fleet rosters and flight schedules come from public aviation data.{" "}
+              {countingMethodSentences(publicAirlines(), "tracked")} An aircraft checked on its own
+              is checked against its airline's own systems. Airlines that have finished whole types
+              are tracked by aircraft type (Hawaiian, Qatar). Other airlines get a status page with
+              dated sources.
             </p>
           ),
         },

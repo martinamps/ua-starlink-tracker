@@ -87,6 +87,35 @@ describe("FAA registry parsing", () => {
     // must NOT be flagged.
     expect(flags.wrongYes.map((f) => f.tail).sort()).toEqual(["N7943SK", "N868AS"]);
   });
+
+  test("a renewal notice is not flagged; expired and unknown codes are, with the code in the reason", () => {
+    const row = (statusCode: string) => ({
+      serial: "1",
+      mfrMdlCode: "1387815",
+      yearMfr: "2014",
+      registrant: "UNITED AIRLINES INC",
+      statusCode,
+      modeSHex: "A94B0A",
+      expirationDate: "20270331",
+    });
+    const codes = ["V", "14", "15", "24", "25", "26", "28", "27", "29", "QQ", ""];
+    const tails = codes.map((_, i) => `N${100 + i}UA`);
+    const { flags } = buildFaaRecords({
+      tails,
+      starlinkTails: new Set(tails),
+      master: new Map(codes.map((c, i) => [`${100 + i}UA`, row(c)])),
+      acftref: new Map(),
+      dereg: new Map(),
+    });
+
+    const reasonByCode = new Map(
+      flags.wrongYes.map((f) => [codes[tails.indexOf(f.tail)], f.reason])
+    );
+    expect([...reasonByCode.keys()].sort()).toEqual(["", "27", "29", "QQ"]);
+    expect(reasonByCode.get("27")).toBe("FAA status 27 (Registration Expired)");
+    expect(reasonByCode.get("QQ")).toBe("FAA status QQ");
+    expect(reasonByCode.get("")).toBe("FAA status blank");
+  });
 });
 
 describe("faa_registry storage and sync", () => {

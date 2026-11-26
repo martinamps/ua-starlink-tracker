@@ -151,10 +151,36 @@ describe("aircraft-type page links", () => {
         expect(status.get(href), `${page} → ${href}`).toBe(200);
         if (/^\/fleet\/[a-z0-9-]+$/.test(href)) typeLinks.set(href, (typeLinks.get(href) ?? 0) + 1);
       }
+      // A square on /fleet or a type page jumps to its tail's row on the same page.
+      for (const [, tail] of html.matchAll(/href="#t-([^"]+)"/g)) {
+        expect(html.includes(`id="t-${tail}"`), `${page} → #t-${tail}`).toBe(true);
+        anchors++;
+      }
       if (page.startsWith("/check-flight/")) {
         for (const [href, n] of typeLinks) expect(n, `${page} links ${href} ${n}×`).toBe(1);
       }
     }
     expect(anchors).toBeGreaterThan(0);
+  });
+});
+
+describe("/fleet tail registry", () => {
+  // The browser skips the registry's layout until it nears the screen. Until
+  // then the box holds the height its row count says, so the scrollbar and the
+  // #t-{tail} jumps into it don't move when it is drawn.
+  test("is left to the browser until near the screen, at a height from its row count", async () => {
+    const app = createApp(openSnapshot());
+    const html = await (
+      await app.dispatch(req("/fleet", HOST, { headers: { "x-forwarded-for": "127.0.0.1" } }))
+    ).text();
+    const box = html.match(/<div class="tail-registry [^>]*>/)?.[0];
+    expect(box).toBeDefined();
+    const rows = [...html.matchAll(/ id="t-[^"]+"/g)].length;
+    expect(rows).toBeGreaterThan(0);
+    expect(box).toContain(`style="--tail-rows:${rows}"`);
+    const css = readFileSync(join(import.meta.dir, "..", "src/styles/tailwind.css"), "utf8");
+    const rule = css.match(/^\.tail-registry \{[^}]*\}/m)?.[0] ?? "";
+    expect(rule).toContain("content-visibility: auto");
+    expect(rule).toMatch(/contain-intrinsic-block-size: auto calc\(var\(--tail-rows\)/);
   });
 });

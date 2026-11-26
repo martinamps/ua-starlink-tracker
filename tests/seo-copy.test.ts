@@ -248,6 +248,7 @@ describe("aircraft-type page titles", () => {
     "installing",
     "none",
     "official_none",
+    "not_in_programme",
     "unknown",
   ];
 
