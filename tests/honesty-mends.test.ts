@@ -37,6 +37,9 @@ describe("who runs the site", () => {
     (_key, site) => {
       const line = independenceLine(site);
       expect(line).toContain("Independent");
+      // One person runs the site: it is for a community, not run by one.
+      expect(line).toContain("community-oriented");
+      expect(line).not.toContain("community-run");
       expect(line).toContain("Not affiliated with");
       expect(line).toContain("SpaceX");
       const named = airlineNames.filter((n) => line.includes(n));

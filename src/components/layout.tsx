@@ -48,11 +48,12 @@ function brandName(site: SiteConfig): string {
 
 /** Who runs the site, on every page: an airline's own tracker can carry
  * nearly the same name, and a visitor should never take one for the other.
- * The hub names no airline; a tenant names only its own. */
+ * The hub names no airline; a tenant names only its own. "Community-oriented",
+ * never "community-run": one person runs the site (README). */
 export function independenceLine(site: SiteConfig): string {
   const airline =
     site.scope === "ALL" ? "any airline" : (AIRLINES[site.scope]?.name ?? "the airline");
-  return `Independent, community-run and open source. Not affiliated with ${airline} or SpaceX.`;
+  return `Independent, community-oriented and open source. Not affiliated with ${airline} or SpaceX.`;
 }
 
 function SiteBar({ site, currentPath }: { site: SiteConfig; currentPath?: string }) {
