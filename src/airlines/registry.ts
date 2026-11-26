@@ -1747,7 +1747,8 @@ export const SITES: Record<string, SiteConfig> = {
       airlinesPages: true,
       comparePages: true,
       methodologyPage: false,
-      timelinePage: false,
+      // Every airline's dated facts (components/hub-timeline-page.tsx).
+      timelinePage: true,
       intentPages: false,
       newlyEquippedPage: true,
       embedPage: true,

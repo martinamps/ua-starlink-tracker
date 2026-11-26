@@ -202,6 +202,11 @@ import type { AirlineChartCount } from "../database/roster";
 import { reportedClause } from "../utils/reported-reason";
 
 import { homeHeadline } from "../components/home/headline";
+import HubTimelinePage, {
+  type HubTimelineAirline,
+  hubTimelineAirlines,
+  hubTimelineLatest,
+} from "../components/hub-timeline-page";
 import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
 import McpPage, { mcpPageCopy } from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
@@ -1851,6 +1856,10 @@ interface SitePage {
   /** A fixed last-changed date for copy that doesn't move with the fleet data;
    * pages without one take the site-wide data stamp. */
   lastmod?: string;
+  /** The same, where the date depends on the host; undefined falls back. */
+  lastmodFor?: (ctx: RequestContext) => string | undefined;
+  /** llms.txt line for the hub, where the page's subject differs. */
+  hubLlmsLine?: (host: string) => string;
 }
 
 /**
@@ -1997,8 +2006,15 @@ const SITE_PAGES: SitePage[] = [
     changefreq: "weekly",
     priority: "0.7",
     navLabel: "Timeline",
+    // The hub's page is every airline's dated facts: it changed when the newest
+    // of them is dated, not whenever fleet data refreshed.
+    hasData: (ctx) => !isHubSite(ctx) || hubTimeline(ctx).length > 0,
+    lastmodFor: (ctx) =>
+      isHubSite(ctx) ? stampedIso(hubTimelineLatest(hubTimeline(ctx)) ?? null) : undefined,
     llmsLine: (h) =>
       `- [Rollout timeline](https://${h}/timeline) — every dated milestone plus the airline's stated targets`,
+    hubLlmsLine: (h) =>
+      `- [Starlink timeline by airline](https://${h}/timeline) — every airline's dated Starlink facts with sources, newest first, replaced ones marked`,
   },
   {
     path: "/how-to-check",
@@ -2037,6 +2053,18 @@ const SITE_PAGES: SitePage[] = [
   },
 ];
 
+const isHubSite = (ctx: RequestContext) => ctx.site.scope === "ALL";
+
+/** The hub timeline's airlines: exactly the /airlines pages the hub serves, so
+ * each section's link lands on a page that exists. */
+function hubTimeline(ctx: RequestContext): HubTimelineAirline[] {
+  const { trackedAirlines, factsRoster } = hubUrlFamilies(ctx.site, ctx.getReader);
+  const tracked = trackedAirlines
+    .map((cfg) => factsForCode(cfg.code))
+    .filter((e): e is AirlineFactsEntry => e !== null);
+  return hubTimelineAirlines([...tracked, ...factsRoster]);
+}
+
 function sitePages(ctx: RequestContext): SitePage[] {
   const { site } = ctx;
   return SITE_PAGES.filter(
@@ -2055,7 +2083,9 @@ function pageNavLinks(ctx: RequestContext, currentPath: string): PageLink[] {
 
 function llmsPagesSection(ctx: RequestContext): string {
   const lines = sitePages(ctx)
-    .map((p) => p.llmsLine?.(ctx.site.canonicalHost))
+    .map((p) =>
+      (isHubSite(ctx) && p.hubLlmsLine ? p.hubLlmsLine : p.llmsLine)?.(ctx.site.canonicalHost)
+    )
     .filter((l): l is string => Boolean(l));
   return `## Pages\n\n${lines.join("\n")}`;
 }
@@ -2247,7 +2277,7 @@ const sitemap: Handler = (ctx) => {
         path: p.path,
         changefreq: p.changefreq,
         priority: p.priority,
-        lastmod: p.lastmod ?? lastUpdated,
+        lastmod: p.lastmodFor?.(ctx) ?? p.lastmod ?? lastUpdated,
       })),
     ...airlineEntries,
     ...factsEntries,
@@ -3235,7 +3265,7 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   // date for the same URL.
   const sitePage = sitePages(ctx).find((p) => p.path === canonicalPath);
   const sitePageIso = sitePage
-    ? (sitePage.lastmod ?? stampedIso(ctx.reader.getLastUpdatedRaw()))
+    ? (sitePage.lastmodFor?.(ctx) ?? sitePage.lastmod ?? stampedIso(ctx.reader.getLastUpdatedRaw()))
     : undefined;
   htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
     path: canonicalPath,
@@ -4843,8 +4873,28 @@ const airportPage: Handler = (ctx) => {
   });
 };
 
+const hubTimelinePage: Handler = (ctx) => {
+  const airlines = hubTimeline(ctx);
+  if (airlines.length === 0) return notFound(ctx.site);
+  const facts = airlines.reduce((n, a) => n + a.facts.length, 0);
+  return renderSubPage(
+    ctx,
+    HubTimelinePage,
+    "/timeline",
+    {
+      siteTitle: "Starlink Rollout Timeline by Airline, Dated and Sourced",
+      siteDescription: `${facts} dated Starlink facts from ${airlines.length} airlines, newest first, each linked to its source. Facts a later one replaced stay listed, marked.`,
+      keywords: "airline starlink timeline, starlink rollout by airline",
+      ogTitle: "Starlink Rollout Timeline by Airline",
+      ogDescription: `${facts} dated, sourced Starlink facts from ${airlines.length} airlines, newest first.`,
+      ogType: "article",
+    },
+    { airlines }
+  );
+};
+
 const timelinePage: Handler = (ctx) => {
-  // timelinePage is airline-site-only; siteAirline throws (fail closed) on the hub.
+  if (isHubSite(ctx)) return hubTimelinePage(ctx);
   const cfg = siteAirline(ctx.site);
   // Gate on content, not just the flag — mirrors /methodology's hasMethodology.
   const timeline = getTimeline(cfg.code);
