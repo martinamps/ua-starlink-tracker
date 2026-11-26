@@ -166,7 +166,9 @@ if (JOBS_ENABLED) {
   // IndexNow: every source that lists a tail (sheet, discovery, verifiers,
   // fleet sync) writes the same table, so one look at it catches them all.
   // The timer only reads the database; a submission happens when a tail has
-  // newly joined a list, and for the pages that changed with it.
+  // newly joined a list, and for the pages that changed with it. The same
+  // pass compares the deployed rollout facts with the last recorded ones and
+  // submits the hub /timeline and airline pages of any that changed.
   if (indexNowKey) {
     const indexNow = activateIndexNow({ db, key: indexNowKey, dispatch: app.dispatch });
     track(
@@ -174,7 +176,11 @@ if (JOBS_ENABLED) {
         name: "indexnow_new_tails",
         intervalMs: 5 * 60 * 1000,
         initialDelayMs: 60 * 1000,
-        run: () => indexNow.announceNewTails(),
+        // Tails first: they are what the cap is kept for.
+        run: async () => {
+          await indexNow.announceNewTails();
+          await indexNow.announceFactChanges();
+        },
       })
     );
   }
