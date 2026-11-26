@@ -405,13 +405,15 @@ export function noteUnreadAircraft(
  * Did the newest lookup to return one of the flight's departures on that
  * local date name an aircraft there we could not read. False on a database
  * this version never booted on (a read-only copy), which lacks the table or
- * its cleared_at column.
+ * its cleared_at column. `orLater` asks about that date and every later one,
+ * for an answer about the number with no date.
  */
 export function hasUnreadAircraft(
   db: Database,
   airlines: readonly string[],
   variants: readonly string[],
-  depDate: string
+  depDate: string,
+  orLater = false
 ): boolean {
   if (variants.length === 0) return false;
   const a = airlineIn(airlines);
@@ -419,7 +421,8 @@ export function hasUnreadAircraft(
     return !!db
       .query(
         `SELECT 1 FROM unread_aircraft_log
-         WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND dep_date = ?
+         WHERE ${a.sql} AND flight_number IN (${placeholders(variants)})
+           AND dep_date ${orLater ? ">=" : "="} ?
            AND seen_at > 0 AND seen_at >= COALESCE(cleared_at, 0) LIMIT 1`
       )
       .get(...a.params, ...variants, depDate);

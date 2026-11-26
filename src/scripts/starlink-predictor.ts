@@ -1472,6 +1472,25 @@ export function carrierPrediction(
   return noModel;
 }
 
+/**
+ * For an answer made from the number alone (the predict surfaces, which ask
+ * no lookup): did the newest lookup of the flight leave an unread aircraft on
+ * `date`, or with no date on any departure still ahead. Local dates run up to
+ * a day behind UTC, so "still ahead" starts at yesterday's UTC date.
+ */
+export function storedUnreadAircraft(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  date: string | null,
+  nowMs = Date.now()
+): boolean {
+  const variants = buildAirlineFlightNumberVariants(cfg, flightNumber);
+  if (date) return reader.hasUnreadAircraft(variants, date);
+  const from = new Date(nowMs - 86_400_000).toISOString().slice(0, 10);
+  return reader.hasUnreadAircraft(variants, from, true);
+}
+
 function unreadAircraftAnswer(flightNumber: string, sf: SubfleetDef): CarrierPrediction {
   const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
   const sentence = joinSentences(

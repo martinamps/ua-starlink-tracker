@@ -261,6 +261,7 @@ import {
   planItinerary,
   predictFlight,
   routeBaseline,
+  storedUnreadAircraft,
   subfleetBreakdown,
 } from "../scripts/starlink-predictor";
 import type { Prediction } from "../scripts/starlink-predictor";
@@ -1519,7 +1520,11 @@ const apiPredictFlight: Handler = ({ url, reader, getReader, tenant }) => {
     // No flight-history model for this carrier — answer from the registry
     // (subfleet penetration / type story), mirroring check-flight's no_model.
     const normalized = ensureAirlinePrefix(cfg, flightNumber);
-    const answer = carrierPrediction(cfg, carrier.reader, normalized);
+    // This ask has no date and makes no lookup: an aircraft the last lookup
+    // could not read on a departure still ahead withdraws a fixed band's number.
+    const answer = carrierPrediction(cfg, carrier.reader, normalized, {
+      unreadAircraft: storedUnreadAircraft(cfg, carrier.reader, normalized, null),
+    });
     const t = carrierPredictionTelemetry(answer);
     recordFlightLookup("api_predict", t.outcome, t.confidence, cfg.code);
     return json({

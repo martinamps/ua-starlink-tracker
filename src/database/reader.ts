@@ -454,7 +454,7 @@ export interface ScopedReader {
   ): void;
   /** The last lookup to return a departure of the flight on that local date
    * named an aircraft there we could not read. */
-  hasUnreadAircraft(variants: readonly string[], depDate: string): boolean;
+  hasUnreadAircraft(variants: readonly string[], depDate: string, orLater?: boolean): boolean;
 
   getQatarScheduleStats(): {
     total: number;
@@ -709,7 +709,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       withdrawUnreturnedSightings(db, withOperatingPartners(airlines), fn, returned, now),
     noteUnreadAircraft: (fn, returned, now) =>
       noteUnreadAircraft(db, withOperatingPartners(airlines), fn, returned, now),
-    hasUnreadAircraft: (v, d) => hasUnreadAircraft(db, withOperatingPartners(airlines), v, d),
+    hasUnreadAircraft: (v, d, orLater) =>
+      hasUnreadAircraft(db, withOperatingPartners(airlines), v, d, orLater),
 
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),

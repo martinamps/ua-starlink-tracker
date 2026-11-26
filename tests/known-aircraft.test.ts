@@ -1380,6 +1380,83 @@ describe("an aircraft the lookup named and we could not read is not the band's a
       db.close();
     });
 
+    // Finding 2b of the second look: the two predict surfaces answer from the
+    // number alone and still said ~100% for an aircraft the lookup could not read.
+    describe("the predict surfaces read the mark too", () => {
+      const predictPath = "/api/predict-flight?flight_number=AS812";
+      const predictTool = (app: ReturnType<typeof createApp>, host: string, date?: string) =>
+        mcpTool(app, host, "predict_flight_starlink", {
+          flight_number: "AS812",
+          ...(date ? { date } : {}),
+        });
+
+      test.each([HUB_HOST, AS_HOST])(
+        "%s: no number for a flight with an unread aircraft, in the shape it already had",
+        async (host) => {
+          const db = await fleetDb();
+          const app = createApp(db);
+          noLookup();
+          const flatYes = await jsonOf(app, predictPath, host);
+          expect(flatYes.probability).toBe(1);
+          const flatText = (await predictTool(app, host, DATE)).text;
+          expect(flatText).toMatch(/100%/);
+
+          await afterLookup(app, [tailUnread]);
+          const rest = await jsonOf(app, predictPath, host);
+          expect(rest.probability).toBeUndefined();
+          expect(rest.message).toContain("could not read");
+          expect(rest.confidence).toBe(flatYes.confidence);
+          for (const key of Object.keys(rest)) expect(flatYes).toHaveProperty(key);
+          for (const date of [DATE, undefined]) {
+            const mcp = await predictTool(app, host, date);
+            expect(mcp.text).toContain("could not read");
+            expect(mcp.text).not.toMatch(/100%/);
+            expect(mcp.isError).toBeFalsy();
+          }
+          // Another number, and the tool asked about another date, keep theirs.
+          expect(
+            (await jsonOf(app, "/api/predict-flight?flight_number=AS814", host)).probability
+          ).toBe(1);
+          const otherDay = utcDay((now + 3 * DAY) * 1000);
+          expect((await predictTool(app, host, otherDay)).text).toBe(
+            flatText.replaceAll(DATE, otherDay)
+          );
+
+          // A newer lookup that names no aircraft there gives the number back.
+          aSecondPasses(db);
+          await afterLookup(app, [leg(null, null, ["HNL", "SFO"])]);
+          expect(await jsonOf(app, predictPath, host)).toEqual(flatYes);
+          expect((await predictTool(app, host, DATE)).text).toBe(flatText);
+          db.close();
+        }
+      );
+
+      test("a mark on a departure already past leaves an undated ask its number", async () => {
+        const db = await fleetDb();
+        const app = createApp(db);
+        noLookup();
+        const flatYes = await jsonOf(app, predictPath, HUB_HOST);
+        db.run(
+          "INSERT INTO unread_aircraft_log (airline, flight_number, dep_date, departure_airport, seen_at) VALUES ('AS', 'AS812', ?, 'HNL', ?)",
+          [utcDay((now - 3 * DAY) * 1000), now - 3 * DAY]
+        );
+        expect(await jsonOf(app, predictPath, HUB_HOST)).toEqual(flatYes);
+        expect((await predictTool(app, HUB_HOST)).text).toMatch(/100%/);
+        db.close();
+      });
+
+      test("a database with no such table answers as before, with no error", async () => {
+        const db = await fleetDb();
+        const app = createApp(db);
+        noLookup();
+        const flatYes = await jsonOf(app, predictPath, HUB_HOST);
+        db.run("DROP TABLE unread_aircraft_log");
+        expect(await jsonOf(app, predictPath, HUB_HOST)).toEqual(flatYes);
+        expect((await predictTool(app, HUB_HOST, DATE)).text).toMatch(/100%/);
+        db.close();
+      });
+    });
+
     // Finding 2c of the second look: an older lookup, replayed from the cache
     // after a newer one cleared the mark, set it again.
     describe("the mark goes by when each lookup was fetched", () => {

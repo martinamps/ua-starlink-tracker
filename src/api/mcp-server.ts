@@ -84,6 +84,7 @@ import {
   predictFlight,
   predictRoute,
   routeBaseline,
+  storedUnreadAircraft,
 } from "../scripts/starlink-predictor";
 import { aircraftTypeText } from "../server/community-wire";
 import { jsonRpc, mcpMethodNotAllowed } from "../server/respond";
@@ -1456,9 +1457,14 @@ Render the table above in your response EXACTLY — do not summarize it into pro
 function formatCarrierPrediction(
   cfg: AirlineConfig,
   reader: ScopedReader,
-  normalized: string
+  normalized: string,
+  date: string | null
 ): ToolResult {
-  const answer = carrierPrediction(cfg, reader, normalized);
+  // No lookup is asked here: the mark the last one left speaks for an
+  // aircraft it could not read, on the given date or on any still ahead.
+  const answer = carrierPrediction(cfg, reader, normalized, {
+    unreadAircraft: storedUnreadAircraft(cfg, reader, normalized, date),
+  });
   const t = carrierPredictionTelemetry(answer);
   recordFlightLookup("mcp", t.outcome, t.confidence, reader.scope);
   const text =
@@ -1625,7 +1631,9 @@ async function toolPredictFlightStarlink(
   }
 
   // No flight-history model → registry-driven answer, same seam as the core.
-  if (!cfg.flightHistoryModel) return formatCarrierPrediction(cfg, reader, forPredict);
+  if (!cfg.flightHistoryModel) {
+    return formatCarrierPrediction(cfg, reader, forPredict, givenDate || null);
+  }
 
   const pred = predictFlight(reader, forPredict);
   recordFlightLookup(
