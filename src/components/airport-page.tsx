@@ -8,6 +8,7 @@ import {
   airportDek,
   perDayLabel,
 } from "../api/airport-board";
+import { airportCity, airportPlaceName } from "../utils/airport-names";
 import type { Link } from "./layout";
 import { LINK, PageHeader, PageShell, Panel, SECTION, Section, StatValue, Td, Th } from "./layout";
 import { VERIFIED_LEGEND, VERIFIED_MARK } from "./route-flights-copy";
@@ -95,11 +96,14 @@ function NextDepartures({ board }: { board: AirportBoard }) {
   const { airport, departures } = board;
   const shown = departures.slice(0, AIRPORT_NEXT_DEPARTURES);
   const more = departures.length - shown.length;
+  const clock = board.localTimes
+    ? `Times local to ${airportCity(airport) ?? airport}.`
+    : `Times are in UTC: we hold no time zone for ${airport}.`;
   return (
     <Section
       id="departures"
       title="Next Starlink departures"
-      dek={`Times local to ${airport}.${more > 0 ? ` The first ${fmt(shown.length)} of ${fmt(departures.length)}; every one is under its destination below.` : ""}`}
+      dek={`${clock}${more > 0 ? ` The first ${fmt(shown.length)} of ${fmt(departures.length)}; every one is under its destination below.` : ""}`}
     >
       <table className="w-full text-sm">
         <thead>
@@ -152,6 +156,7 @@ function DestinationRow({
   const n = row.departures.length;
   const label = `${airport} to ${row.destination}`;
   const facts = [
+    airportPlaceName(row.destination),
     n > 0 ? `next ${row.departures[0].day}, ${row.departures[0].time}` : null,
     row.recent > 0 ? `${fmt(row.recent)} flown in the last ${days} days` : null,
   ].filter(Boolean);
@@ -215,12 +220,12 @@ export default function AirportPage({
   pageLinks,
   currentPath,
 }: AirportPageProps) {
-  const { airport, departures, destinations, history } = board;
+  const { airport, place, departures, destinations, history } = board;
   const max = destinations[0]?.departures.length ?? 0;
   const anyVerified = departures.some((d) => d.starlink === "verified");
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
-      <PageHeader title={`Which flights from ${airport} have Starlink?`} dek={airportDek(board)} />
+      <PageHeader title={`Which flights from ${place} have Starlink?`} dek={airportDek(board)} />
 
       <Stats board={board} />
 

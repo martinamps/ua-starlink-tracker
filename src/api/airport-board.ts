@@ -11,11 +11,13 @@
  */
 
 import { aircraftName } from "../airlines/aircraft-families";
+import { TITLE_MAX } from "../airlines/aircraft-pages";
 import type { AirlineConfig } from "../airlines/registry";
 import { fmt, zonedDeparture } from "../components/ui/format";
 import { countOnLocalDay, nextLocalDay } from "../database/airports";
 import type { ScopedReader } from "../database/reader";
 import { DEPARTURE_WINDOW_HOURS, unixNow } from "../database/sql/windows";
+import { airportWithCode } from "../utils/airport-names";
 import { airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { AIRPORT_RANK_MIN_DEPARTURES } from "./airport-ranking";
@@ -57,6 +59,12 @@ export interface AirportBoardDestination {
 
 export interface AirportBoard {
   airport: string;
+  /** The city and airport beside the code, "Chicago O'Hare (ORD)"; the code
+   * alone for an airport we hold no name for. */
+  place: string;
+  /** False for an airport with no mapped timezone: its times print in UTC,
+   * and the page has to say so. */
+  localTimes: boolean;
   /** Short airline name ("United"). */
   airline: string;
   windowHours: number;
@@ -134,6 +142,8 @@ export function buildAirportBoard(
 
   return {
     airport,
+    place: airportWithCode(airport),
+    localTimes: Boolean(zone),
     airline: cfg.shortName,
     windowHours: DEPARTURE_WINDOW_HOURS,
     departures,
@@ -186,23 +196,54 @@ export const perDayLabel = (n: number) => fmt(n, n >= 10 ? 0 : 1);
 
 /** The page's lead: the window's count, or the plainest true thing without one. */
 export function airportDek(board: AirportBoard): string {
-  const { airport, airline, windowHours, history } = board;
+  const { place, airline, windowHours, history } = board;
   const n = board.departures.length;
   const window = `the next ${windowHours} hours`;
   if (n > 0) {
     const m = board.destinations.filter((d) => d.departures.length > 0).length;
-    return `${fmt(n)} ${airline} ${plural(n, "departure")} from ${airport} in ${window} ${n === 1 ? "is on a Starlink plane" : "are on Starlink planes"}, to ${fmt(m)} ${plural(m, "destination")}.`;
+    return `${fmt(n)} ${airline} ${plural(n, "departure")} from ${place} in ${window} ${n === 1 ? "is on a Starlink plane" : "are on Starlink planes"}, to ${fmt(m)} ${plural(m, "destination")}.`;
   }
-  const none = `No Starlink plane is assigned to ${article(airline)} ${airline} departure from ${airport} in ${window}`;
+  const none = `No Starlink plane is assigned to ${article(airline)} ${airline} departure from ${place} in ${window}`;
   if (history.starlink > 0) {
     return `${none}. Starlink planes flew ${fmt(history.starlink)} from here in the last ${history.days} days.`;
   }
   return `${none}, and none flew from here in the last ${history.days} days.`;
 }
 
-/** The search snippet: the lead, and the next flight when there is one. */
-export function airportMetaDescription(board: AirportBoard): string {
+/**
+ * The page's question as its <title>. A long place name ("Houston Bush
+ * Intercontinental (IAH)") takes a shorter wording rather than a cut-off one.
+ */
+export function airportTitle(board: AirportBoard): string {
+  const { airline, place } = board;
+  return (
+    [
+      airportQuestion(board),
+      `${airline} Flights With Starlink From ${place}`,
+      `Starlink Flights From ${place}`,
+    ].find((t) => t.length <= TITLE_MAX) ?? `Starlink Flights From ${board.airport}`
+  );
+}
+
+/** The question the H1 asks, with the carrier, as on the route pages. */
+export function airportQuestion(board: AirportBoard): string {
+  return `Which ${board.airline} Flights From ${board.place} Have Starlink?`;
+}
+
+/**
+ * The search snippet: the lead, and the next flight when there is one and it
+ * fits whole under `max`. The destination gives up its city before the
+ * sentence is dropped: a snippet that ends mid-flight says less than the lead.
+ */
+export function airportMetaDescription(board: AirportBoard, max: number): string {
+  const lead = airportDek(board);
   const next = board.departures[0];
-  if (!next) return airportDek(board);
-  return `${airportDek(board)} The next is ${next.flight_number} to ${next.destination} on ${next.day} at ${next.time}.`;
+  if (!next) return lead;
+  const sentence = (to: string) =>
+    `${lead} The next is ${next.flight_number} to ${to} on ${next.day} at ${next.time}.`;
+  return (
+    [sentence(airportWithCode(next.destination)), sentence(next.destination)].find(
+      (t) => t.length <= max
+    ) ?? lead
+  );
 }
