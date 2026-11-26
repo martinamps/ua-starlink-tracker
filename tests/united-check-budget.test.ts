@@ -227,6 +227,137 @@ describe("the ledger", () => {
     expect(unitedBudgetState(db, T0_MS).used).toBe(5);
   });
 
+  describe("checks an older version made after a revert", () => {
+    const logCheck = (handle: Database, at: number, i: number) =>
+      handle
+        .query(
+          `INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, airline)
+           VALUES (?, 'united', ?, 1, 'Starlink', 1, 'UA')`
+        )
+        .run(`N${i}`, at);
+
+    /** One process's life on the file: boot, then every claim it can get. */
+    function withBoot<T>(path: string, run: (handle: Database) => T): T {
+      const handle = new Database(path);
+      migrate(handle);
+      try {
+        return run(handle);
+      } finally {
+        handle.close();
+      }
+    }
+
+    /**
+     * This version runs a day at the ceiling. It is reverted for `revertHours`,
+     * and the older version, which has no ledger, checks `perHour` times an
+     * hour and writes only the log. Then this version boots again and takes
+     * every slot it is given for a day. Returns when every check really started.
+     */
+    function revertAndReturn(revertHours: number, perHour: number, logLagSec = 0) {
+      const dir = mkdtempSync(join(tmpdir(), "united-revert-"));
+      const path = join(dir, "db.sqlite");
+      const made: number[] = [];
+      let n = 0;
+      const takeAll = (handle: Database, from: number, to: number) => {
+        for (let t = from; t < to; t += 60) {
+          if (claimUnitedCheck(handle, "settle", t * 1000)) {
+            made.push(t);
+            logCheck(handle, t + logLagSec, n++);
+          }
+        }
+      };
+      try {
+        withBoot(path, (handle) => takeAll(handle, T0, T0 + DAY));
+        const revertAt = T0 + DAY;
+        const returnAt = revertAt + revertHours * HOUR;
+        withBoot(path, (handle) => {
+          for (let t = revertAt; t < returnAt; t += Math.floor(HOUR / perHour)) {
+            made.push(t);
+            logCheck(handle, t + logLagSec, n++);
+          }
+        });
+        const seenOnReturn = withBoot(path, (handle) => {
+          const used = unitedBudgetState(handle, returnAt * 1000).used;
+          takeAll(handle, returnAt, returnAt + DAY);
+          return used;
+        });
+        const inWindowOnReturn = made.filter((t) => t > returnAt - DAY && t < returnAt).length;
+        return { made, seenOnReturn, inWindowOnReturn };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    test.each([
+      [6, 20],
+      [1, 30],
+      [23, 15],
+      [30, 15],
+    ])(
+      "a %i-hour revert at %i checks an hour: no rolling 24 hours passes the ceiling",
+      (hours, perHour) => {
+        const { made, seenOnReturn, inWindowOnReturn } = revertAndReturn(hours, perHour);
+        // Every check made in the window is counted on boot, whoever made it.
+        expect(seenOnReturn).toBe(inWindowOnReturn);
+        // The older version has no ceiling, so its own hours can pass it. From
+        // the return on, this version adds nothing until the count is under it.
+        const sorted = [...made].sort((a, b) => a - b);
+        const returnAt = T0 + DAY + hours * HOUR;
+        const olderAlone = busiestDay(sorted.filter((t) => t < returnAt));
+        expect(busiestDay(sorted)).toBeLessThanOrEqual(
+          Math.max(UNITED_DAILY_CHECK_BUDGET, olderAlone)
+        );
+        const afterReturn = sorted.filter((t) => t >= returnAt);
+        for (const t of afterReturn) {
+          const window = sorted.filter((s) => s > t - DAY && s <= t).length;
+          expect(window).toBeLessThanOrEqual(UNITED_DAILY_CHECK_BUDGET);
+        }
+        // And it is not shut for good: a day after the return it runs at the line.
+        expect(afterReturn.length).toBeGreaterThan(0);
+      }
+    );
+
+    test("the log can only add to the count: a ledger the log trails is counted whole", () => {
+      const dir = mkdtempSync(join(tmpdir(), "united-revert-"));
+      const path = join(dir, "db.sqlite");
+      try {
+        // 200 claims, of which only every other check reached the log.
+        withBoot(path, (handle) => {
+          for (let i = 0; i < 200; i++) {
+            const at = T0 + i * 300;
+            expect(claimUnitedCheck(handle, "settle", at * 1000)).toBe(true);
+            if (i % 2 === 0) logCheck(handle, at + 40, i);
+          }
+        });
+        const now = (T0 + 200 * 300) * 1000;
+        expect(withBoot(path, (handle) => unitedBudgetState(handle, now).used)).toBe(200);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("this version's own checks, logged a little after their claim, are not counted twice", () => {
+      // A claim is made before the page loads and the log row after it, so the
+      // two can fall either side of an hour's edge: at most one over per hour.
+      const { seenOnReturn, inWindowOnReturn } = revertAndReturn(0, 1, 45);
+      expect(seenOnReturn).toBeGreaterThanOrEqual(inWindowOnReturn);
+      expect(seenOnReturn - inWindowOnReturn).toBeLessThanOrEqual(24);
+    });
+
+    test("it is read once, on boot: a claim after it still lands in the ledger alone", () => {
+      const db = makeFreshDb();
+      setMeta(db, "united_check_budget", "[]", "UA");
+      logCheck(db, T0 - HOUR, 1);
+      expect(unitedBudgetState(db, T0_MS).used).toBe(1);
+      expect(claimUnitedCheck(db, "settle", T0_MS)).toBe(true);
+      logCheck(db, T0 + 30, 2);
+      expect(unitedBudgetState(db, T0_MS + 60_000).used).toBe(2);
+      expect(JSON.parse(getMeta(db, "united_check_budget", "UA") as string)).toEqual([T0_MS]);
+      // The log's surplus frees a day after the check, like any other start.
+      expect(unitedBudgetState(db, T0_MS + 23 * HOUR * 1000 + 1000).used).toBe(1);
+    });
+  });
+
   test.each(["not json", '{"starts":[1]}', '["a"]', "[null]"])(
     "an unreadable ledger (%s) falls back to the log, never to empty-and-open",
     (raw) => {
@@ -324,7 +455,9 @@ describe("the jobs under the ceiling", () => {
     setSystemTime(new Date(T0_MS));
     fleet = seedFleet(db, T0, opts);
     // Start from an empty ledger: the seeded history is older than this test's
-    // subject, and the log fallback has its own tests above.
+    // subject, and the log fallback has its own tests above. A seeded read
+    // inside the last day is still counted, as a check the ledger never saw,
+    // so a test that seeds one measures from `state().used` before its run.
     setMeta(db, "united_check_budget", "[]", "UA");
   }
 
@@ -470,6 +603,7 @@ describe("the jobs under the ceiling", () => {
       dueNow(tail);
       lastReadAt(tail, T0 - 20 * HOUR);
       const before = fleetRow(tail);
+      const usedBefore = state().used;
       let lookups = 0;
       const deps = {
         ...fleet.discovery,
@@ -483,7 +617,7 @@ describe("the jobs under the ceiling", () => {
       expect(stats).toMatchObject({ checked: 0, deferred: 1, held: null });
       expect(lookups).toBe(0);
       expect(fleet.checks).toHaveLength(0);
-      expect(state().used).toBe(0);
+      expect(state().used).toBe(usedBefore);
       const after = fleetRow(tail);
       // The interval a clean check would have set (7 days ±10%), from now.
       expect(after.next_check_after).toBeGreaterThanOrEqual(T0 + 6.3 * DAY - 1);
@@ -500,7 +634,8 @@ describe("the jobs under the ceiling", () => {
       const [tail] = fleet.equipped;
       dueNow(tail);
       lastReadAt(tail, T0 - 20 * HOUR);
-      fill(db, UNITED_DAILY_CHECK_BUDGET, T0_MS);
+      fill(db, UNITED_DAILY_CHECK_BUDGET - state().used, T0_MS);
+      expect(state().open).toEqual({ settle: false, reconfirm: false });
       const stats = await runDiscoveryBatch(db, 1, fleet.discovery);
       expect(stats).toMatchObject({ checked: 0, deferred: 1, held: null });
     });
@@ -584,10 +719,11 @@ describe("the jobs under the ceiling", () => {
       const [tail] = fleet.equipped;
       dueNow(tail);
       arrange(tail);
+      const usedBefore = state().used;
       const stats = await runDiscoveryBatch(db, 1, fleet.discovery);
       expect(stats).toMatchObject({ checked: 1, deferred: 0, held: null });
       expect(fleet.checks.map((c) => c.tail)).toEqual([tail]);
-      expect(state().used).toBe(1);
+      expect(state().used).toBe(usedBefore + 1);
     });
   });
 
@@ -816,8 +952,13 @@ describe("the jobs under the ceiling", () => {
       try {
         db = openFile(path);
         setSystemTime(new Date(T0_MS));
-        fleet = seedFleet(db, T0, { equipped: 1300, unequipped: 630 });
+        // The budget is read once before the fleet is seeded: the seeded reads
+        // of the last day (about 390) are this fixture's history, not checks
+        // an older version made, and read after seeding they would be counted
+        // as those and start the week over the ceiling.
         setMeta(db, "united_check_budget", "[]", "UA");
+        expect(unitedBudgetState(db).used).toBe(0);
+        fleet = seedFleet(db, T0, { equipped: 1300, unequipped: 630 });
         const burst = fleet.unequipped.slice(0, 20);
         for (const tail of burst) {
           db.query("UPDATE united_fleet SET next_check_after = ? WHERE tail_number = ?").run(

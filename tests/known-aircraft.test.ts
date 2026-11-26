@@ -22,6 +22,7 @@ import {
   setAssignmentFetcher,
   unreadAircraft,
 } from "../src/api/flight-verdict";
+import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import { type CheckFlightBody, renderFlightAnswer } from "../src/client/flight-answer";
 import { usualAnswer } from "../src/components/check-flight/usual";
 import { monthDay, wholeDates } from "../src/components/ui/format";
@@ -255,10 +256,10 @@ describe("a fixed band yields to a known aircraft of another type", () => {
     db.close();
   });
 
-  test("a type string the normalizer can't place decides nothing", async () => {
+  test("on a mainline number, a type string the normalizer can't place decides nothing", async () => {
     const db = await fleetDb();
-    const v = await typeAnswer(db, "AS812", live("N777ZZ", "X99"));
-    expect(v.answer).toEqual(undated(db, "AS812"));
+    const v = await typeAnswer(db, "AS121", live("N777ZZ", "X99"));
+    expect(v.answer).toEqual(undated(db, "AS121"));
     db.close();
   });
 
@@ -1441,6 +1442,320 @@ describe("a listed tail a lookup just named is a yes from stored data too", () =
     logged(db, "AS200", LISTED, 2, ["SEA", "ANC"]);
     const hub = await jsonOf(app, hubPath, HUB_HOST);
     expect(hub.hasStarlink).not.toBe(true);
+    db.close();
+  });
+});
+
+describe("a lookup that returns the departure without the logged tail withdraws the sighting", () => {
+  afterAll(() => setAssignmentFetcher(null));
+  const LISTED = tail("a330", 0);
+  const hubPath = `/api/check-any-flight?flight_number=AS200&date=${DATE}`;
+  const route = ["SEA", "ANC"];
+  const noLookup = () =>
+    setAssignmentFetcher(async () => {
+      throw new Error("a stored-data answer asked the live lookup");
+    });
+
+  /** A lookup names the listed tail on AS200; then a later one returns `later`. */
+  async function thenLookup(later: Array<ReturnType<typeof leg>> | Error) {
+    const db = await fleetDb();
+    db.run("UPDATE starlink_planes SET last_flight_check = ? WHERE TailNumber = ?", [
+      now - 3600,
+      LISTED,
+    ]);
+    const app = createApp(db);
+    setAssignmentFetcher(async (fn) =>
+      fn === "AS200" ? [leg(LISTED, TYPES.a330.type, route)] : []
+    );
+    expect((await datedBody(app, "AS200")).hasStarlink).toBe(true);
+    noLookup();
+    expect((await jsonOf(app, hubPath, HUB_HOST)).hasStarlink).toBe(true);
+
+    setAssignmentFetcher(async (fn) => {
+      if (later instanceof Error) throw later;
+      return fn === "AS200" ? later : [];
+    });
+    const site = await datedBody(app, "AS200");
+    noLookup();
+    const hub = await jsonOf(app, hubPath, HUB_HOST);
+    const page = await bodyOf(app, `/check-flight/AS200/${DATE}`, AS_HOST);
+    return { db, app, site, hub, page };
+  }
+
+  const WITHOUT_IT: Array<[string, ReturnType<typeof leg>]> = [
+    ["names no aircraft", leg(null, null, route)],
+    ["names an aircraft we can't read", leg("N782HA000000", "Boeing 787-9", route)],
+    [
+      "names a tail on an origin we can't read",
+      leg(UNLISTED.b738, "Boeing 737-800", ["S<b>", "ANC"]),
+    ],
+    ["names another aircraft", leg(UNLISTED.b738, TYPES.b738.type, route)],
+  ];
+
+  test.each(WITHOUT_IT)("a later lookup that %s: the blend, not yes", async (_n, later) => {
+    const { db, site, hub, page } = await thenLookup([later]);
+    // The site's own live answer is the newest thing we know; the hub and the
+    // first paint must not say more than it does.
+    expect(site.hasStarlink).not.toBe(true);
+    expect(hub.hasStarlink).toBeNull();
+    expect(hub.probability).toBeLessThan(0.5);
+    expect(hub.flights ?? []).toEqual([]);
+    expect(page.text).not.toContain("Yes — AS200");
+    // Stamped, not deleted: the Watch feed's swap history still reads the row.
+    const history = createReaderFactory(db)("AS").getAssignmentHistory(["AS200"], DATE);
+    expect(history.map((r) => r.tail_number)).toContain(LISTED);
+    db.close();
+  });
+
+  test("seeing the tail on the departure again brings the yes back", async () => {
+    const { db, app } = await thenLookup([leg(null, null, route)]);
+    setAssignmentFetcher(async (fn) =>
+      fn === "AS200" ? [leg(LISTED, TYPES.a330.type, route)] : []
+    );
+    expect((await datedBody(app, "AS200")).hasStarlink).toBe(true);
+    noLookup();
+    expect((await jsonOf(app, hubPath, HUB_HOST)).hasStarlink).toBe(true);
+    db.close();
+  });
+
+  const KEEPS_IT: Array<[string, Array<ReturnType<typeof leg>> | Error]> = [
+    ["fails", new Fr24UnavailableError("down")],
+    ["returns no departure at all", []],
+    [
+      "returns only another day's departure",
+      [{ ...leg(null, null, route), departure_time: DEPARTS + 2 * DAY }],
+    ],
+    ["returns only another airport's departure", [leg(null, null, ["PDX", "ANC"])]],
+    [
+      "names it beside a leg with no aircraft yet",
+      [leg(LISTED, TYPES.a330.type, route), leg(null, null, ["ANC", "SEA"])],
+    ],
+  ];
+
+  test.each(KEEPS_IT)("a later lookup that %s withdraws nothing", async (_n, later) => {
+    const { db, hub } = await thenLookup(later);
+    expect(hub.hasStarlink).toBe(true);
+    expect(hub.flights.map((f: { tail_number: string }) => f.tail_number)).toEqual([LISTED]);
+    db.close();
+  });
+});
+
+describe("the freshness rule's other answers stay as they were", () => {
+  afterAll(() => setAssignmentFetcher(null));
+  const LISTED = tail("a330", 0);
+  const hubPath = `/api/check-any-flight?flight_number=AS200&date=${DATE}`;
+  const SIGHTED_AT = now - 600;
+
+  async function stored(daysBack = 0, tailNumber = LISTED, airline = "AS") {
+    const db = await fleetDb();
+    setAssignmentFetcher(async () => {
+      throw new Error("a stored-data answer asked the live lookup");
+    });
+    logFlightAssignments(
+      db,
+      airline,
+      tailNumber,
+      [
+        {
+          flight_number: "AS200",
+          departure_airport: "SEA",
+          arrival_airport: "ANC",
+          departure_time: DEPARTS - daysBack * DAY,
+          arrival_time: DEPARTS - daysBack * DAY + 3 * 3600,
+        },
+      ],
+      SIGHTED_AT
+    );
+    return { db, app: createApp(db) };
+  }
+  const scheduleRead = (db: Database, at: number) =>
+    db.run("UPDATE starlink_planes SET last_flight_check = ? WHERE TailNumber = ?", [at, LISTED]);
+  const blend = (hub: { hasStarlink: unknown; probability: number }) => {
+    expect(hub.hasStarlink).toBeNull();
+    expect(hub.probability).toBeLessThan(0.5);
+  };
+
+  test("a schedule read one second before the sighting leaves it a yes", async () => {
+    const { db, app } = await stored();
+    scheduleRead(db, SIGHTED_AT - 1);
+    expect((await jsonOf(app, hubPath, HUB_HOST)).hasStarlink).toBe(true);
+    db.close();
+  });
+
+  test("a schedule read in the same second as the sighting makes it stale", async () => {
+    const { db, app } = await stored();
+    scheduleRead(db, SIGHTED_AT);
+    blend(await jsonOf(app, hubPath, HUB_HOST));
+    db.close();
+  });
+
+  test("a tail taken off the list is no yes", async () => {
+    const { db, app } = await stored();
+    db.run("DELETE FROM starlink_planes WHERE TailNumber = ?", [LISTED]);
+    blend(await jsonOf(app, hubPath, HUB_HOST));
+    db.close();
+  });
+
+  test("a tail since verified as not Starlink answers no, on the hub and the first paint", async () => {
+    const { db, app } = await stored();
+    db.run(
+      "UPDATE united_fleet SET starlink_status = 'negative', verified_wifi = 'None', verified_at = ? WHERE tail_number = ?",
+      [now, LISTED]
+    );
+    const hub = await jsonOf(app, hubPath, HUB_HOST);
+    expect(hub.hasStarlink).toBe(false);
+    const page = await bodyOf(app, `/check-flight/AS200/${DATE}`, AS_HOST);
+    expect(page.text).not.toContain("Yes — AS200");
+    db.close();
+  });
+
+  test("a sighting on the day before or the day after is no yes for the asked date", async () => {
+    for (const daysBack of [1, -1]) {
+      const { db, app } = await stored(daysBack);
+      blend(await jsonOf(app, hubPath, HUB_HOST));
+      db.close();
+    }
+  });
+
+  test("another airline's listed tail logged on the number is no yes", async () => {
+    const db = await fleetDb();
+    db.run(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+       VALUES ('Boeing 737-800', 'Starlink', 'test', 'test', '2026-01-01', 'N77UA', 'United Airlines', 'mainline', 'Starlink', 'UA')`
+    );
+    logged(db, "AS200", "N77UA", 0, ["SEA", "ANC"]);
+    setAssignmentFetcher(async () => {
+      throw new Error("a stored-data answer asked the live lookup");
+    });
+    blend(await jsonOf(createApp(db), hubPath, HUB_HOST));
+    db.close();
+  });
+});
+
+describe("a tail we read, don't hold and can't type is not the band's aircraft", () => {
+  beforeEach(() => setAssignmentFetcher(async () => []));
+  afterAll(() => setAssignmentFetcher(null));
+  const UNHELD = "N828ZZ";
+  const UNTYPED: Array<[string, string | null]> = [
+    ["no type at all", null],
+    ["an empty type", ""],
+    ["a type code the normalizer can't place", "ZZ9"],
+    ["a type name it can't place", "X99"],
+  ];
+
+  test.each(UNTYPED)(
+    "with %s, a Hawaiian-block number's flat yes is withdrawn",
+    async (_n, model) => {
+      const db = await fleetDb();
+      const app = createApp(db);
+      const flatYes = await datedBody(app, "AS812");
+      expect(flatYes.prediction.probability).toBe(1);
+
+      setAssignmentFetcher(async (fn) =>
+        fn === "AS812" ? [leg(UNHELD, model, ["HNL", "SFO"])] : []
+      );
+      const body = await datedBody(app, "AS812");
+      expect(body.hasStarlink).toBeNull();
+      expect(body.prediction).toBeUndefined();
+      expect(body.probability).toBeUndefined();
+      expect(body.message).toContain(UNHELD);
+      expect(body.message).toContain("whose type we don't know");
+      expect(body.message).not.toMatch(/~\d+%|every .* has Starlink/i);
+      expect(body.assignment).toEqual({ tail_number: UNHELD, aircraft_type: null });
+
+      const mcp = await mcpTool(app, AS_HOST, "check_flight", {
+        flight_number: "AS812",
+        date: DATE,
+      });
+      expect(mcp.text).toContain(UNHELD);
+      expect(mcp.text).not.toMatch(/100%/);
+
+      const answer = card("AS812", body as CheckFlightBody);
+      expect(answer.firm).toBe(false);
+      expect(answer.headline).not.toMatch(/^Yes/);
+
+      // The lookup logged the tail, so the hub and the first paint, which make
+      // no lookup, withdraw the number too.
+      setAssignmentFetcher(async () => {
+        throw new Error("a stored-data answer asked the live lookup");
+      });
+      const hub = await jsonOf(
+        app,
+        `/api/check-any-flight?flight_number=AS812&date=${DATE}`,
+        HUB_HOST
+      );
+      expect(hub.hasStarlink).toBeNull();
+      expect(hub.probability).toBeUndefined();
+      const page = await bodyOf(app, `/check-flight/AS812/${DATE}`, AS_HOST);
+      expect(page.text).not.toContain("Yes — every aircraft that flies AS812");
+      db.close();
+    }
+  );
+
+  test("an interisland number's flat no and a regional number's flat yes go the same way", async () => {
+    const db = await fleetDb();
+    for (const fn of ["AS1138", "AS2106"]) {
+      const before = penetration(undated(db, fn));
+      expect(before.pen.synthetic).toBe(true);
+      const v = await typeAnswer(db, fn, live(UNHELD, ""));
+      expect(v.answer.kind).toBe("no_model");
+      expect(verdictSummary(v).probability).toBeNull();
+      expect(describeCarrierPrediction(AS, v.answer, { date: DATE })).toContain(UNHELD);
+    }
+    db.close();
+  });
+
+  test("a mainline number keeps its blend", async () => {
+    const db = await fleetDb();
+    const v = await typeAnswer(db, "AS121", live(UNHELD, ""));
+    expect(v.answer).toEqual(undated(db, "AS121"));
+    db.close();
+  });
+
+  test("a tail whose type our own fleet list holds is answered by that type", async () => {
+    const db = await fleetDb();
+    const app = createApp(db);
+    setAssignmentFetcher(async (fn) =>
+      fn === "AS812" ? [leg(UNLISTED.b787, null, ["HNL", "SFO"])] : []
+    );
+    const body = await datedBody(app, "AS812");
+    expect(body.message).toMatch(/787/);
+    expect(body.message).not.toContain("whose type we don't know");
+    db.close();
+  });
+
+  test("an unlisted aircraft of the band's own type, a listed tail, or the same tail on another day withdraws nothing", async () => {
+    const db = await fleetDb();
+    const app = createApp(db);
+    const flatYes = await datedBody(app, "AS812");
+    setAssignmentFetcher(async (fn) =>
+      fn === "AS812"
+        ? [{ ...leg(UNHELD, null, ["HNL", "SFO"]), departure_time: DEPARTS + 3 * DAY }]
+        : []
+    );
+    expect(await datedBody(app, "AS812")).toEqual(flatYes);
+    const before = undated(db, "AS812");
+    expect((await typeAnswer(db, "AS812", live("N999ZZ", "Airbus A330-243"))).answer).toEqual(
+      before
+    );
+    setAssignmentFetcher(async (fn) =>
+      fn === "AS812" ? [leg(tail("a330", 0), null, ["HNL", "SFO"])] : []
+    );
+    expect((await datedBody(app, "AS812")).hasStarlink).toBe(true);
+    db.close();
+  });
+});
+
+describe("a type page whose list is no longer than the airline's count", () => {
+  test("the page's summary, description and first question give the count and no share", async () => {
+    // Alaska counts 6 MAX 8s connected with 2 still pending; we list 6.
+    const db = await fleetDb(CHART_DATE, chartWith("737-8 MAX", "6", "2"));
+    const page = await bodyOf(createApp(db), "/fleet/737-max-8", AS_HOST);
+    expect(page.status).toBe(200);
+    expect(page.text).toContain("6 do, per Alaska.");
+    expect(page.text).toContain("so no share is shown");
+    expect(page.text).not.toMatch(/6 of Alaska(&#x27;|')s 6/);
+    expect(page.text).not.toMatch(/MAX 8s? ha(s|ve) Starlink \(100%\)/);
     db.close();
   });
 });

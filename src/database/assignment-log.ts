@@ -13,6 +13,7 @@
 
 import type { Database } from "bun:sqlite";
 import {
+  buildAirlineFlightNumberVariants,
   detectAirline,
   ensureAirlinePrefix,
   normalizeAirlineFlightNumber,
@@ -46,6 +47,7 @@ export const ASSIGNMENT_LOG_DDL = `
     arrival_time INTEGER,
     first_seen INTEGER NOT NULL,
     last_seen INTEGER NOT NULL,
+    withdrawn_at INTEGER,
     PRIMARY KEY (airline, flight_number, dep_date, departure_airport, tail_number)
   );
   CREATE INDEX IF NOT EXISTS idx_fal_dep_date ON flight_assignment_log(dep_date);
@@ -153,7 +155,8 @@ export function logFlightAssignments(
       starlink = excluded.starlink,
       departure_time = excluded.departure_time,
       arrival_time = excluded.arrival_time,
-      last_seen = excluded.last_seen
+      last_seen = excluded.last_seen,
+      withdrawn_at = NULL
   `);
   for (const f of flights) {
     if (!f.flight_number || !f.departure_airport) continue;
@@ -218,6 +221,62 @@ export function logResolvedAssignments(
         })),
         now
       );
+    }
+  } catch {}
+}
+
+/** A departure a lookup returned, with the aircraft it named there, if any. */
+export interface ReturnedDeparture {
+  /** "" when the lookup's origin was not shaped like an airport. */
+  origin: string;
+  departure_time: number;
+  tail_number: string | null;
+}
+
+/**
+ * A lookup that returns a departure without a tail we logged on it is newer
+ * knowledge than the logged sighting: the aircraft was swapped away, or the
+ * lookup no longer vouches for it. The row is stamped, not deleted, since the
+ * Watch feed's swap history reads it; getListedSightings skips a stamped row,
+ * and seeing the tail on the departure again clears the stamp. A departure the
+ * lookup did not return at all withdraws nothing: absence is not a swap.
+ */
+export function withdrawUnreturnedSightings(
+  db: Database,
+  airlines: readonly string[],
+  flightNumber: string,
+  returned: readonly ReturnedDeparture[],
+  now: number
+): void {
+  const cfg = detectAirline(
+    flightNumber,
+    airlines.map((a) => AIRLINES[a]).filter((c): c is AirlineConfig => !!c)
+  );
+  if (!cfg || returned.length === 0) return;
+  const variants = buildAirlineFlightNumberVariants(cfg, flightNumber);
+  const departures = new Map<string, { where: string; at: (string | number)[]; tails: string[] }>();
+  for (const r of returned) {
+    const at = r.origin
+      ? [r.origin, departureLocalDate(r.origin, r.departure_time)]
+      : [r.departure_time];
+    const key = at.join("|");
+    const departure = departures.get(key) ?? {
+      where: r.origin ? "departure_airport = ? AND dep_date = ?" : "departure_time = ?",
+      at,
+      tails: [],
+    };
+    if (r.tail_number) departure.tails.push(r.tail_number);
+    departures.set(key, departure);
+  }
+  const a = airlineIn(airlines);
+  try {
+    for (const { where, at, tails } of departures.values()) {
+      db.query(
+        `UPDATE flight_assignment_log SET withdrawn_at = ?
+         WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND ${where}
+           AND tail_number NOT IN (${placeholders(tails)})
+           AND last_seen <= ? AND withdrawn_at IS NULL`
+      ).run(now, ...a.params, ...variants, ...at, ...tails, now);
     }
   } catch {}
 }
@@ -325,7 +384,8 @@ export function getLoggedAircraft(
  * tail in the log and not in upcoming_flights is usually left over from a
  * swap, but not when the sighting is newer than our last schedule read: then
  * the schedule hasn't had the chance to hold it. Only the newest tail logged
- * on a departure counts, so a later sighting of another aircraft outranks it.
+ * on a departure counts, so a later sighting of another aircraft outranks it,
+ * and so does a later lookup that returned the departure without this tail.
  */
 export function getListedSightings(
   db: Database,
@@ -351,6 +411,7 @@ export function getListedSightings(
          AND l.departure_time >= ? AND l.departure_time < ? AND l.arrival_time IS NOT NULL
          AND l.arrival_airport IS NOT NULL
          AND l.last_seen > COALESCE(sp.last_flight_check, 0)
+         AND l.withdrawn_at IS NULL
          AND NOT EXISTS (
            SELECT 1 FROM flight_assignment_log n
            WHERE n.airline = l.airline AND n.flight_number = l.flight_number

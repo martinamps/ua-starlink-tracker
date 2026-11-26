@@ -455,6 +455,15 @@ export async function lookupFlightTailVerdict(
     });
   }
 
+  // Before the log: a tail the lookup still names is seen again just below.
+  reader.withdrawUnreturnedSightings(
+    normalizedFlightNumber,
+    [
+      ...assignments,
+      ...(unreadLegs.get(assignments) ?? []).map((u) => ({ ...u, tail_number: null })),
+    ],
+    nowSec
+  );
   if (segments.length > 0) reader.logResolvedAssignments(normalizedFlightNumber, segments, nowSec);
   unreadCounts.set(segments, unread);
   return segments;

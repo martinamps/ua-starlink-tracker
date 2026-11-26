@@ -5,7 +5,8 @@
  * count used to be nothing but the number of aircraft due: it rose by itself
  * as tails were equipped. Both now claim a slot here before a check starts.
  * The ledger is the start time of every check in the last 24 hours, kept in
- * `meta` so a restart cannot reset it.
+ * `meta` so a restart cannot reset it. On boot it is set against the
+ * verification log, and checks only the log holds are counted as well.
  *
  * Two classes share it:
  *  - "settle": an aircraft we do not hold as settled Starlink (unknown,
@@ -76,18 +77,58 @@ function parseLedger(raw: string | null): number[] | null {
 }
 
 /**
+ * Checks the log holds and the ledger does not, found once per process (per
+ * handle), when the budget is first read after boot. The ledger is written
+ * only by a version that has it: after a revert and a redeploy, the checks the
+ * older version made in between are in the verification log alone. Hour by
+ * hour, where the log holds more checks than the ledger, the log's surplus is
+ * counted too. A check this version made is in both, a little later in the
+ * log, so the surplus can run a few over at an hour's edge: it can only close
+ * the budget sooner, never open it.
+ */
+const unledgered = new WeakMap<Database, number[]>();
+
+function logSurplus(db: Database, ledger: readonly number[], now: number): number[] {
+  const since = now - WINDOW_MS;
+  const hourOf = (ms: number) => Math.floor(ms / HOUR_MS);
+  const ledgered = new Map<number, number>();
+  for (const s of ledger) {
+    if (s > since) ledgered.set(hourOf(s), (ledgered.get(hourOf(s)) ?? 0) + 1);
+  }
+  const surplus: number[] = [];
+  // Newest first, so an hour's surplus is its oldest log rows: those free
+  // first, and an older version's checks are the ones the ledger never saw.
+  const logged = getRecentUnitedCheckTimes(db, Math.floor(since / 1000)).map((s) => s * 1000);
+  for (const at of logged.reverse()) {
+    const left = ledgered.get(hourOf(at)) ?? 0;
+    if (left > 0) ledgered.set(hourOf(at), left - 1);
+    else surplus.push(at);
+  }
+  return surplus;
+}
+
+/**
  * Start times (ms) inside the window. With no ledger yet (the first run after
  * this shipped) or an unreadable one, the verification log stands in: it has a
  * row per check, and a few more for swap captures, so it can only overcount.
  * An empty start would let a full day's checks follow a full day's checks.
  */
 function loadStarts(db: Database, now: number): number[] {
+  const ledger = parseLedger(getMeta(db, LEDGER_KEY, "UA"));
   const starts =
-    parseLedger(getMeta(db, LEDGER_KEY, "UA")) ??
+    ledger ??
     getRecentUnitedCheckTimes(db, Math.floor((now - WINDOW_MS) / 1000)).map((s) => s * 1000);
+  // With no ledger the log is already the count: nothing is left unledgered.
+  if (!unledgered.has(db)) unledgered.set(db, ledger ? logSurplus(db, ledger, now) : []);
   // A start stamped ahead of the clock (the clock was set back) still counts,
   // until the clock has passed it by a full window.
   return starts.filter((s) => s > now - WINDOW_MS);
+}
+
+/** The count the budget goes by: the ledger's starts and the log's surplus. */
+function countedStarts(db: Database, starts: readonly number[], now: number): number[] {
+  const extra = (unledgered.get(db) ?? []).filter((s) => s > now - WINDOW_MS);
+  return extra.length > 0 ? [...starts, ...extra] : [...starts];
 }
 
 function stateOf(starts: readonly number[], now: number): UnitedBudgetState {
@@ -112,7 +153,7 @@ function emitUsed(used: number): void {
 
 /** What the budget would allow right now. Reads only; each job tick calls it, so it carries the gauge. */
 export function unitedBudgetState(db: Database, now = Date.now()): UnitedBudgetState {
-  const state = stateOf(loadStarts(db, now), now);
+  const state = stateOf(countedStarts(db, loadStarts(db, now), now), now);
   emitUsed(state.used);
   return state;
 }
@@ -125,10 +166,10 @@ export function unitedBudgetState(db: Database, now = Date.now()): UnitedBudgetS
 export function claimUnitedCheck(db: Database, cls: UnitedCheckClass, now = Date.now()): boolean {
   return db.transaction(() => {
     const starts = loadStarts(db, now);
-    if (cls !== "manual" && !stateOf(starts, now).open[cls]) return false;
+    if (cls !== "manual" && !stateOf(countedStarts(db, starts, now), now).open[cls]) return false;
     starts.push(now);
     setMeta(db, LEDGER_KEY, JSON.stringify(starts), "UA");
-    emitUsed(starts.length);
+    emitUsed(countedStarts(db, starts, now).length);
     return true;
   })();
 }

@@ -1417,7 +1417,18 @@ export function carrierPrediction(
   } else if (sf?.families) {
     // The aircraft on the asked date, where we know it, speaks for that date;
     // the number's other departures speak only where we don't.
-    const scheduled = typedSightings((ctx.scheduled ?? []).filter((a) => !a.equipped));
+    const unlisted = (ctx.scheduled ?? []).filter((a) => !a.equipped);
+    const scheduled = typedSightings(unlisted);
+    // A tail we read, don't hold as equipped and can't type is not known to
+    // be the band's aircraft, and a fixed band's answer presumes it is.
+    if (sf.penetrationOverride != null && scheduled.length < unlisted.length) {
+      const typed = new Set(scheduled.map((a) => a.tail));
+      return untypedAircraftAnswer(
+        flightNumber,
+        sf,
+        unlisted.filter((a) => !typed.has(a.tail)).map((a) => a.tail)
+      );
+    }
     const byAircraft =
       scheduled.length > 0
         ? aircraftAnswer(cfg, reader, flightNumber, sf, "scheduled", scheduled)
@@ -1449,6 +1460,31 @@ function unreadAircraftAnswer(flightNumber: string, sf: SubfleetDef): CarrierPre
     kind: "no_model",
     reason: sentence,
     aircraft: { basis: "scheduled", tail: null, aircraftType: null, sentence, count: null },
+  };
+}
+
+function untypedAircraftAnswer(
+  flightNumber: string,
+  sf: SubfleetDef,
+  tails: readonly string[]
+): CarrierPrediction {
+  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  const one = tails.length === 1;
+  const sentence = joinSentences(
+    `${flightNumber} is scheduled on ${tails.join(" and ")}, ${one ? "an aircraft" : "aircraft"} we don't hold as having Starlink and whose type we don't know`,
+    `Its number${hint} usually means ${bandLabel(sf.label)} aircraft, and we can't confirm ${one ? "this is one" : "these are"}`,
+    "Starlink depends on which aircraft flies yours"
+  );
+  return {
+    kind: "no_model",
+    reason: sentence,
+    aircraft: {
+      basis: "scheduled",
+      tail: one ? tails[0] : null,
+      aircraftType: null,
+      sentence,
+      count: null,
+    },
   };
 }
 

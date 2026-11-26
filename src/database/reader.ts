@@ -54,6 +54,7 @@ import {
   type AssignmentLogRow,
   type LoggedAircraft,
   type ResolvedLeg,
+  type ReturnedDeparture,
   type SameDayAlternative,
   type SameDayAlternativesQuery,
   getAssignmentHistory,
@@ -63,6 +64,7 @@ import {
   getSameDayStarlinkAlternatives,
   isKnownFlightNumber,
   logResolvedAssignments,
+  withdrawUnreturnedSightings,
 } from "./assignment-log";
 import {
   type ConfirmedEdge,
@@ -433,6 +435,13 @@ export interface ScopedReader {
   isKnownFlightNumber(variants: readonly string[]): boolean;
   getSameDayStarlinkAlternatives(q: SameDayAlternativesQuery): SameDayAlternative[];
   logResolvedAssignments(flightNumber: string, legs: readonly ResolvedLeg[], now: number): void;
+  /** Stamps the tails logged on departures a lookup returned without them;
+   * spans operatingPartners like getListedSightings, which skips such rows. */
+  withdrawUnreturnedSightings(
+    flightNumber: string,
+    returned: readonly ReturnedDeparture[],
+    now: number
+  ): void;
 
   getQatarScheduleStats(): {
     total: number;
@@ -683,6 +692,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     isKnownFlightNumber: (v) => isKnownFlightNumber(db, airlines, v),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
     logResolvedAssignments: (fn, legs, now) => logResolvedAssignments(db, airlines, fn, legs, now),
+    withdrawUnreturnedSightings: (fn, returned, now) =>
+      withdrawUnreturnedSightings(db, withOperatingPartners(airlines), fn, returned, now),
 
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),

@@ -514,6 +514,41 @@ describe("answerFor edge verdicts", () => {
     expect(`${a.headline} ${a.sentence}`).not.toContain("united.com");
   });
 
+  test.each([
+    ["equal to our list", 1, 1, 0],
+    ["equal to a longer list", 19, 19, 12],
+    ["above our list", 12, 14, 7],
+  ])(
+    "a short roster's summary follows its headline: Alaska's count %s, and no share",
+    (_n, total, counted, starlink) => {
+      const data = input({
+        airline: "AS",
+        total,
+        starlink,
+        checked: starlink,
+        unchecked: total - starlink,
+      });
+      const a = answerFor(data, AS_MAX8, official(counted));
+      expect(a.rosterShort).toBe(true);
+      expect(a.headline).toBe(`${counted} do, per Alaska.`);
+      const summary = answerSummary(data, AS_MAX8, a);
+      expect(summary).toBe(`${a.headline} ${a.sentence}`);
+      expect(summary).toContain("so no share is shown");
+      expect(summary).not.toMatch(/\d+%|\d+ of Alaska's \d+/);
+      const [first] = aircraftTypeFaq(data, AS_MAX8, [], official(counted));
+      expect(first.a).toBe(summary);
+    }
+  );
+
+  test("a count short of our list still gets its share in the summary", () => {
+    const data = input({ airline: "AS", total: 20, starlink: 7, checked: 7, unchecked: 13 });
+    const a = answerFor(data, AS_MAX8, official(12));
+    expect(a.rosterShort).toBe(false);
+    expect(answerSummary(data, AS_MAX8, a)).toMatch(
+      /^12 of Alaska's 20 737 MAX 8s have Starlink \(60%\), per Alaska\./
+    );
+  });
+
   test("an official count without 'all' never becomes 'every one' on a short roster", () => {
     const a = answerFor(
       input({ airline: "AS", total: 12, starlink: 7, checked: 7, unchecked: 5 }),
