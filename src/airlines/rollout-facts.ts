@@ -602,7 +602,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // No tail count on purpose: FlyerTalk and aggregator counts disagree (1 to
     // 10 aircraft) and no first-party source publishes one.
     summary:
-      "Free in every cabin on all transatlantic routes as of November 2026; live since March 29, 2026 (Airbus A330 EI-EIN, Dublin to New York JFK). The whole long-haul fleet is due by Q1 2027.",
+      "Free on all transatlantic routes as of November 2026; live since March 29, 2026 (Airbus A330 EI-EIN, Dublin to New York JFK). The whole long-haul fleet is due by Q1 2027.",
     facts: [
       {
         fact: "Aer Lingus says free Starlink Wi-Fi is already available across all of its transatlantic routes.",

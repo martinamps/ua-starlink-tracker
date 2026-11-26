@@ -2,7 +2,9 @@
  * What a flight lookup may say about an airline this site doesn't answer by
  * flight: the newest current rollout fact it holds, with its date and source,
  * and the airline's own way to check a flight where one is on file. Never a
- * yes, a no or odds: nothing held names the aircraft on such a flight.
+ * yes, a no or odds of ours: nothing held names the aircraft on such a flight.
+ * An airline with no Starlink programme gets its dated fact too, worded as the
+ * airline's choice (or as nothing found), not as a check of the flight.
  */
 
 import { canonicalFlightInput } from "./flight-input";
@@ -57,17 +59,8 @@ const OWN_CHECKS: Readonly<Record<string, OwnCheck>> = {
   },
 };
 
-/** A stated "no Starlink" is left out: a firm negative printed under a flight
- * lookup would read as that flight's answer. */
-const ANSWERABLE: ReadonlySet<RolloutFactsStatus> = new Set([
-  "complete",
-  "installing",
-  "trial",
-  "announced",
-]);
-
 const byIata = new Map<string, AirlineFactsEntry>(
-  AIRLINE_FACTS.filter((e) => !e.trackedCode && ANSWERABLE.has(e.status)).map((e) => [e.iata, e])
+  AIRLINE_FACTS.filter((e) => !e.trackedCode).map((e) => [e.iata, e])
 );
 
 export interface UntrackedAirlineInfo {
@@ -75,12 +68,15 @@ export interface UntrackedAirlineInfo {
    * under the brand whose code it carries. */
   airline: string;
   iata: string;
-  /** "installing" | "complete" | "trial" | "announced". */
+  /** "installing" | "complete" | "trial" | "announced" | "not_starlink". */
   status: RolloutFactsStatus;
   status_label: string;
-  /** False when the airline has announced Starlink and nothing flies with it. */
+  /** False when nothing flies with Starlink: announced and not yet flying, or
+   * no Starlink programme at all. */
   flying: boolean;
-  /** The words that open the fact; a dated "not yet" when nothing flies. */
+  /** The words that open the fact: a dated "not yet" when Starlink is
+   * announced and nothing flies, the airline's other choice when it has made
+   * one, and "no announcement found" when it has said nothing. */
   lead: string;
   /** "As of Oct 8, 2026", or "Checked Nov 17, 2026" for an undated page. */
   dated: string;
@@ -119,16 +115,33 @@ function stampWords(stamp: ReturnType<typeof factStamp>): string {
   return `${stamp.label === "as of" ? "As of" : "Checked"} ${formatFactDate(stamp.date)}`;
 }
 
-/** The words that open the fact: a dated "not yet" where nothing flies. */
-function leadWords(airline: string, flying: boolean): string {
-  return flying
-    ? `What we know about ${airline}`
-    : `Not yet: Starlink is announced for ${airline}, and we hold no report of an aircraft flying with it`;
+/** The words that open the fact: a dated "not yet" where nothing flies. An
+ * airline we found no announcement from is never called a no: silence is an
+ * absence of evidence (rollout-facts.ts, `negative`). */
+function leadWords(entry: AirlineFactsEntry, airline: string): string {
+  if (entry.status === "not_starlink") {
+    return entry.negative === "chose"
+      ? `${airline} has no Starlink programme: it chose another system`
+      : `We have found no Starlink announcement from ${airline}`;
+  }
+  return entry.status === "announced"
+    ? `Not yet: Starlink is announced for ${airline}, and we hold no report of an aircraft flying with it`
+    : `What we know about ${airline}`;
 }
 
 const SCOPE_NOTE =
   "This is the airline-wide picture, not an answer for this flight: nothing we hold names the aircraft on it.";
 const PLAN_NOTE = "This is the airline's plan, not a check of this flight.";
+const CHOICE_NOTE = "This is the airline's own choice of system, not a check of this flight.";
+const SILENCE_NOTE =
+  "Finding no announcement is not proof there is none, and this is not a check of this flight.";
+
+function caveatFor(entry: AirlineFactsEntry): string {
+  if (entry.status === "not_starlink") {
+    return entry.negative === "chose" ? CHOICE_NOTE : SILENCE_NOTE;
+  }
+  return entry.status === "announced" ? PLAN_NOTE : SCOPE_NOTE;
+}
 
 function summaryOf(info: Omit<UntrackedAirlineInfo, "summary">): string {
   const how = info.how_to_check
@@ -139,8 +152,8 @@ function summaryOf(info: Omit<UntrackedAirlineInfo, "summary">): string {
 
 /**
  * The dated fact for the airline a flight number names, or null: a number
- * that isn't code-plus-digits, an airline with no entry, one answered by
- * flight elsewhere on this site, or one whose entry is a stated negative.
+ * that isn't code-plus-digits, an airline with no entry, or one answered by
+ * flight elsewhere on this site.
  */
 export function untrackedAirlineInfo(flightNumber: string): UntrackedAirlineInfo | null {
   const iata = iataPrefix(flightNumber);
@@ -150,14 +163,14 @@ export function untrackedAirlineInfo(flightNumber: string): UntrackedAirlineInfo
   const stamp = factStamp(fact);
   const own = OWN_CHECKS[entry.iata];
   const airline = entry.titleName ?? entry.shortName;
-  const flying = entry.status !== "announced";
+  const flying = entry.status !== "announced" && entry.status !== "not_starlink";
   const info: Omit<UntrackedAirlineInfo, "summary"> = {
     airline,
     iata: entry.iata,
     status: entry.status,
     status_label: entry.statusLabel,
     flying,
-    lead: leadWords(airline, flying),
+    lead: leadWords(entry, airline),
     dated: stampWords(stamp),
     fact: fact.fact,
     ...(stamp.label === "as of" ? { as_of: stamp.date } : { checked: stamp.date }),
@@ -166,7 +179,7 @@ export function untrackedAirlineInfo(flightNumber: string): UntrackedAirlineInfo
       url: fact.source.url,
       ...(fact.source.secondHand ? { second_hand: true as const } : {}),
     },
-    caveat: flying ? SCOPE_NOTE : PLAN_NOTE,
+    caveat: caveatFor(entry),
     page: `https://${SITES.airline.canonicalHost}/airlines/${entry.slug}`,
     ...(own ? { how_to_check: { text: own.text, checked: own.checked, source: own.source } } : {}),
   };

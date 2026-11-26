@@ -284,7 +284,9 @@ describe("hub home page", () => {
     const [, rollouts, checkable] =
       desc.match(/^(\d+) airlines .* Check a flight by number on (\d+) of them\.$/) ?? [];
     expect(desc).not.toContain("any flight");
-    expect(Number(checkable)).toBe(hubLookupAirlines().length);
+    // "By number": an airline answered by route (its own statement, no
+    // schedule held) can't be checked by number alone, so it isn't counted.
+    expect(Number(checkable)).toBe(hubLookupAirlines().filter((a) => !a.statementRule).length);
     expect(Number(checkable)).toBeLessThan(Number(rollouts));
     for (const cfg of hubLookupAirlines()) {
       const json = await jsonOf(

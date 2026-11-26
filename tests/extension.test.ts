@@ -892,8 +892,8 @@ describe("extension release guardrails", () => {
     expect(parseListingVersion("<html>no version here</html>")).toBeNull();
   });
 
-  test("2.3.0 adds the maybe tier and the type-share tooltips", () => {
-    expect(manifest.version).toBe("2.3.0");
+  test("2.5.0 adds Virgin Atlantic and SAS, answered for the aircraft type a card states", () => {
+    expect(manifest.version).toBe("2.5.0");
   });
 });
 

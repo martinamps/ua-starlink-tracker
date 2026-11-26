@@ -4,6 +4,7 @@
  * An old Hawaiian HA number is told to use the AS number.
  */
 import { describe, expect, test } from "bun:test";
+import { hubLookupAirlines } from "../src/airlines/registry";
 import { AIRLINE_FACTS, contentOnlyFacts } from "../src/airlines/rollout-facts";
 import {
   RETIRED_CODE_NOTES,
@@ -20,10 +21,15 @@ const UA = "unitedstarlinktracker.com";
 const DATE = "2026-09-20";
 const app = createApp(openSnapshot());
 
-const answered = contentOnlyFacts().filter((e) => e.status !== "not_starlink");
-const negatives = contentOnlyFacts().filter((e) => e.status === "not_starlink");
+// An airline the hub's lookup answers itself (Aer Lingus, by route) still has
+// its fact for the surfaces that don't, but is no example of a refusal.
+const lookupCodes = new Set(hubLookupAirlines().map((a) => a.iata));
+const answered = contentOnlyFacts();
+const negatives = answered.filter((e) => e.status === "not_starlink");
 const announced = answered.filter((e) => e.status === "announced");
-const flying = answered.filter((e) => e.status !== "announced");
+const flying = answered.filter(
+  (e) => e.status !== "announced" && e.status !== "not_starlink" && !lookupCodes.has(e.iata)
+);
 
 const api = async (host: string, path: string, fn: string) => {
   const { status, text } = await bodyOf(app, `${path}?flight_number=${fn}&date=${DATE}`, host);
@@ -52,7 +58,7 @@ describe("untrackedAirlineInfo", () => {
       expect(info.source.url).toBe(fact.source.url);
       expect(info.source.label).toBe(fact.source.label);
       expect(info.page).toBe(`https://${HUB}/airlines/${entry.slug}`);
-      expect(info.flying).toBe(entry.status !== "announced");
+      expect(info.flying).toBe(entry.status !== "announced" && entry.status !== "not_starlink");
       for (const part of [info.lead, info.dated, info.fact, info.caveat, info.page]) {
         expect(info.summary).toContain(part);
       }
@@ -80,11 +86,29 @@ describe("untrackedAirlineInfo", () => {
     }
   });
 
-  test("airlines answered by flight, stated negatives and non-numbers get nothing", () => {
+  test("an airline with no Starlink programme is worded as its choice or as silence, never a no for the flight", () => {
+    expect(new Set(negatives.map((e) => e.negative))).toEqual(new Set(["chose", "unannounced"]));
+    for (const e of negatives) {
+      const info = untrackedAirlineInfo(`${e.iata}12`);
+      if (!info) throw new Error(`no info for ${e.iata}`);
+      expect(info.status).toBe("not_starlink");
+      expect(info.flying).toBe(false);
+      expect(info.caveat).toContain("not a check of this flight");
+      if (e.negative === "chose") {
+        expect(info.lead).toContain("chose another system");
+      } else {
+        // Silence is an absence of evidence: it is never worded as a no.
+        expect(info.lead).toStartWith("We have found no Starlink announcement");
+        expect(info.lead).not.toMatch(/has no Starlink/);
+        expect(info.caveat).toContain("not proof");
+      }
+    }
+  });
+
+  test("airlines answered by flight and non-numbers get nothing", () => {
     for (const e of AIRLINE_FACTS.filter((x) => x.trackedCode)) {
       expect(untrackedAirlineInfo(`${e.iata}12`)).toBeNull();
     }
-    for (const e of negatives) expect(untrackedAirlineInfo(`${e.iata}12`)).toBeNull();
     for (const junk of ["", "hello", "1736", "ZZ12", "UAE123", "EK", "EK12345", "EK12A"]) {
       expect(untrackedAirlineInfo(junk)).toBeNull();
     }
@@ -112,15 +136,17 @@ describe("untrackedAirlineInfo", () => {
   });
 });
 
+// No airline uses this code: the refusal with nothing to add.
+const NO_ENTRY = "ZZ";
+
 describe("hub REST answers", () => {
   const [known] = flying;
-  const [negative] = negatives;
 
   test.each([
     ["/api/check-any-flight", 200],
     ["/api/check-flight", 404],
   ] as const)("%s keeps its error and status, and adds airline_info", async (path, status) => {
-    const plain = await api(HUB, path, `${negative.iata}100`);
+    const plain = await api(HUB, path, `${NO_ENTRY}100`);
     const withFact = await api(HUB, path, `${known.iata}100`);
     expect(plain.status).toBe(status);
     expect(withFact.status).toBe(status);
@@ -143,11 +169,10 @@ describe("hub REST answers", () => {
 
 describe("MCP check_flight", () => {
   const [known] = flying;
-  const [negative] = negatives;
 
   test("the hub refusal stays word for word, and the fact follows it", async () => {
     const plain = await mcpTool(app, HUB, "check_flight", {
-      flight_number: `${negative.iata}100`,
+      flight_number: `${NO_ENTRY}100`,
       date: DATE,
     });
     const withFact = await mcpTool(app, HUB, "check_flight", {
@@ -166,7 +191,7 @@ describe("MCP check_flight", () => {
       date: DATE,
     });
     const b = await mcpTool(app, UA, "check_flight", {
-      flight_number: `${negative.iata}100`,
+      flight_number: `${NO_ENTRY}100`,
       date: DATE,
     });
     expect(a.text).toBe(b.text);
@@ -243,6 +268,48 @@ describe("an old Hawaiian number", () => {
     expect(ha.body.flight_number_note).toBe(retiredCodeNote("HA50") as string);
     const mcp = await mcpTool(app, UA, "check_flight", { flight_number: "HA50", date: DATE });
     expect(mcp.text.endsWith(`\n\n${retiredCodeNote("HA50")}`)).toBe(true);
+  });
+});
+
+describe("an old Hawaiian number on the hub", () => {
+  const note = retiredCodeNote("HA50") as string;
+
+  test.each(["/api/check-any-flight", "/api/check-flight"])(
+    "%s answers it as before and adds the note as the last key",
+    async (path) => {
+      const ha = await api(HUB, path, "HA50");
+      const as = await api(HUB, path, "AS850");
+      expect(ha.status).toBe(200);
+      expect(Object.keys(ha.body).at(-1)).toBe("flight_number_note");
+      expect(ha.body.flight_number_note).toBe(note);
+      expect(ha.body).toHaveProperty("hasStarlink");
+      expect(as.body).not.toHaveProperty("flight_number_note");
+    }
+  );
+
+  test("an error for an HA number carries no note", async () => {
+    const { status, text } = await bodyOf(
+      app,
+      "/api/check-any-flight?flight_number=HA50&date=not-a-date",
+      HUB
+    );
+    expect(status).toBe(400);
+    expect(Object.keys(JSON.parse(text))).toEqual(["error"]);
+  });
+
+  test("MCP check_flight and predict_flight_starlink end with the note", async () => {
+    for (const tool of ["check_flight", "predict_flight_starlink"]) {
+      const ha = await mcpTool(app, HUB, tool, { flight_number: "HA50", date: DATE });
+      expect(ha.isError).toBeFalsy();
+      expect(ha.text.endsWith(`\n\n${note}`)).toBe(true);
+      const as = await mcpTool(app, HUB, tool, { flight_number: "AS850", date: DATE });
+      expect(as.text).not.toContain(note);
+    }
+  });
+
+  test("Hawaiian's own site answers its number with no note", async () => {
+    const ha = await api("hawaiianstarlinktracker.com", "/api/check-flight", "HA50");
+    expect(ha.body).not.toHaveProperty("flight_number_note");
   });
 });
 

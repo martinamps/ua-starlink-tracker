@@ -601,7 +601,8 @@
       "airline": "Hawaiian Airlines",
       "confidence": "type",
       "message": "Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.",
-      "flights": []
+      "flights": [],
+      "flight_number_note": "Hawaiian's flights now carry Alaska's AS code: the HA code was retired on April 22, 2026. Look this flight up by the AS number on the booking."
     }
   },
   "airlinestarlinktracker.com /api/check-flight QR1 2026-09-20": {
@@ -1007,7 +1008,8 @@
       "airline": "Hawaiian Airlines",
       "confidence": "type",
       "reason": "Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.",
-      "flights": []
+      "flights": [],
+      "flight_number_note": "Hawaiian's flights now carry Alaska's AS code: the HA code was retired on April 22, 2026. Look this flight up by the AS number on the booking."
     }
   },
   "airlinestarlinktracker.com /api/check-any-flight DL100 2026-09-20": {
@@ -1021,7 +1023,25 @@
       "vary": "Host"
     },
     "json": {
-      "error": "Airline not tracked. Tracked: UA, HA, AS, QR"
+      "error": "Airline not tracked. Tracked: UA, HA, AS, QR, EI, VS, SK",
+      "airline_info": {
+        "airline": "Delta",
+        "iata": "DL",
+        "status": "not_starlink",
+        "status_label": "Chose Amazon Leo",
+        "flying": false,
+        "lead": "Delta has no Starlink programme: it chose another system",
+        "dated": "As of Mar 31, 2026",
+        "fact": "Delta signed with Amazon Leo (Amazon's low-Earth-orbit constellation, formerly Project Kuiper) rather than Starlink, with an initial installation on 500 aircraft beginning in 2028.",
+        "as_of": "2026-03-31",
+        "source": {
+          "label": "Delta News Hub",
+          "url": "https://news.delta.com/delta-amazon-leo-sign-agreement-deliver-next-era-connected-travel-and-digital-experiences"
+        },
+        "caveat": "This is the airline's own choice of system, not a check of this flight.",
+        "page": "https://airlinestarlinktracker.com/airlines/delta",
+        "summary": "Delta has no Starlink programme: it chose another system. As of Mar 31, 2026: Delta signed with Amazon Leo (Amazon's low-Earth-orbit constellation, formerly Project Kuiper) rather than Starlink, with an initial installation on 500 aircraft beginning in 2028. (Source: Delta News Hub, https://news.delta.com/delta-amazon-leo-sign-agreement-deliver-next-era-connected-travel-and-digital-experiences.) This is the airline's own choice of system, not a check of this flight. More: https://airlinestarlinktracker.com/airlines/delta"
+      }
     }
   },
   "airlinestarlinktracker.com /api/check-any-flight UA12345 2026-09-20": {
@@ -1078,6 +1098,251 @@
     },
     "json": {
       "error": "Not found"
+    }
+  },
+  "airlinestarlinktracker.com /api/check-any-flight EI105 2026-12-01": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "Aer Lingus",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "needs_route",
+        "quote": "The service is already available across all Aer Lingus transatlantic routes.",
+        "as_of": "2026-11-18",
+        "source": {
+          "label": "Aer Lingus media centre",
+          "url": "https://mediacentre.aerlingus.com/pressrelease/details/108/26586"
+        },
+        "valid_through": "2027-03-27"
+      },
+      "reason": "Aer Lingus said on Nov 18, 2026 that free Starlink Wi-Fi is available across all its transatlantic routes. It has not said that of its European flights. We hold no Aer Lingus schedule, so a flight number alone can't be placed on a route: give the origin and destination airports to get an answer for this flight.",
+      "flights": []
+    }
+  },
+  "airlinestarlinktracker.com /api/check-any-flight EI105 2026-12-01&origin=DUB&destination=JFK": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "Aer Lingus",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "likely",
+        "quote": "The service is already available across all Aer Lingus transatlantic routes.",
+        "as_of": "2026-11-18",
+        "source": {
+          "label": "Aer Lingus media centre",
+          "url": "https://mediacentre.aerlingus.com/pressrelease/details/108/26586"
+        },
+        "valid_through": "2027-03-27"
+      },
+      "reason": "Likely yes. Aer Lingus said on Nov 18, 2026 that free Starlink Wi-Fi is available across all its transatlantic routes. That holds for flights Aer Lingus itself operates, not for a flight a partner airline flies under an EI number, and a last-minute aircraft change can alter it.",
+      "leg": {
+        "origin": "DUB",
+        "destination": "JFK",
+        "match": "no_data",
+        "otherLegs": []
+      },
+      "flights": []
+    }
+  },
+  "airlinestarlinktracker.com /api/check-any-flight VS3 2026-12-01": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "Virgin Atlantic",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "needs_type",
+        "quote": "Starlink is now available across our A350 fleet, with more aircraft getting the Starlink treatment over time until rollout completes in 2027.",
+        "as_of": "2026-11-26",
+        "source": {
+          "label": "Virgin Atlantic's Starlink page",
+          "url": "https://www.virginatlantic.com/en-US/experience/inflight-entertainment/connectivity/starlink"
+        },
+        "valid_through": "2027-03-27",
+        "as_of_kind": "checked",
+        "by": "aircraft_type",
+        "aircraft_type": null
+      },
+      "reason": "It depends on the aircraft. Virgin Atlantic's own page, checked Nov 26, 2026, says that Starlink is now available across its A350 fleet. Of its other aircraft the page says that more get Starlink over time until rollout completes in 2027, and that availability may vary depending on your aircraft and route. We hold no Virgin Atlantic schedule, so a flight number alone can't tell us the aircraft: give the aircraft type your booking shows to get an answer for this flight.",
+      "flights": []
+    }
+  },
+  "airlinestarlinktracker.com /api/check-any-flight VS3 2026-12-01&aircraft_type=Airbus%20A350-1000": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "Virgin Atlantic",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "likely",
+        "quote": "Starlink is now available across our A350 fleet, with more aircraft getting the Starlink treatment over time until rollout completes in 2027.",
+        "as_of": "2026-11-26",
+        "source": {
+          "label": "Virgin Atlantic's Starlink page",
+          "url": "https://www.virginatlantic.com/en-US/experience/inflight-entertainment/connectivity/starlink"
+        },
+        "valid_through": "2027-03-27",
+        "as_of_kind": "checked",
+        "by": "aircraft_type",
+        "aircraft_type": "Airbus A350-1000"
+      },
+      "reason": "Likely yes. That holds only if an A350 that Virgin Atlantic itself flies is on the flight. Virgin Atlantic's own page, checked Nov 26, 2026, says that Starlink is now available across its A350 fleet. We go by the aircraft type you gave and nothing else: we hold no Virgin Atlantic schedule, so we can't check which aircraft flies it. An aircraft a partner airline flies under a VS number is not covered, whatever its type, and an aircraft change can alter the answer.",
+      "flights": []
+    }
+  },
+  "airlinestarlinktracker.com /api/check-any-flight VS3 2026-12-01&aircraft_type=Boeing%20787-9": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "Virgin Atlantic",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "other_type",
+        "quote": "Starlink is now available across our A350 fleet, with more aircraft getting the Starlink treatment over time until rollout completes in 2027.",
+        "as_of": "2026-11-26",
+        "source": {
+          "label": "Virgin Atlantic's Starlink page",
+          "url": "https://www.virginatlantic.com/en-US/experience/inflight-entertainment/connectivity/starlink"
+        },
+        "valid_through": "2027-03-27",
+        "as_of_kind": "checked",
+        "by": "aircraft_type",
+        "aircraft_type": "Boeing 787-9"
+      },
+      "reason": "No yes or no for the aircraft type given (Boeing 787-9): that is not a no. Virgin Atlantic's own page, checked Nov 26, 2026, says that Starlink is now available across its A350 fleet. Of its other aircraft the page says that more get Starlink over time until rollout completes in 2027, and that availability may vary depending on your aircraft and route.",
+      "flights": []
+    }
+  },
+  "airlinestarlinktracker.com /api/check-any-flight SK903 2026-12-01": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "SAS",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "needs_type",
+        "quote": "With all 81 A320neo aircraft now equipped, high-speed WiFi from Starlink is available on a significant share of SAS’ European flights.",
+        "as_of": "2026-09-01",
+        "source": {
+          "label": "SAS Group press release",
+          "url": "https://www.sasgroup.net/newsroom/press-releases/2026/sas-completes-starlink-installation-across-entire-airbus-a320neo-fleet-in-just-six-months/"
+        },
+        "valid_through": "2027-03-27",
+        "by": "aircraft_type",
+        "aircraft_type": null
+      },
+      "reason": "It depends on the aircraft. SAS said on Sep 1, 2026 that all 81 of its A320neo aircraft are equipped with Starlink. It called the A320neo the first aircraft type in its fleet to be fully equipped, and said that for the remaining types installation preparations were progressing, with further installations planned before the end of the year. We hold no SAS schedule, so a flight number alone can't tell us the aircraft: give the aircraft type your booking shows to get an answer for this flight.",
+      "flights": []
+    }
+  },
+  "airlinestarlinktracker.com /api/check-any-flight SK903 2026-12-01&aircraft_type=Airbus%20A320neo": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "SAS",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "likely",
+        "quote": "With all 81 A320neo aircraft now equipped, high-speed WiFi from Starlink is available on a significant share of SAS’ European flights.",
+        "as_of": "2026-09-01",
+        "source": {
+          "label": "SAS Group press release",
+          "url": "https://www.sasgroup.net/newsroom/press-releases/2026/sas-completes-starlink-installation-across-entire-airbus-a320neo-fleet-in-just-six-months/"
+        },
+        "valid_through": "2027-03-27",
+        "by": "aircraft_type",
+        "aircraft_type": "Airbus A320neo"
+      },
+      "reason": "Likely yes. That holds only if an A320neo that SAS itself flies is on the flight. SAS said on Sep 1, 2026 that all 81 of its A320neo aircraft are equipped with Starlink. We go by the aircraft type you gave and nothing else: we hold no SAS schedule, so we can't check which aircraft flies it. An aircraft a partner airline flies under an SK number is not covered, whatever its type, and an aircraft change can alter the answer.",
+      "flights": []
+    }
+  },
+  "airlinestarlinktracker.com /api/check-any-flight SK903 2026-12-01&aircraft_type=Airbus%20A320": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "SAS",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "unclear_type",
+        "quote": "With all 81 A320neo aircraft now equipped, high-speed WiFi from Starlink is available on a significant share of SAS’ European flights.",
+        "as_of": "2026-09-01",
+        "source": {
+          "label": "SAS Group press release",
+          "url": "https://www.sasgroup.net/newsroom/press-releases/2026/sas-completes-starlink-installation-across-entire-airbus-a320neo-fleet-in-just-six-months/"
+        },
+        "valid_through": "2027-03-27",
+        "by": "aircraft_type",
+        "aircraft_type": "Airbus A320"
+      },
+      "reason": "No yes or no for the aircraft type given (Airbus A320). SAS said on Sep 1, 2026 that all 81 of its A320neo aircraft are equipped with Starlink. A booking that says only A320 can mean an A320neo or an older A320, and SAS's statement is about the A320neo alone: check whether yours says A320neo. It called the A320neo the first aircraft type in its fleet to be fully equipped, and said that for the remaining types installation preparations were progressing, with further installations planned before the end of the year.",
+      "flights": []
     }
   },
   "alaskastarlinktracker.com /api/check-flight AS100 2026-09-20": {
@@ -2434,7 +2699,7 @@
         "content": [
           {
             "type": "text",
-            "text": "HA100 on 2026-09-29: no assignment data. Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure."
+            "text": "HA100 on 2026-09-29: no assignment data. Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.\n\nHawaiian's flights now carry Alaska's AS code: the HA code was retired on April 22, 2026. Look this flight up by the AS number on the booking."
           }
         ]
       }
@@ -2456,7 +2721,7 @@
         "content": [
           {
             "type": "text",
-            "text": "Airline not tracked. Tracked carriers: UA (United Airlines), HA (Hawaiian Airlines), AS (Alaska Airlines), QR (Qatar Airways). Prefix the flight number with the carrier code, e.g. UA123."
+            "text": "Airline not tracked. Tracked carriers: UA (United Airlines), HA (Hawaiian Airlines), AS (Alaska Airlines), QR (Qatar Airways), EI (Aer Lingus), VS (Virgin Atlantic), SK (SAS). Prefix the flight number with the carrier code, e.g. UA123.\n\nDelta has no Starlink programme: it chose another system. As of Mar 31, 2026: Delta signed with Amazon Leo (Amazon's low-Earth-orbit constellation, formerly Project Kuiper) rather than Starlink, with an initial installation on 500 aircraft beginning in 2028. (Source: Delta News Hub, https://news.delta.com/delta-amazon-leo-sign-agreement-deliver-next-era-connected-travel-and-digital-experiences.) This is the airline's own choice of system, not a check of this flight. More: https://airlinestarlinktracker.com/airlines/delta"
           }
         ],
         "isError": true

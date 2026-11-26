@@ -46,6 +46,7 @@ import {
   SITES,
   heldBackCount,
   hubLookupAirlines,
+  mcpScopeAirlines,
   siteForAirline,
   verifierReadsWifi,
 } from "../airlines/registry";
@@ -84,6 +85,7 @@ import {
   predictRoute,
   routeBaseline,
 } from "../scripts/starlink-predictor";
+import { aircraftTypeText } from "../server/community-wire";
 import { jsonRpc, mcpMethodNotAllowed } from "../server/respond";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
@@ -251,8 +253,9 @@ function toolError(text: string, reason: ToolErrorReason): ToolResult {
 
 // Registry-derived (pinned in tests/vocabulary.test.ts). Only carriers the hub
 // already answers for: an enabled-but-unpublished airline (collecting data
-// before launch) must not be reachable through ?scope=.
-export const VALID_SCOPES: readonly Scope[] = ["ALL", ...hubLookupAirlines().map((a) => a.code)];
+// before launch) must not be reachable through ?scope=. An airline answered
+// by statement alone has no fleet for a scoped server's tools to read.
+export const VALID_SCOPES: readonly Scope[] = ["ALL", ...mcpScopeAirlines().map((a) => a.code)];
 
 function isValidScope(s: string): s is Scope {
   return (VALID_SCOPES as readonly string[]).includes(s);
@@ -324,6 +327,15 @@ function buildTools(scope: Scope) {
       ? "not confirmed"
       : "not yet verified";
 
+  // Hub only: the airlines answered from a statement about one aircraft type.
+  const typeRuled =
+    scope === "ALL"
+      ? hubLookupAirlines()
+          .filter((a) => a.statementRule?.by === "type")
+          .map((a) => a.name)
+          .join(" and ")
+      : "";
+
   const tools = [
     {
       name: "check_flight",
@@ -352,6 +364,14 @@ function buildTools(scope: Scope) {
             description:
               "Optional 3-letter IATA arrival airport of the traveller's leg (e.g. 'SAN'); with origin, picks one leg of a multi-leg flight number.",
           },
+          ...(typeRuled
+            ? {
+                aircraft_type: {
+                  type: "string",
+                  description: `Optional aircraft type exactly as the traveller's booking shows it (e.g. 'Airbus A350-1000'). Read only for ${typeRuled}, answered from the airline's own statement about one aircraft type; pass it only when the traveller's booking or itinerary states it — never guess it.`,
+                },
+              }
+            : {}),
         },
         required: ["flight_number", "date"],
         examples: [{ flight_number: example, date: "2026-05-15" }],
@@ -577,8 +597,9 @@ function withToolAnnotations<T extends { name: string }>(tool: T) {
 
 const TOOL_NAMES = buildTools("UA").map((t) => t.name);
 // Parameter names are the same on every scope; only the descriptions differ.
+// The hub adds one (check_flight's aircraft_type), so its list is the full one.
 const TOOL_PARAMS: Record<string, string[]> = Object.fromEntries(
-  buildTools("UA").map((t) => [t.name, Object.keys(t.inputSchema.properties)])
+  buildTools("ALL").map((t) => [t.name, Object.keys(t.inputSchema.properties)])
 );
 
 // Cheap edit-distance for "did you mean" — tool names are short, so O(n*m) is fine.
@@ -670,6 +691,26 @@ function resolveFlightToolCarrier(
   return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };
 }
 
+/** The hub answers an old Hawaiian HA number as Hawaiian's; the note saying
+ * which number is sold today follows the answer. A single-airline server
+ * refuses another airline's number, and adds the note there itself. */
+function withHubNumberNote(
+  result: ToolResult,
+  hostReader: ScopedReader,
+  args: { flight_number?: unknown }
+): ToolResult {
+  const note =
+    hostReader.scope === "ALL" && !result.isError && typeof args.flight_number === "string"
+      ? retiredCodeNote(args.flight_number)
+      : null;
+  const last = result.content.at(-1);
+  if (!note || !last) return result;
+  return {
+    ...result,
+    content: [...result.content.slice(0, -1), { ...last, text: `${last.text}\n\n${note}` }],
+  };
+}
+
 // Verdict first, alternatives second: the firm NO is the answer to the
 // question asked, and the table's first row restates it as "your flight, 0%".
 // Both firm-no renderings share this and must tolerate an empty block (non-UA
@@ -691,7 +732,13 @@ function invalidDateError(): ToolResult {
 async function toolCheckFlight(
   hostReader: ScopedReader,
   getReader: GetReader,
-  args: { flight_number?: unknown; date?: unknown; origin?: unknown; destination?: unknown },
+  args: {
+    flight_number?: unknown;
+    date?: unknown;
+    origin?: unknown;
+    destination?: unknown;
+    aircraft_type?: unknown;
+  },
   opts: { undated?: boolean } = {}
 ): Promise<ToolResult> {
   const flightNumber =
@@ -717,7 +764,15 @@ async function toolCheckFlight(
     flightNumber,
     date,
     withLeg(
-      hostReader.scope === "ALL" ? { lookupTail: null } : undefined,
+      hostReader.scope === "ALL"
+        ? {
+            lookupTail: null,
+            // Read only for an airline answered by its statement on one type.
+            ...(cfg.statementRule?.by === "type"
+              ? { aircraftType: aircraftTypeText(args.aircraft_type) }
+              : {}),
+          }
+        : undefined,
       parseLegQuery(
         typeof args.origin === "string" ? args.origin : null,
         typeof args.destination === "string" ? args.destination : null
@@ -904,7 +959,7 @@ export async function renderCheckFlightVerdict(
       // community carrier's named tail, which is itself the assignment.
       const lead = verdict.fr24Error
         ? `${fr24DegradedNote(verdict)} `
-        : noModelConfidence(verdict.answer) === "tail" || namesScheduledAircraft(verdict.answer)
+        : noModelConfidence(verdict.answer) !== "type" || namesScheduledAircraft(verdict.answer)
           ? ""
           : "no assignment data. ";
       return textResult(
@@ -974,9 +1029,19 @@ export async function renderCheckFlightVerdict(
 
 // Hub-scope only: QR answers from equipment, not tails, so the ≤2-day rule
 // above doesn't apply to it.
-const HUB_LOOKUP_INSTRUCTION = hubLookupAirlines().some((a) => a.code === "QR")
-  ? "• Qatar Airways (QR…): use check_flight at any date — it answers from the published aircraft type (~6 days) or observed-type history beyond.\n"
-  : "";
+const HUB_LOOKUP_INSTRUCTION = [
+  hubLookupAirlines().some((a) => a.code === "QR")
+    ? "• Qatar Airways (QR…): use check_flight at any date — it answers from the published aircraft type (~6 days) or observed-type history beyond.\n"
+    : "",
+  // No schedule is held for these, so only the route places a flight.
+  ...hubLookupAirlines()
+    .filter((a) => a.statementRule)
+    .map((a) =>
+      a.statementRule?.by === "type"
+        ? `• ${a.name} (${a.iata}…): use check_flight with aircraft_type, the type the traveller's booking shows — it answers for that type from ${a.name}'s own dated statement, and says so; without a stated type it can only ask for one. Never guess the type.\n`
+        : `• ${a.name} (${a.iata}…): use check_flight with origin and destination — it answers by route from ${a.name}'s own dated statement, and says so; without both airports it can only ask for them.\n`
+    ),
+].join("");
 
 function renderQatarCheckFlight(
   verdict: QatarVerdict & { leg?: LegResolution },
@@ -1399,10 +1464,15 @@ function formatCarrierPrediction(
   const text =
     answer.kind === "penetration"
       ? `**${normalized}**: ${joinSentences(describeCarrierPrediction(cfg, answer), "For a firm answer, use check_flight with a date to see the scheduled aircraft")}`
-      : joinSentences(
-          describeCarrierPrediction(cfg, answer),
-          "Use check_flight with a date to see the scheduled aircraft"
-        );
+      : answer.kind === "statement"
+        ? // This tool takes no airports, and only a route places the flight.
+          cfg.statementRule?.by === "type"
+          ? `${cfg.name} is answered by aircraft type, from its own dated statement: call check_flight with this flight number, its date, and aircraft_type, the type the traveller's booking shows.`
+          : `${cfg.name} is answered by route, from its own dated statement: call check_flight with this flight number, its date, and the origin and destination airports.`
+        : joinSentences(
+            describeCarrierPrediction(cfg, answer),
+            "Use check_flight with a date to see the scheduled aircraft"
+          );
   return textResult(text);
 }
 
@@ -1533,7 +1603,7 @@ async function toolPredictFlightStarlink(
   // as check_flight. Without a date, a date just past the window asks for the
   // flight's general history. The QR tenant keeps its registry answer, which
   // its REST /api/predict-flight mirrors.
-  if (hostReader.scope === "ALL" && cfg.hubFlightLookup) {
+  if (hostReader.scope === "ALL" && cfg.hubFlightLookup && !cfg.statementRule) {
     const given = typeof args.date === "string" ? args.date.trim() : "";
     const nowSec = unixNow();
     const date = given || addDaysISO(dohDateISO(nowSec), QATAR_PUBLISHED_DAYS_FORWARD + 1);
@@ -2425,10 +2495,14 @@ async function handleToolsCall(
   try {
     switch (toolName) {
       case "check_flight":
-        result = await toolCheckFlight(reader, getReader, args);
+        result = withHubNumberNote(await toolCheckFlight(reader, getReader, args), reader, args);
         break;
       case "predict_flight_starlink":
-        result = await toolPredictFlightStarlink(reader, getReader, args);
+        result = withHubNumberNote(
+          await toolPredictFlightStarlink(reader, getReader, args),
+          reader,
+          args
+        );
         break;
       case "predict_route_starlink":
         result = toolPredictRouteStarlink(reader, getReader, args);
