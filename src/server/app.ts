@@ -225,6 +225,7 @@ import type {
   FirstFlight,
   FleetPageData,
   Flight,
+  PerAirlineStat,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
 import {
@@ -4464,16 +4465,28 @@ function homeMeta(
     totalCount: number;
     noun?: string;
     fleetStats?: ReturnType<ScopedReader["getFleetStats"]>;
+    perAirline?: PerAirlineStat[];
   }
 ): { siteTitle: string; siteDescription: string } | null {
   if (site.scope === "ALL") {
     const flying = AIRLINE_FACTS.filter(
       (e) => e.status === "installing" || e.status === "complete"
     ).length;
-    const tracked = hubContentAirlines().map((a) => a.shortName);
+    // Searchers asking "which airlines" get the leaders with live counts, the
+    // same figures (and "-operated" qualifier) as the hub's FAQ answer.
+    const leaders = [...(stats.perAirline ?? [])]
+      .filter((r) => r.starlink > 0)
+      .sort((a, b) => b.starlink - a.starlink)
+      .slice(0, 3)
+      .map((r) => {
+        const cfg = AIRLINES[r.code];
+        const name = cfg?.shortName ?? r.name;
+        const n = r.starlink.toLocaleString("en-US");
+        return `${name} (${cfg?.programmePartners ? `${n} ${name}-operated` : n})`;
+      });
     return {
       siteTitle: `Which Airlines Have Starlink Wi-Fi? ${AIRLINE_FACTS.length} Airlines Compared`,
-      siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it. Compare ${tracked.slice(0, -1).join(", ")} and ${tracked.at(-1)} side by side, plus every other rollout, dated and sourced.`,
+      siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it.${leaders.length ? ` Most planes: ${leaders.join(", ")}.` : ""} Check any flight by number.`,
     };
   }
   const cfg = AIRLINES[site.scope];
