@@ -7,7 +7,12 @@
 import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
-import { CHOOSER_MAX, FINGER_RADIUS_PX, airportsUnderTap } from "../src/client/routes-map-pick";
+import {
+  CHOOSER_MAX,
+  FINGER_RADIUS_PX,
+  airportsUnderTap,
+  tapIsOurs,
+} from "../src/client/routes-map-pick";
 import { buildRouteNetwork } from "../src/components/routes-map/network";
 import { getRouteNetworkRows } from "../src/database/database";
 import { createApp } from "../src/server/app";
@@ -118,9 +123,11 @@ describe("/routes", () => {
     ])
       expect(map).toContain(hook);
     const chooser = map.slice(map.indexOf("<dialog"), map.indexOf("</dialog>"));
-    expect(chooser).toMatch(
-      /^<dialog class="js-map-chooser [^"]*sm:hidden[^"]*" aria-label="[^"]+">/
-    );
+    expect(chooser).toMatch(/^<dialog class="js-map-chooser [^"]*" aria-label="[^"]+">/);
+    // A phone held sideways is wider than sm: the chooser and the list stay
+    // reachable there for a finger, and the list folds away only for a mouse.
+    expect(chooser).not.toContain("sm:hidden");
+    expect(map).toMatch(/<details class="js-map-list [^"]*sm:pointer-fine:hidden/);
     expect(chooser).not.toContain(" open");
     expect(chooser).not.toContain("<a ");
     expect(chooser).toContain("See all 3 airports");
@@ -163,6 +170,19 @@ describe("/routes", () => {
  * input at that width, the last one painted under the point wins. Dense hubs
  * from the real map, where a quieter neighbour's dot covers a hub's centre.
  */
+describe("tapIsOurs", () => {
+  test("a finger or pen is caught at every width, a mouse only on narrow screens", () => {
+    for (const wide of [false, true]) {
+      expect(tapIsOurs(wide, "touch")).toBe(true);
+      expect(tapIsOurs(wide, "pen")).toBe(true);
+    }
+    expect(tapIsOurs(false, "mouse")).toBe(true);
+    expect(tapIsOurs(false, null)).toBe(true);
+    expect(tapIsOurs(true, "mouse")).toBe(false);
+    expect(tapIsOurs(true, null)).toBe(false);
+  });
+});
+
 describe("airportsUnderTap", () => {
   const dots = [
     { code: "IAD", x: 100, y: 100 },

@@ -74,14 +74,14 @@ function hitRadii(busiestFirst: MapAirport[], max: number) {
 }
 
 /**
- * Phones only, and empty until a tap lands where several dots share a
+ * Closed and empty until a tap lands where several dots share a
  * fingertip: client/routes-map.ts fills it with those airports and places it
- * by the tap. Markup lives here so the stylesheet compiles its classes.
+ * by the tap; on wider screens only a finger's tap opens it. Markup lives here so the stylesheet compiles its classes.
  */
 function TapChooser({ airports }: { airports: number }) {
   return (
     <dialog
-      className="js-map-chooser absolute inset-x-2 z-30 m-0 w-auto rounded-lg border border-subtle bg-surface-elevated p-3 text-primary shadow-xl shadow-black/40 sm:hidden"
+      className="js-map-chooser absolute inset-x-2 z-30 m-0 w-auto rounded-lg border border-subtle bg-surface-elevated p-3 text-primary shadow-xl shadow-black/40 sm:w-80"
       aria-label="Airports near your tap"
     >
       <Eyebrow className="pr-8">Airports near your tap</Eyebrow>
@@ -265,7 +265,7 @@ export function RoutesMap({
             </svg>
             {linked.length > 0 && (
               <div
-                className="js-map-ring pointer-events-none absolute size-6 -translate-x-1/2 -translate-y-1/2 rounded-full border border-accent sm:hidden"
+                className="js-map-ring pointer-events-none absolute size-6 -translate-x-1/2 -translate-y-1/2 rounded-full border border-accent"
                 hidden
               />
             )}
@@ -280,7 +280,7 @@ export function RoutesMap({
             {updatedAt ? ` Data updated ${utcDateTime(updatedAt)}.` : ""}
           </figcaption>
           {linked.length > 0 && (
-            <details className="js-map-list mt-3 text-xs sm:hidden">
+            <details className="js-map-list mt-3 text-xs sm:pointer-fine:hidden">
               <summary className="cursor-pointer py-1 text-secondary">
                 {`All ${fmt(linked.length)} airports on the map`}
               </summary>
