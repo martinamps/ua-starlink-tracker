@@ -142,7 +142,7 @@ const ROLLOUT_TARGETS: Record<KnownAirlineCode, RolloutTargetDef[]> = {
   // costs no surface today. Restore it with a source someone has actually
   // read, and a statedOn date.
   QR: [],
-  // No dated, fleet-count target from Air France beyond "end of 2026".
+  // No dated, fleet-count target from Air France beyond "the whole fleet in 2027".
   AF: [],
   // Answered by statement alone: no aircraft is counted, so no target can be
   // measured.

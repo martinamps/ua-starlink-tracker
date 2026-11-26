@@ -459,11 +459,15 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Starlink Wi-Fi is now on 74 Emirates aircraft and is complimentary for customers in all cabins, on both seatback screens and personal devices.",
+        // Emirates' media centre answers 503 to every automated client; Gulf News
+        // carries the same 19 November release on a readable page. Nothing that
+        // reports this release mentions seatback screens, so neither do we.
+        fact: "Starlink Wi-Fi is now on 74 Emirates aircraft and is free for customers in all cabins.",
         asOf: "2026-11-19",
         source: {
-          label: "Emirates media centre",
-          url: "https://www.emirates.com/media-centre/emirates-tops-times-inaugural-worlds-best-airlines-2027-rankings/",
+          label: "Gulf News",
+          url: "https://gulfnews.com/business/aviation/emirates-named-worlds-best-airline-for-2027-by-time-1.500753417",
+          secondHand: true,
         },
       },
     ],
@@ -721,14 +725,18 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Mostly done",
     summary:
-      "70% of the fleet had Starlink as of October 2026, with 80% due by the end of 2026 and the whole fleet in 2027. Free in every cabin with a Flying Blue login.",
+      "Air France says 70% of its fleet had its free Starlink Wi-Fi as of November 2026, with 80% due by the end of 2026 and the whole fleet in 2027. Free in every cabin with a Flying Blue login.",
     facts: [
       {
-        fact: "Air France says 70% of its fleet has its free high-speed Wi-Fi, will reach 80% by the end of 2026 and aims to equip the whole fleet, including regional aircraft, in 2027.",
-        asOf: "2026-10-27",
+        // Air France's newsroom and Aviation24.be both refuse automated readers;
+        // Aeronews Global carries the same winter release on a readable page.
+        // It says nothing of regional aircraft, so neither do we.
+        fact: "Air France says 70% of its fleet is equipped with its free high-speed Wi-Fi, that this will reach 80% by the end of 2026, and that it aims for a fully equipped fleet in 2027.",
+        asOf: "2026-11-03",
         source: {
-          label: "Aviation24.be (reporting Air France's 27 October 2026 release)",
-          url: "https://www.aviation24.be/airlines/air-france-klm-group/air-france/air-france-expands-winter-network-and-la-premiere-rollout/",
+          label: "Aeronews Global",
+          url: "https://aeronewsglobal.com/more-destinations-for-air-frances-new-la-premiere-cabin-this-winter/",
+          secondHand: true,
         },
       },
       {
