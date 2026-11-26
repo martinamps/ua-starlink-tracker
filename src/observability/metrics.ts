@@ -23,9 +23,9 @@
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
  *                    aborted | scrape_error | noop | shed            (~13)
- *   reason:          breaker | bucket | queue | budget — fr24 assignments
+ *   reason:          breaker | bucket | queue | budget — fr24 assignments|routes
  *                    status:shed only (normalizeLookupShedReason)      (4)
- *   caller:          page | api | extension | mcp | other — fr24 assignments
+ *   caller:          page | api | extension | mcp | other — fr24 assignments|routes
  *                    status:shed only (classifyLookupCaller; mcp from the route) (5)
  *   job, class:      united_check.held only: verifier | discovery, and
  *                    settle | reconfirm (closed unions in united-check-budget.ts) (2, 2)
