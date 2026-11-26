@@ -92,6 +92,7 @@ import { jsonRpc, mcpMethodNotAllowed } from "../server/respond";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
 import { debug, error as logError } from "../utils/logger";
+import { isAirportCode } from "../utils/outside-text";
 import { denominatorIsPublishable } from "../utils/share-cards";
 import { memoPromise } from "../utils/ttl-cache";
 import {
@@ -1199,7 +1200,7 @@ async function lookupFlightRoutes(
   // kept only briefly, so the next ask may get the live route.
   let shed = false;
 
-  const promise = (async (): Promise<RouteEntry[]> => {
+  const lookup = (async (): Promise<RouteEntry[]> => {
     // L0: the date's own legs from the tail-lookup cache check_flight's
     // verdict already filled (so usually no extra FR24 call). L1 is keyed by
     // flight number alone, and an express number flies a different route
@@ -1281,6 +1282,11 @@ async function lookupFlightRoutes(
         ]
       : [];
   })();
+  // Every layer holds the aircraft or route lookup's airports, some stored
+  // before that text was checked where it enters; the table prints them.
+  const promise = lookup.then((routes) =>
+    routes.filter((r) => isAirportCode(r.origin) && isAirportCode(r.destination))
+  );
 
   // An empty or shed result stays for the short negative TTL; an error is
   // evicted so the next request retries.

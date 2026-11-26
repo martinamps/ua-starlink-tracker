@@ -318,6 +318,27 @@ export function setRouteFetcher(fetcher: RouteFetcher | null): void {
 }
 
 /**
+ * The route lookup's airports are the same outside text as the tail lookup's,
+ * printed in MCP's table of other flights and stored in flight_routes, so they
+ * get readableLegs' check: trimmed, and a route without two airport codes
+ * dropped. Trimming can make two routes one; the first, the earliest, stays.
+ */
+function readableRoutes(raw: FlightRoute[]): FlightRoute[] {
+  const seen = new Set<string>();
+  const out: FlightRoute[] = [];
+  for (const r of raw) {
+    const origin = trimmed(r.origin);
+    const destination = trimmed(r.destination);
+    if (!isAirportCode(origin) || !isAirportCode(destination)) continue;
+    const key = `${origin}-${destination}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...r, origin, destination });
+  }
+  return out;
+}
+
+/**
  * MCP's route lookup by flight number, behind the same request-path guards as
  * the tail lookup: the caller's own share, the shared bucket, the breaker and
  * a bounded queue wait. It once called FR24 with none of them, so a tool
@@ -349,7 +370,7 @@ export async function guardedFlightRoutes(
   }
 
   try {
-    const routes = await fetchRoutes(flightNumber, targetDateUnix);
+    const routes = readableRoutes(await fetchRoutes(flightNumber, targetDateUnix));
     settleShare(true);
     fr24ThrottleStreak = 0;
     return routes;
@@ -515,6 +536,7 @@ export async function lookupFlightTailVerdict(
   const onDate = (a: UnreadLeg) =>
     matchesLocalDate(date, a.origin, a.departure_time, startOfDay, endOfDay);
   let unread = (unreadLegs.get(assignments) ?? []).filter(onDate).length;
+  const untyped = new Set<Assignment[number]>();
 
   for (const a of assignments) {
     // readableLegs has checked the airports, and blanked a tail that isn't one.
@@ -526,7 +548,10 @@ export async function lookupFlightTailVerdict(
     // for the tail stands in for it downstream; with neither, the aircraft
     // is one we can't place.
     const ownType = () => reader.assignedTails.getFleetEntryByTail(a.tail_number ?? "");
-    if (!aircraftModel && a.aircraft_model && !ownType()?.aircraft_type) unread++;
+    if (!aircraftModel && a.aircraft_model && !ownType()?.aircraft_type) {
+      unread++;
+      untyped.add(a);
+    }
     segments.push({
       tail_number: a.tail_number,
       aircraft_model: aircraftModel,
@@ -559,7 +584,9 @@ export async function lookupFlightTailVerdict(
   reader.noteUnreadAircraft(
     normalizedFlightNumber,
     [
-      ...assignments.map((a) => ({ ...a, unread: false })),
+      // An untyped leg is marked too: the stored answers (predict, the hub)
+      // would otherwise read its logged tail as the band's own aircraft.
+      ...assignments.map((a) => ({ ...a, unread: untyped.has(a) })),
       ...(unreadLegs.get(assignments) ?? []).map((u) => ({ ...u, unread: true })),
     ],
     asOf
