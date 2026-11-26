@@ -135,6 +135,7 @@ import {
   withLeg,
   withLegNote,
 } from "../api/check-flight-core";
+import { type LookupAsker, asLookupAsker } from "../api/lookup-budget";
 import { handleMcpRequest } from "../api/mcp-server";
 import { QATAR_PUBLISHED_DAYS_FORWARD, qatarEquipmentName } from "../api/qatar-status";
 import {
@@ -5969,6 +5970,16 @@ export function createApp(
     }
     const reader: ScopedReader = getReader(tenantScope(tenant));
     const ctx: RequestContext = { req, url, ip, site, tenant, reader, getReader, onStarlinkIp };
+    // The surfaces that can start a live FR24 lookup keep a share of them per
+    // caller, and a caller is what the limiter above counts: its meter and the
+    // address. Local calls are unmetered there and keep no share here.
+    const asker: LookupAsker | null =
+      meterClass === "api" || meterClass === "ext" || meterClass === "mcp"
+        ? {
+            caller: meterClass === "mcp" ? "mcp" : classifyLookupCaller(req, url),
+            key: LOCAL_IPS.has(ip) ? null : `${meterClass}:${ip}`,
+          }
+        : null;
 
     // "web.request" not "http.request" — the latter collides with dd-trace's
     // auto-instrumented outbound fetch spans. `type: web` marks it service-entry.
@@ -5999,7 +6010,7 @@ export function createApp(
         try {
           const keyFile = m ? null : indexNowKeyFile(indexNowKey, url.pathname);
           const response = m
-            ? await serve(m.entry, ctx)
+            ? await (asker ? asLookupAsker(asker, () => serve(m.entry, ctx)) : serve(m.entry, ctx))
             : keyFile
               ? text(keyFile, "text/plain", { cache: CACHE.day })
               : await notFound(site);

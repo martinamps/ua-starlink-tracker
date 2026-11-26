@@ -460,6 +460,10 @@ describe("a shed lookup is tagged with who called", () => {
     for (const headers of [
       { "user-agent": CHROME },
       { "user-agent": CHROME, "sec-fetch-site": "cross-site" },
+    ]) {
+      expect(classifyLookupCaller(...req(API, headers))).toBe("api");
+    }
+    for (const headers of [
       { "user-agent": CHROME, origin: "chrome-extension://someoneelsesextensionid" },
       { "user-agent": "curl/8.5.0", "sec-fetch-site": "same-origin" },
       { "user-agent": "node" },
@@ -469,8 +473,10 @@ describe("a shed lookup is tagged with who called", () => {
     }
   });
 
-  test("the tag holds three words, whatever is passed", () => {
-    for (const raw of ["page", "extension", "other"]) expect(normalizeLookupCaller(raw)).toBe(raw);
+  test("the tag holds its five words, whatever is passed", () => {
+    for (const raw of ["page", "api", "extension", "mcp", "other"]) {
+      expect(normalizeLookupCaller(raw)).toBe(raw);
+    }
     for (const raw of [null, undefined, "", "Page", "extension,env:prod", "x".repeat(500)]) {
       expect(normalizeLookupCaller(raw)).toBe("other");
     }
@@ -534,7 +540,7 @@ describe("a shed lookup is tagged with who called", () => {
       for (const r of responses) expect(r.status).toBe(200);
       await Bun.sleep(0);
     });
-    expect(seen.map((t) => t.caller)).toEqual(["extension", "page", "other"]);
+    expect(seen.map((t) => t.caller)).toEqual(["extension", "page", "api"]);
     db.close();
   });
 });
