@@ -852,13 +852,15 @@ const AIRLINE_DEFS = {
         label: "Aer Lingus media centre",
         url: "https://mediacentre.aerlingus.com/pressrelease/details/108/26586",
       },
-      // The same release: "free ultra high-speed Wi-Fi powered by Starlink in
-      // every cabin".
-      claim: "Starlink is available across all its transatlantic routes, free in every cabin",
+      // "Free" is from the same paragraph. The release's "in every cabin" is
+      // in a bullet on what the A330 refit "will deliver", so it is not said
+      // of today here.
+      claim: "free Starlink Wi-Fi is available across all its transatlantic routes",
       // Its release of March 29, 2026: "beginning with aircraft flying to
       // North America, followed by those serving European destinations".
       beyond: "It has not said that of its European flights",
-      // Ireland only, though Aer Lingus sells UK flights too. Its own
+      // Ireland only: our own narrowing, never the airline's words, and the
+      // answer says so. Aer Lingus sells UK flights too, but its own
       // transatlantic flights from Manchester were reported to end in March
       // 2026 (Voyages d'Affaires, January 13, 2026), which leaves an EI number
       // between Britain and North America to a partner's aircraft, and the
@@ -869,7 +871,7 @@ const AIRLINE_DEFS = {
         const farSide = (c: string | null) => c === "US" || c === "CA" || c === "MX";
         return (a === "IE" && farSide(b)) || (b === "IE" && farSide(a));
       },
-      coversLabel: "flights between Ireland and North America, the ones Aer Lingus flies itself",
+      coversLabel: "flights between Ireland and North America",
       // The last day of the winter 2026-27 schedule season, the one the
       // statement was made in. The summer schedule (from March 28, 2027) can
       // bring routes and leased aircraft the statement never saw.
@@ -1452,6 +1454,13 @@ export function publicAirlines(): AirlineConfig[] {
  * airline plus those flagged hubFlightLookup. */
 export function hubLookupAirlines(): AirlineConfig[] {
   return enabledAirlines().filter((a) => a.publicInHub || Boolean(a.hubFlightLookup));
+}
+
+/** Airlines a `?scope=` on the MCP endpoint can pin: the one list behind the
+ * server's check and the page that offers the scopes. An airline answered by
+ * statement alone has no fleet for a scoped server's tools to read. */
+export function mcpScopeAirlines(): AirlineConfig[] {
+  return hubLookupAirlines().filter((a) => !a.statementRule);
 }
 
 /** The rule for "published on a hub content surface", as a predicate so it can

@@ -1,4 +1,9 @@
-import { type SiteConfig, hubLookupAirlines, siteAirline } from "../airlines/registry";
+import {
+  type SiteConfig,
+  hubLookupAirlines,
+  mcpScopeAirlines,
+  siteAirline,
+} from "../airlines/registry";
 import { ClientScriptTag } from "./layout";
 import type { Link } from "./layout";
 import {
@@ -64,7 +69,7 @@ export function mcpPageCopy(site: SiteConfig): { dek: string; prompts: string[] 
 export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) {
   const { dek, prompts } = mcpPageCopy(site);
   const screenshots = site.scope === SCREENSHOT_AIRLINE;
-  const scopeCodes = site.scope === "ALL" ? hubLookupAirlines().map((a) => a.code) : [];
+  const scopeCodes = site.scope === "ALL" ? mcpScopeAirlines().map((a) => a.code) : [];
   const mcpUrl = `https://${site.canonicalHost}/mcp`;
   const claudeConnectorsUrl = "https://claude.ai/settings/connectors?modal=add-custom-connector";
   const claudeCodeCommand = `claude mcp add --transport http starlink ${mcpUrl}`;
@@ -134,7 +139,7 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
           </ul>
           {scopeCodes.length > 0 && (
             <p className="mt-4 pt-3 border-t border-subtle text-xs text-muted">
-              One address answers all {scopeCodes.length} airlines. To pin one, add{" "}
+              One address answers all {hubLookupAirlines().length} airlines. To pin one, add{" "}
               <code className="font-mono text-accent">?scope={scopeCodes[0]}</code> (or{" "}
               {scopeCodes.slice(1).join(", ")}) to the URL.
             </p>

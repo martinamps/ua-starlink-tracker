@@ -32,6 +32,8 @@ const TODAY = "2026-09-19";
 const D1 = addDaysISO(TODAY, 1);
 const FAR = addDaysISO(TODAY, 10);
 const PAST = addDaysISO(TODAY, -5);
+// Inside the dates Aer Lingus's statement is applied to (the clock here is before it).
+const EI_DAY = "2026-12-01";
 const at = (date: string, hhmm: string) => utc(`${date}T${hhmm}:00Z`);
 
 type Leg = {
@@ -242,6 +244,9 @@ const CASES: Case[] = [
   api(HUB, "/api/check-any-flight", "UA1001", "bad"),
   { name: "HUB any missing params", host: HUB, path: "/api/check-any-flight?date=2026-09-20" },
   api(UA, "/api/check-any-flight", "UA1001", D1),
+  // Aer Lingus, by its statement: the ask for a route, and a covered route.
+  api(HUB, "/api/check-any-flight", "EI105", EI_DAY),
+  api(HUB, "/api/check-any-flight", "EI105", EI_DAY, "&origin=DUB&destination=JFK"),
   ...(
     [
       ["AS100", D1],

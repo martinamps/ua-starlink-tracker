@@ -1100,6 +1100,68 @@
       "error": "Not found"
     }
   },
+  "airlinestarlinktracker.com /api/check-any-flight EI105 2026-12-01": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "Aer Lingus",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "needs_route",
+        "quote": "The service is already available across all Aer Lingus transatlantic routes.",
+        "as_of": "2026-11-18",
+        "source": {
+          "label": "Aer Lingus media centre",
+          "url": "https://mediacentre.aerlingus.com/pressrelease/details/108/26586"
+        },
+        "valid_through": "2027-03-27"
+      },
+      "reason": "Aer Lingus said on Nov 18, 2026 that free Starlink Wi-Fi is available across all its transatlantic routes. It has not said that of its European flights. We hold no Aer Lingus schedule, so a flight number alone can't be placed on a route: give the origin and destination airports to get an answer for this flight.",
+      "flights": []
+    }
+  },
+  "airlinestarlinktracker.com /api/check-any-flight EI105 2026-12-01&origin=DUB&destination=JFK": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "no-store, max-age=0",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-headers": "Content-Type",
+      "vary": "Host"
+    },
+    "json": {
+      "hasStarlink": null,
+      "airline": "Aer Lingus",
+      "confidence": "statement",
+      "airline_statement": {
+        "answer": "likely",
+        "quote": "The service is already available across all Aer Lingus transatlantic routes.",
+        "as_of": "2026-11-18",
+        "source": {
+          "label": "Aer Lingus media centre",
+          "url": "https://mediacentre.aerlingus.com/pressrelease/details/108/26586"
+        },
+        "valid_through": "2027-03-27"
+      },
+      "reason": "Likely yes. Aer Lingus said on Nov 18, 2026 that free Starlink Wi-Fi is available across all its transatlantic routes. That holds for flights Aer Lingus itself operates, not for a flight a partner airline flies under an EI number, and a last-minute aircraft change can alter it.",
+      "leg": {
+        "origin": "DUB",
+        "destination": "JFK",
+        "match": "no_data",
+        "otherLegs": []
+      },
+      "flights": []
+    }
+  },
   "alaskastarlinktracker.com /api/check-flight AS100 2026-09-20": {
     "status": 200,
     "headers": {

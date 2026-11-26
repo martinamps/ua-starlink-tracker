@@ -63,7 +63,7 @@ export function statementAnswer(
       case "needs_route":
         return `${said}. ${rule.beyond}. We hold no ${cfg.name} schedule, so a flight number alone can't be placed on a route: give the origin and destination airports to get an answer for this flight.`;
       case "not_covered":
-        return `No yes or no for ${route?.origin} → ${route?.destination}. ${said}; we apply that only to ${rule.coversLabel}. ${rule.beyond}.`;
+        return `No yes or no for ${route?.origin} → ${route?.destination}. ${said}. ${rule.beyond}. We apply its words only to ${rule.coversLabel}: that limit is our choice, not the airline's.`;
       case "outside_dates":
         return ask.today > rule.validThrough
           ? `No yes or no. ${said}. We applied that to flights through ${through}, ${rule.validThroughReason}, and have not read it again since.`

@@ -46,6 +46,7 @@ import {
   SITES,
   heldBackCount,
   hubLookupAirlines,
+  mcpScopeAirlines,
   siteForAirline,
   verifierReadsWifi,
 } from "../airlines/registry";
@@ -253,12 +254,7 @@ function toolError(text: string, reason: ToolErrorReason): ToolResult {
 // already answers for: an enabled-but-unpublished airline (collecting data
 // before launch) must not be reachable through ?scope=. An airline answered
 // by statement alone has no fleet for a scoped server's tools to read.
-export const VALID_SCOPES: readonly Scope[] = [
-  "ALL",
-  ...hubLookupAirlines()
-    .filter((a) => !a.statementRule)
-    .map((a) => a.code),
-];
+export const VALID_SCOPES: readonly Scope[] = ["ALL", ...mcpScopeAirlines().map((a) => a.code)];
 
 function isValidScope(s: string): s is Scope {
   return (VALID_SCOPES as readonly string[]).includes(s);
@@ -1435,8 +1431,8 @@ function formatCarrierPrediction(
     answer.kind === "penetration"
       ? `**${normalized}**: ${joinSentences(describeCarrierPrediction(cfg, answer), "For a firm answer, use check_flight with a date to see the scheduled aircraft")}`
       : answer.kind === "statement"
-        ? // Its own sentence already asks for what check_flight needs.
-          describeCarrierPrediction(cfg, answer)
+        ? // This tool takes no airports, and only a route places the flight.
+          `${cfg.name} is answered by route, from its own dated statement: call check_flight with this flight number, its date, and the origin and destination airports.`
         : joinSentences(
             describeCarrierPrediction(cfg, answer),
             "Use check_flight with a date to see the scheduled aircraft"

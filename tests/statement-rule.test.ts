@@ -394,13 +394,6 @@ describe("what the hub serves", () => {
     expect(routed.text).not.toContain("no assignment data");
   });
 
-  test("MCP predict_flight_starlink invents no date and asks for the route", async () => {
-    const r = await mcpTool(app, HUB, "predict_flight_starlink", { flight_number: "EI105" });
-    expect(r.isError).toBe(false);
-    expect(r.text).toBe(statementAnswer(cfg, { today }).sentence);
-    expect(r.text).not.toMatch(/\d{4}-\d{2}-\d{2}/);
-  });
-
   test("the hub's MCP instructions say to pass the route; a ?scope=EI override is ignored", async () => {
     const init = await postMcp(app, HUB, "initialize", {});
     expect(init.result.instructions).toContain(
@@ -479,5 +472,47 @@ describe("the hub page", () => {
     expect(carrierCode("EIN105")).toBe("EI");
     expect(carrierCode("UA1736")).toBe("UA");
     expect(carrierCode("1736")).toBe("");
+  });
+});
+
+describe("what the second look found", () => {
+  test("the hub's MCP page offers exactly the scopes the server takes", async () => {
+    const { text } = await bodyOf(app, "/mcp", HUB);
+    const offered =
+      /To pin one, add[\s\S]*?to the URL/.exec(text)?.[0].replace(/<[^>]+>/g, "") ?? "";
+    const codes = offered.match(/\b[A-Z]{2}\b/g) ?? [];
+    expect(codes.sort()).toEqual(VALID_SCOPES.filter((s) => s !== "ALL").sort());
+    expect(codes).not.toContain("EI");
+  });
+
+  test("nothing said of today carries 'in every cabin': that is the refit's promise", async () => {
+    expect(rule.claim).not.toMatch(/cabin/i);
+    expect(rule.claim).toContain("free");
+    for (const a of [
+      ask(),
+      ask("DUB", "JFK"),
+      ask("DUB", "LHR"),
+      ask("DUB", "JFK", "2027-04-02"),
+    ]) {
+      expect(a.sentence).not.toMatch(/cabin/i);
+    }
+    expect(EI.rollout.phaseNote ?? "").not.toMatch(/cabin/i);
+    expect(factsBySlug("aer-lingus")?.summary ?? "").not.toMatch(/every cabin/i);
+  });
+
+  test("the narrowing is said as our choice, with no word on who flies which flight", () => {
+    const s = ask("DUB", "LHR").sentence;
+    expect(rule.coversLabel).not.toMatch(/flies|flown|operat/i);
+    expect(s).not.toMatch(/flies itself/i);
+    expect(s).toContain("our choice");
+    expect(s).toContain(rule.coversLabel);
+  });
+
+  test("MCP predict_flight_starlink sends an EI number to check_flight, asking for nothing it can't take", async () => {
+    const r = await mcpTool(app, HUB, "predict_flight_starlink", { flight_number: "EI105" });
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain("check_flight");
+    expect(r.text).not.toContain("give the origin and destination");
+    expect(r.text).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 });
