@@ -90,6 +90,7 @@ import {
   siteAirline,
   siteForAirline,
   uiAccent,
+  verifierReadsWifi,
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import {
@@ -4032,6 +4033,7 @@ const fleetPage: Handler = (ctx) => {
       shareCard: resolveShareCard(ctx.site.scope),
       cite: citeStat(ctx),
       airlineCount: programme?.airlineCount ?? null,
+      chartGaps: programme?.chartGaps ?? null,
       countParts: cfg && programme ? programmePartsText(cfg, programme) : null,
       typeLinks,
       installRateHref:
@@ -4402,6 +4404,14 @@ function typeOutlookRef(
   };
 }
 
+/** What the Dataset description may claim of the airline's site: only a check
+ * that reads Wi-Fi cross-references Wi-Fi against it. */
+function datasetSiteCheck(cfg: AirlineConfig): string {
+  return verifierReadsWifi(cfg)
+    ? cfg.verifySite
+    : `${cfg.verifySite}'s flight status (which aircraft flies a flight, not its Wi-Fi)`;
+}
+
 const methodologyPage: Handler = (ctx) => {
   // methodologyPage is airline-site-only; siteAirline throws (fail closed) on the hub.
   const cfg = siteAirline(ctx.site);
@@ -4425,7 +4435,7 @@ const methodologyPage: Handler = (ctx) => {
     "@context": "https://schema.org",
     "@type": "Dataset",
     name: `${cfg.name} Starlink WiFi rollout — per-aircraft installation status`,
-    description: `Per-aircraft Starlink WiFi installation status across the ${cfg.name} fleet: equipped tail numbers, verification records, and rollout counts, cross-referenced against ${cfg.verifySite}, fleet and schedule data, and officially reported fleet figures. Updated continuously.`,
+    description: `Per-aircraft Starlink WiFi installation status across the ${cfg.name} fleet: equipped tail numbers, verification records, and rollout counts, cross-referenced against ${datasetSiteCheck(cfg)}, fleet and schedule data, and officially reported fleet figures. Updated continuously.`,
     url: `https://${host}/methodology`,
     creator: { "@type": "Organization", name: ctx.site.brand.title, url: `https://${host}/` },
     isAccessibleForFree: true,

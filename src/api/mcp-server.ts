@@ -47,6 +47,7 @@ import {
   heldBackCount,
   hubLookupAirlines,
   siteForAirline,
+  verifierReadsWifi,
 } from "../airlines/registry";
 import {
   type AirlineOwnCount,
@@ -101,6 +102,7 @@ import {
   isPlausibleFlightNumber,
   legOffRoute,
   legSubject,
+  listedWording,
   normalizeAirportCode,
   parseLegQuery,
   recordFlightLookup,
@@ -315,10 +317,17 @@ function buildTools(scope: Scope) {
         ? " Also accepts ICAO airline codes like UAL544; use the marketing flight number (UA5212, not SKW5212)."
         : "";
 
+  // "Not yet verified" only where a check can come: the hub includes United,
+  // and a one-airline scope follows that airline's own check.
+  const listedBut =
+    scope !== "ALL" && !verifierReadsWifi(AIRLINES[scope as AirlineCode])
+      ? "not confirmed"
+      : "not yet verified";
+
   const tools = [
     {
       name: "check_flight",
-      description: `Use when the user asks "does my flight have Starlink/WiFi?" with a specific ${carrierAdj} flight number and date. Returns YES if the published aircraft assignment is a plane verified to have Starlink, LIKELY YES if that plane is listed as Starlink-equipped but not yet verified, NO if it is a plane verified to have other WiFi, or a probability estimate if no assignment exists yet (assignments publish ~2 days out). An assignment can still change through an aircraft swap. For dates further out, call predict_flight_starlink directly — check_flight just falls through to the same estimate with extra latency.`,
+      description: `Use when the user asks "does my flight have Starlink/WiFi?" with a specific ${carrierAdj} flight number and date. Returns YES if the published aircraft assignment is a plane verified to have Starlink, LIKELY YES if that plane is listed as Starlink-equipped but ${listedBut}, NO if it is a plane verified to have other WiFi, or a probability estimate if no assignment exists yet (assignments publish ~2 days out). An assignment can still change through an aircraft swap. For dates further out, call predict_flight_starlink directly — check_flight just falls through to the same estimate with extra latency.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -788,19 +797,29 @@ export async function renderCheckFlightVerdict(
           )
         );
       }
+      const { siteLimit } = listedWording(cfg);
       const unverifiedAgainst = `not yet verified against ${cfg.verifySite}`;
+      const confirmOnSite = `Check ${cfg.verifySite} or the flight status 24h out to confirm.`;
       const source = cfg.communitySource
         ? {
             where: `listed with Starlink in the ${cfg.communitySource.label} (community data, ${unverifiedAgainst})`,
-            caveat: "Community data can lag an install or a swap.",
+            caveat: `Community data can lag an install or a swap. ${confirmOnSite}`,
           }
-        : {
-            where: `tracked as Starlink in the fleet spreadsheet (${unverifiedAgainst})`,
-            caveat: "Spreadsheet data is usually accurate but unverified.",
-          };
+        : siteLimit
+          ? // No spreadsheet and no check to wait for: the tail is on our list
+            // from a report, and the airline's site can't settle it.
+            {
+              where: `on our list of Starlink aircraft (listed from a report, not confirmed: ${siteLimit})`,
+              caveat:
+                "The list can lag an install, and the aircraft can still be swapped before departure.",
+            }
+          : {
+              where: `tracked as Starlink in the fleet spreadsheet (${unverifiedAgainst})`,
+              caveat: `Spreadsheet data is usually accurate but unverified. ${confirmOnSite}`,
+            };
       return textResult(
         withLegNote(
-          `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a tail ${source.where}:\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\n${source.caveat} Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
+          `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a tail ${source.where}:\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\n${source.caveat}`,
           verdict
         )
       );
@@ -835,10 +854,13 @@ export async function renderCheckFlightVerdict(
     // fallback that /api/check-flight uses (disabled on the hub for both, see
     // toolCheckFlight), so MCP and the extension API converge per host.
     case "fr24": {
+      const { siteLimit } = listedWording(cfg);
       const lead =
         verdictConfidence(verdict) === "verified"
           ? `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is assigned to a verified Starlink aircraft (via live tail lookup):`
-          : `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a Starlink-listed aircraft not yet verified against ${cfg.verifySite} (via live tail lookup):`;
+          : siteLimit
+            ? `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a Starlink-listed aircraft, not confirmed: ${siteLimit} (via live tail lookup):`
+            : `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a Starlink-listed aircraft not yet verified against ${cfg.verifySite} (via live tail lookup):`;
       return textResult(
         withLegNote(
           `${lead}\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,

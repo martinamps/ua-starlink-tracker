@@ -22,6 +22,7 @@ export {
   normalizeCarrierPrefix,
   normalizeOpCarrier,
   normalizeProbeOutcome,
+  normalizeAirborneMatch,
   normalizeStarlinkStatus,
   classifyUserAgent,
   classifyRequest,

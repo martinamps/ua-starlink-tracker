@@ -40,6 +40,9 @@ export function providerLabels(scope: "tail" | "type" | "mixed"): Record<WifiPro
   if (scope === "tail") return PROVIDER_LABEL;
   return {
     ...PROVIDER_LABEL,
+    // No check reads Wi-Fi off these airlines' sites, so "not yet" would
+    // promise one; the hub mixes both and keeps the united wording.
+    ...(scope === "type" && { starlink_listed: "Starlink (listed, not confirmed)" }),
     unknown: scope === "type" ? "No per-aircraft data" : "No data yet",
   };
 }

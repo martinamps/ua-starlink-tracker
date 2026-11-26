@@ -26,15 +26,19 @@ import {
 import { getFleetProgress } from "./database";
 import {
   type AirlineChartCount,
+  type AirlineChartGaps,
   type ProgrammeHeadline,
   countRoster,
   programmeHeadline,
+  programmeRoster,
   tenantProgrammeRoster,
 } from "./roster";
 import { equippedSql } from "./sql/equipped";
 
 interface ChartType {
   family: string;
+  /** The tracker's own grouping: express, mainline_nb, mainline_wb, partner. */
+  segment: string;
   connected: number;
   total: number;
 }
@@ -71,7 +75,7 @@ function storedChart(db: Database, code: string, today: string): ChartRead {
     const sized = { family, connected: r.starlink_complete ?? -1, total: r.total ?? -1 };
     const bad = chartCountProblem([sized]);
     if (bad) return { chart: null, problem: bad };
-    const t = byFamily.get(family) ?? { family, connected: 0, total: 0 };
+    const t = byFamily.get(family) ?? { family, segment: r.segment, connected: 0, total: 0 };
     t.connected += sized.connected;
     t.total += sized.total;
     byFamily.set(family, t);
@@ -194,6 +198,41 @@ export function airlineChartCount(
   };
 }
 
+const isMainline = (segment: string) => segment.startsWith("mainline");
+
+/**
+ * The chart against the airline's own named tails, type by type. Read apart
+ * from airlineChartCount on purpose: that one is gated on the fleet totals,
+ * and a type can run ahead on the chart while another runs behind. A partner's
+ * types are left out; they are counted by type on both sides.
+ */
+export function airlineChartGaps(
+  db: Database,
+  code: string,
+  today = utcDay()
+): AirlineChartGaps | null {
+  const { chart } = boundedChart(db, code, today);
+  if (!AIRLINES[code]?.officialTracker || !chart) return null;
+  const own = programmeRoster(db, code);
+  const named = countRoster(own, (t) => t.family);
+  const ownTypes = chart.types.filter((t) => t.segment !== "partner");
+  const types = ownTypes
+    .map((t) => ({
+      family: t.family,
+      connected: t.connected,
+      total: t.total,
+      named: named.get(t.family)?.equipped ?? 0,
+    }))
+    .filter((t) => t.connected > t.named);
+  const mainline = {
+    connected: ownTypes.filter((t) => isMainline(t.segment)).reduce((s, t) => s + t.connected, 0),
+    named: own.filter((t) => t.fleet === "mainline" && t.equipped).length,
+  };
+  const mainlineGap = mainline.connected > mainline.named ? mainline : null;
+  if (types.length === 0 && !mainlineGap) return null;
+  return { asOf: chart.asOf, types, mainline: mainlineGap };
+}
+
 /** programmeHeadline with the airline's own chart attached where it applies. */
 export function programmeHeadlineWithChart(
   db: Database,
@@ -202,5 +241,9 @@ export function programmeHeadlineWithChart(
 ): ProgrammeHeadline | null {
   const headline = programmeHeadline(db, code);
   if (!headline) return null;
-  return { ...headline, airlineCount: airlineChartCount(db, code, headline, today) };
+  return {
+    ...headline,
+    airlineCount: airlineChartCount(db, code, headline, today),
+    chartGaps: airlineChartGaps(db, code, today),
+  };
 }

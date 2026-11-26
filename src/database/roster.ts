@@ -110,6 +110,22 @@ export interface AirlineChartCount {
   rosterDiff: Array<{ family: string; ours: number; chart: number | null }>;
 }
 
+/**
+ * Where the airline's chart counts more aircraft than this site names by
+ * tail: per type of its own, and over its mainline jets. Independent of the
+ * headline, so a type's gap shows even while the totals happen to agree.
+ */
+export interface AirlineChartGaps {
+  /** The chart's own "last updated" date, YYYY-MM-DD. */
+  asOf: string;
+  /** Types the chart counts more of than are named here. `total` is the
+   * chart's own fleet size for the type. */
+  types: Array<{ family: string; connected: number; total: number; named: number }>;
+  /** The airline's own mainline jets, chart against named tails; null unless
+   * the chart counts more. */
+  mainline: { connected: number; named: number } | null;
+}
+
 export interface ProgrammeHeadline extends RosterCount {
   noun: string;
   /** One row per partner slice, for the hero's segment list. */
@@ -117,6 +133,8 @@ export interface ProgrammeHeadline extends RosterCount {
   /** Set by programmeHeadlineWithChart (airline-count.ts); null or absent
    * when the airline's chart counts no more than the named tails. */
   airlineCount?: AirlineChartCount | null;
+  /** Set alongside airlineCount; null or absent when no type runs ahead. */
+  chartGaps?: AirlineChartGaps | null;
 }
 
 /** The tenant headline over tenantProgrammeRoster; null for an airline with no

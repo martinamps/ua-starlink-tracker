@@ -7,7 +7,6 @@ import {
   ownCountAsOf,
   partnerIsByType,
   statsParts,
-  unnamedSentence,
 } from "../published-count";
 import { AIRLINES, airlineHomeUrl } from "../registry";
 import { fleetTargetSentence } from "./fleet-target";
@@ -20,6 +19,13 @@ const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, t
 // aircraft plus Hawaiian's A321neo and A330s (registry programmePartners).
 // Where Alaska's stored chart counts more than the tails named here, the
 // panel prints both, each with whose it is.
+/** The chart's mainline figure beside ours, while it runs ahead. The hero
+ * panel names the types; this answer already gives our own mainline count. */
+const chartMainline = (s: ContentStats) =>
+  s.chartGaps?.mainline
+    ? `Alaska's own chart counts ${fmt(s.chartGaps.mainline.connected)} mainline jets ${ownCountAsOf(s.chartGaps)} and doesn't say which. `
+    : "";
+
 const ASHero = ({ stats }: HeroProps) => (
   <RolloutPanel
     stats={stats}
@@ -109,8 +115,7 @@ export const content: AirlineContent = {
           {statsParts(AIRLINES.AS, s)
             ? `. The Alaska figures count the tails we can name; the Hawaiian jets are ${BY_TYPE_METHOD}.`
             : ", counting the tails we can name."}{" "}
-          Mainline installs started with the 737 MAX 8.{" "}
-          {s.airlineCount ? `${unnamedSentence(AIRLINES.AS, s.airlineCount) ?? ""} ` : ""}The{" "}
+          Mainline installs started with the 737 MAX 8. {chartMainline(s)}The{" "}
           <a href="/fleet" className={LINK}>
             fleet page
           </a>{" "}

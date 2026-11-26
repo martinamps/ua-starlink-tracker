@@ -1186,6 +1186,21 @@ const VERIFIER_EVIDENCE: Record<
   "qatar-fltstatus": "type_derived",
 };
 
+/** The site each verifier backend reads, as a reader would name it. Hawaiian's
+ * check reads alaskaair.com, not the site its travellers are sent to. */
+export const VERIFIER_SITE: Record<NonNullable<AirlineConfig["verifierBackend"]>, string> = {
+  united: "united.com",
+  "alaska-json": "alaskaair.com",
+  "qatar-fltstatus": "qatarairways.com",
+};
+
+/** Whether this airline's own check reads Wi-Fi off the airline's site. Where
+ * it doesn't, a listed tail can never become a checked one, so nothing may
+ * say it is "not yet" verified. */
+export function verifierReadsWifi(cfg: Pick<AirlineConfig, "verifierBackend">): boolean {
+  return !!cfg.verifierBackend && VERIFIER_EVIDENCE[cfg.verifierBackend] === "observed_wifi";
+}
+
 /** Sources whose wifi field is an actually-observed signal — the only
  * evidence allowed to WRITE verified_wifi via consensus. Type-derived truth
  * flows through reconcileTypeDeterministicFleets instead, so a type inference

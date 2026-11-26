@@ -85,6 +85,7 @@ export function buildContentStats(input: {
     totalCount: programme?.total ?? input.totalCount,
     noun: programme?.noun,
     airlineCount: programme?.airlineCount,
+    chartGaps: programme?.chartGaps,
     partners: programme?.partners.map((p) => ({
       label: p.label,
       starlink: p.equipped,

@@ -21,11 +21,13 @@ import {
 import {
   type AirlineConfig,
   COMMUNITY_SOURCE_UPDATED_META,
+  VERIFIER_SITE,
   enabledAirlines,
   hubLookupAirlines,
   isGuideStale,
   programTypeOf,
   publicAirlines,
+  verifierReadsWifi,
 } from "../airlines/registry";
 import type {
   DepartureSlot,
@@ -445,6 +447,40 @@ export function verdictAssignment(verdict: AssignedVerdict): VerdictAssignment {
       return segmentAssignment(s, s.verified_wifi ?? null);
     }
   }
+}
+
+/**
+ * How a tail that is listed with Starlink and settled by no check is worded.
+ * "Not yet verified" holds only where our check reads Wi-Fi (united.com). A
+ * check that sees the aircraft and not its Wi-Fi (alaskaair.com) will never
+ * settle the tail, so those answers say what the site can't show instead of
+ * promising a check. The united wording is pinned by the contract goldens.
+ */
+export interface ListedWording {
+  /** After "Starlink": "listed, not yet verified". */
+  status: string;
+  /** Why the airline's site can't settle it; null where our check can. */
+  siteLimit: string | null;
+}
+
+/** "alaskaair.com shows which aircraft flies a flight, not its Wi-Fi": names
+ * the site our check reads, or the airline's own where we check none. */
+export function siteShowsAircraftNotWifi(
+  cfg: Pick<AirlineConfig, "verifierBackend" | "verifySite">
+): string {
+  const site = cfg.verifierBackend ? VERIFIER_SITE[cfg.verifierBackend] : cfg.verifySite;
+  return `${site} shows which aircraft flies a flight, not its Wi-Fi`;
+}
+
+export function listedWording(
+  cfg: Pick<AirlineConfig, "verifierBackend" | "verifySite">
+): ListedWording {
+  if (verifierReadsWifi(cfg)) return { status: "listed, not yet verified", siteLimit: null };
+  return {
+    status: "listed, not confirmed",
+    // No backend: we read nothing off that site, so we say nothing about it.
+    siteLimit: cfg.verifierBackend ? siteShowsAircraftNotWifi(cfg) : null,
+  };
 }
 
 export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {

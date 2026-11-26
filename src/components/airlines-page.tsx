@@ -34,6 +34,7 @@ import {
   factsStamp,
   formatFactDate,
 } from "../airlines/rollout-facts";
+import { siteShowsAircraftNotWifi } from "../api/check-flight-core";
 import type { PerAirlineStat } from "../types";
 import { ROLLOUT_TONE, StagePill, factsStage, shareIsPublishable, trackedStage } from "./atoms";
 import {
@@ -474,6 +475,15 @@ function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
   );
 }
 
+/** How the aircraft outside a type rule are known. Only the united backend
+ * reads a Wi-Fi listing; the others see which aircraft flies a flight, so a
+ * tail there is listed from a report and never checked. */
+function restOfFleetNote(cfg: AirlineConfig): string {
+  return cfg.verifierBackend === "united"
+    ? `The rest is checked one aircraft at a time against ${cfg.verifySite}.`
+    : `The rest is listed only where a report names the aircraft: ${siteShowsAircraftNotWifi(cfg)}.`;
+}
+
 export function AirlineDetailPage({
   site,
   overview,
@@ -530,7 +540,7 @@ export function AirlineDetailPage({
             {checkedPlaneByPlane(cfg)
               ? `Checked plane by plane against ${cfg.verifySite}.`
               : partlyByType(cfg)
-                ? `Part of the fleet follows aircraft type, per ${cfg.shortName}'s announcements. The rest is checked one aircraft at a time against ${cfg.verifySite}.`
+                ? `Part of the fleet follows aircraft type, per ${cfg.shortName}'s announcements. ${restOfFleetNote(cfg)}`
                 : `Status follows aircraft type, per ${cfg.shortName}'s announcements.`}
             {cfg.brand.pressReleaseUrl && (
               <>

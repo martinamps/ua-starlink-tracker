@@ -30,6 +30,8 @@ export type WatchVerdict =
       tail: string;
       aircraft: string | null;
       confidence: "verified" | "likely";
+      /** listedWording's status for this airline; the united wording when absent. */
+      listedStatus?: string;
     }
   | { state: "no"; tail: string | null; aircraft: string | null; wifi: string | null }
   | { state: "none"; message: string | null };
@@ -187,7 +189,7 @@ export function watchDescription(input: WatchIcsInput): string[] {
       break;
     case "yes":
       lines.push(
-        `Aircraft: ${verdict.tail}${verdict.aircraft ? ` (${verdict.aircraft})` : ""} — Starlink ${verdict.confidence === "verified" ? "verified" : "listed, not yet verified"}.`
+        `Aircraft: ${verdict.tail}${verdict.aircraft ? ` (${verdict.aircraft})` : ""} — Starlink ${verdict.confidence === "verified" ? "verified" : (verdict.listedStatus ?? "listed, not yet verified")}.`
       );
       break;
     case "no":

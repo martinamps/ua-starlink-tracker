@@ -16,7 +16,7 @@
  */
 
 import { fmt } from "../components/ui/format";
-import type { AirlineChartCount, ProgrammeHeadline } from "../database/roster";
+import type { AirlineChartCount, AirlineChartGaps, ProgrammeHeadline } from "../database/roster";
 import { aircraftName } from "./aircraft-families";
 import { AIRLINES, type AirlineConfig, heldBackCount, wifiPhaseFamilies } from "./registry";
 import {
@@ -376,4 +376,32 @@ export function rosterDiffSentence(cfg: AirlineConfig, c: AirlineChartCount): st
       : `counts ${typeCount(d.chart, d.family)} where we list ${d.ours === 0 ? "none" : fmt(d.ours)}`
   );
   return parts.length > 0 ? `${cfg.shortName}'s chart ${listed(parts)}.` : null;
+}
+
+/**
+ * A type the airline's chart counts more of than this site names, said both
+ * ways with the chart's owner and date: "Alaska counts 4 of its 80 737 MAX 9s
+ * with Starlink (its chart of Oct 26, 2026). It doesn't say which aircraft,
+ * so we list none by tail yet." Null once every type's figures meet.
+ */
+export function typeGapSentences(cfg: AirlineConfig, gaps: AirlineChartGaps): string | null {
+  const { types } = gaps;
+  if (types.length === 0) return null;
+  const counts = listed(
+    types.map((t) => `${fmt(t.connected)} of its ${typeCount(t.total, t.family)}`)
+  );
+  const ours = types.every((t) => t.named === 0)
+    ? "so we list none by tail yet"
+    : types.length === 1
+      ? `and we list ${fmt(types[0].named)} by tail`
+      : `and by tail we list ${listed(types.map((t) => `${t.named === 0 ? "none" : fmt(t.named)} of the ${aircraftName(t.family)}s`))}`;
+  return `${cfg.shortName} counts ${counts} with Starlink (its chart of ${formatFactDate(gaps.asOf)}). It doesn't say which aircraft, ${ours}.`;
+}
+
+/** After our own mainline figure: "named by tail; Alaska counts 16 as of Oct
+ * 26, 2026". Null unless the chart counts more mainline jets than are named. */
+export function mainlineChartNote(cfg: AirlineConfig, gaps: AirlineChartGaps): string | null {
+  return gaps.mainline
+    ? `named by tail; ${cfg.shortName} counts ${fmt(gaps.mainline.connected)} ${ownCountAsOf(gaps)}`
+    : null;
 }
