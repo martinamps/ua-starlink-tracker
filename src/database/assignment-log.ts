@@ -70,6 +70,14 @@ export const ASSIGNMENT_LOG_DDL = `
     PRIMARY KEY (airline, flight_number, dep_date, departure_airport, tail_number)
   );
   CREATE INDEX IF NOT EXISTS idx_fa_dep_date ON flown_assignments(dep_date);
+  CREATE TABLE IF NOT EXISTS unread_aircraft_log (
+    airline TEXT NOT NULL,
+    flight_number TEXT NOT NULL,
+    dep_date TEXT NOT NULL,
+    departure_airport TEXT NOT NULL,
+    seen_at INTEGER NOT NULL,
+    PRIMARY KEY (airline, flight_number, dep_date, departure_airport)
+  );
 `;
 
 /** Kept past departure so a feed refreshed the day after still shows the swap. */
@@ -281,6 +289,94 @@ export function withdrawUnreturnedSightings(
   } catch {}
 }
 
+/** A departure a lookup returned, and whether it named an aircraft there we could not read. */
+export interface DepartureReading {
+  /** "" when the lookup's origin was not shaped like an airport. */
+  origin: string;
+  departure_time: number;
+  unread: boolean;
+}
+
+/**
+ * A lookup that names an aircraft we can't read logs no tail, so an answer
+ * made from stored data alone would not know the flight has an aircraft we
+ * know nothing about. Each such departure is marked here instead. A later
+ * lookup that returns the departure with nothing unread on it clears the
+ * mark; one that does not return it leaves it, as absence is not news. A mark
+ * with no airport can't be matched to a departure, so any later lookup that
+ * returns a departure clears it and sets it again if it still stands.
+ */
+export function noteUnreadAircraft(
+  db: Database,
+  airlines: readonly string[],
+  flightNumber: string,
+  returned: readonly DepartureReading[],
+  now: number
+): void {
+  const cfg = detectAirline(
+    flightNumber,
+    airlines.map((a) => AIRLINES[a]).filter((c): c is AirlineConfig => !!c)
+  );
+  if (!cfg || returned.length === 0) return;
+  const variants = buildAirlineFlightNumberVariants(cfg, flightNumber);
+  const departures = new Map<string, { origin: string; date: string; unread: boolean }>();
+  for (const r of returned) {
+    const date = departureLocalDate(r.origin, r.departure_time);
+    const key = `${r.origin}|${date}`;
+    const unread = r.unread || (departures.get(key)?.unread ?? false);
+    departures.set(key, { origin: r.origin, date, unread });
+  }
+  const a = airlineIn(airlines);
+  const flight = `${a.sql} AND flight_number IN (${placeholders(variants)})`;
+  try {
+    db.transaction(() => {
+      db.query(
+        `DELETE FROM unread_aircraft_log WHERE ${flight} AND departure_airport = '' AND seen_at <= ?`
+      ).run(...a.params, ...variants, now);
+      for (const d of departures.values()) {
+        if (d.unread) {
+          db.query(
+            `INSERT INTO unread_aircraft_log (airline, flight_number, dep_date, departure_airport, seen_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT (airline, flight_number, dep_date, departure_airport) DO UPDATE SET
+               seen_at = MAX(seen_at, excluded.seen_at)`
+          ).run(cfg.code, ensureAirlinePrefix(cfg, flightNumber), d.date, d.origin, now);
+        } else {
+          db.query(
+            `DELETE FROM unread_aircraft_log
+             WHERE ${flight} AND dep_date = ? AND departure_airport = ? AND seen_at <= ?`
+          ).run(...a.params, ...variants, d.date, d.origin, now);
+        }
+      }
+    })();
+  } catch {}
+}
+
+/**
+ * Did the last lookup to return one of the flight's departures on that local
+ * date name an aircraft there we could not read. False on a database this
+ * version never booted on (a read-only copy), which has no such table.
+ */
+export function hasUnreadAircraft(
+  db: Database,
+  airlines: readonly string[],
+  variants: readonly string[],
+  depDate: string
+): boolean {
+  if (variants.length === 0) return false;
+  const a = airlineIn(airlines);
+  try {
+    return !!db
+      .query(
+        `SELECT 1 FROM unread_aircraft_log
+         WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND dep_date = ? LIMIT 1`
+      )
+      .get(...a.params, ...variants, depDate);
+  } catch {
+    return false;
+  }
+}
+
 /** Rows leaving the log move to flown_assignments, which trims at a year. */
 export function pruneAssignmentLog(db: Database, now: number): void {
   const cutoff = utcDate(now - ASSIGNMENT_LOG_RETENTION_DAYS * DAY_SEC);
@@ -290,6 +386,7 @@ export function pruneAssignmentLog(db: Database, now: number): void {
        SELECT ${LOG_COLUMNS} FROM flight_assignment_log WHERE dep_date < ? AND dep_date >= ?`
     ).run(cutoff, utcDate(now - FLOWN_RETENTION_DAYS * DAY_SEC));
     db.query("DELETE FROM flight_assignment_log WHERE dep_date < ?").run(cutoff);
+    db.query("DELETE FROM unread_aircraft_log WHERE dep_date < ?").run(cutoff);
     db.query("DELETE FROM flown_assignments WHERE dep_date < ?").run(
       utcDate(now - FLOWN_RETENTION_DAYS * DAY_SEC)
     );

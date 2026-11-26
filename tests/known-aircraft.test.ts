@@ -26,7 +26,11 @@ import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import { type CheckFlightBody, renderFlightAnswer } from "../src/client/flight-answer";
 import { usualAnswer } from "../src/components/check-flight/usual";
 import { monthDay, wholeDates } from "../src/components/ui/format";
-import { getLoggedAircraft, logFlightAssignments } from "../src/database/assignment-log";
+import {
+  getLoggedAircraft,
+  logFlightAssignments,
+  pruneAssignmentLog,
+} from "../src/database/assignment-log";
 import { utcDay } from "../src/database/chart-bounds";
 import { createReaderFactory } from "../src/database/reader";
 import { runAlaskaTrackerSync } from "../src/scripts/alaska-tracker";
@@ -1241,6 +1245,156 @@ describe("an aircraft the lookup named and we could not read is not the band's a
     expect(segments?.map((s) => s.hasStarlink)).toEqual([true, null]);
     expect(unreadAircraft(segments)).toBe(0);
     db.close();
+  });
+
+  describe("answers made from stored data remember it", () => {
+    const hubPath = `/api/check-any-flight?flight_number=AS812&date=${DATE}`;
+    const noLookup = () =>
+      setAssignmentFetcher(async () => {
+        throw new Error("a stored-data answer asked the live lookup");
+      });
+    const tailUnread = UNREADABLE[0][1];
+
+    /** The site asks the lookup, which answers `legs`; then the hub and a first paint answer with no lookup. */
+    async function afterLookup(
+      app: ReturnType<typeof createApp>,
+      legs: Array<ReturnType<typeof leg>>
+    ) {
+      setAssignmentFetcher(async (fn) => (fn === "AS812" ? legs : []));
+      const site = await datedBody(app, "AS812");
+      noLookup();
+      const hub = await jsonOf(app, hubPath, HUB_HOST);
+      const page = await bodyOf(app, `/check-flight/AS812/${DATE}`, AS_HOST);
+      return { site, hub, page };
+    }
+
+    // The sixth case's tail is readable, so it is logged and already answered without a number.
+    test.each(UNREADABLE.slice(0, 5))(
+      "%s: the hub and the first paint say no more than the site",
+      async (_n, bad) => {
+        const db = await fleetDb();
+        const app = createApp(db);
+        noLookup();
+        const flatYes = await jsonOf(app, hubPath, HUB_HOST);
+        expect(flatYes.probability).toBe(1);
+
+        const { site, hub, page } = await afterLookup(app, [bad]);
+        expect(site.message).toContain("could not read");
+        expect(hub.hasStarlink).toBeNull();
+        expect(hub.probability).toBeUndefined();
+        expect(JSON.stringify(hub)).toContain("could not read");
+        expect(JSON.stringify(hub)).not.toMatch(/System|<img|000000|H<b>/);
+        expect(page.text).toContain("could not read");
+        expect(page.text).not.toContain("Yes — AS812");
+        expect(page.text).not.toMatch(/~100% Starlink|About 100% chance/);
+        // The shape the hub already gives a tail it can't type: no number, no new key.
+        for (const key of Object.keys(hub)) expect(flatYes).toHaveProperty(key);
+
+        const mcp = await mcpTool(app, HUB_HOST, "check_flight", {
+          flight_number: "AS812",
+          date: DATE,
+        });
+        expect(mcp.text).toContain("could not read");
+        expect(mcp.text).not.toMatch(/100%/);
+        db.close();
+      }
+    );
+
+    test("another date of the number, and another number, keep their answers", async () => {
+      const db = await fleetDb();
+      const app = createApp(db);
+      noLookup();
+      const otherDate = `/api/check-any-flight?flight_number=AS812&date=${utcDay((now + 2 * DAY) * 1000)}`;
+      const otherNumber = `/api/check-any-flight?flight_number=AS814&date=${DATE}`;
+      const before = [
+        await jsonOf(app, otherDate, HUB_HOST),
+        await jsonOf(app, otherNumber, HUB_HOST),
+      ];
+      await afterLookup(app, [tailUnread]);
+      expect(await jsonOf(app, otherDate, HUB_HOST)).toEqual(before[0]);
+      expect(await jsonOf(app, otherNumber, HUB_HOST)).toEqual(before[1]);
+      db.close();
+    });
+
+    const CLEARS: Array<[string, ReturnType<typeof leg>]> = [
+      ["names no aircraft there", leg(null, null, ["HNL", "SFO"])],
+      ["names a listed tail there", leg(tail("a330", 0), TYPES.a330.type, ["HNL", "SFO"])],
+    ];
+    test.each(CLEARS)(
+      "a later lookup that %s clears it: the hub follows the site",
+      async (_n, later) => {
+        const db = await fleetDb();
+        const app = createApp(db);
+        noLookup();
+        const flatYes = await jsonOf(app, hubPath, HUB_HOST);
+        expect((await afterLookup(app, [tailUnread])).hub.probability).toBeUndefined();
+        const { site, hub } = await afterLookup(app, [later]);
+        expect(JSON.stringify(site)).not.toContain("could not read");
+        expect(JSON.stringify(hub)).not.toContain("could not read");
+        if (later.tail_number) expect(hub.hasStarlink).toBe(true);
+        else expect(hub).toEqual(flatYes);
+        db.close();
+      }
+    );
+
+    test("an unreadable origin's mark is cleared by a later lookup that returns a departure", async () => {
+      const db = await fleetDb();
+      const app = createApp(db);
+      noLookup();
+      const flatYes = await jsonOf(app, hubPath, HUB_HOST);
+      expect((await afterLookup(app, [UNREADABLE[4][1]])).hub.probability).toBeUndefined();
+      expect((await afterLookup(app, [leg(null, null, ["HNL", "SFO"])])).hub).toEqual(flatYes);
+      db.close();
+    });
+
+    const KEEPS: Array<[string, Array<ReturnType<typeof leg>> | Error]> = [
+      ["fails", new Fr24UnavailableError("down")],
+      ["returns no departure at all", []],
+      [
+        "returns only another day's departure",
+        [{ ...leg(null, null, ["HNL", "SFO"]), departure_time: DEPARTS + 2 * DAY }],
+      ],
+      ["returns only another airport's departure", [leg(null, null, ["OGG", "SFO"])]],
+    ];
+    test.each(KEEPS)("a later lookup that %s keeps it", async (_n, later) => {
+      const db = await fleetDb();
+      const app = createApp(db);
+      await afterLookup(app, [tailUnread]);
+      setAssignmentFetcher(async (fn) => {
+        if (later instanceof Error) throw later;
+        return fn === "AS812" ? later : [];
+      });
+      await datedBody(app, "AS812");
+      noLookup();
+      const hub = await jsonOf(app, hubPath, HUB_HOST);
+      expect(hub.probability).toBeUndefined();
+      expect(JSON.stringify(hub)).toContain("could not read");
+      db.close();
+    });
+
+    test("a database this version never booted on answers as before, with no error", async () => {
+      const db = await fleetDb();
+      const app = createApp(db);
+      noLookup();
+      const flatYes = await jsonOf(app, hubPath, HUB_HOST);
+      db.run("DROP TABLE unread_aircraft_log");
+      expect(await jsonOf(app, hubPath, HUB_HOST)).toEqual(flatYes);
+      const { site } = await afterLookup(app, [tailUnread]);
+      expect(site.message).toContain("could not read");
+      db.close();
+    });
+
+    test("the mark leaves with the log's own rows", async () => {
+      const db = await fleetDb();
+      const app = createApp(db);
+      await afterLookup(app, [tailUnread]);
+      const marks = () =>
+        (db.query("SELECT count(*) AS n FROM unread_aircraft_log").get() as { n: number }).n;
+      expect(marks()).toBe(1);
+      pruneAssignmentLog(db, now + 30 * DAY);
+      expect(marks()).toBe(0);
+      db.close();
+    });
   });
 });
 

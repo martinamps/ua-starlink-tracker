@@ -1093,7 +1093,11 @@ async function verdictFromRows(
           aircraftType: deps.aircraftType,
           nowMs: now * 1000,
           scheduled: scheduledAircraft(cfg, reader, normalized, date, live, leg),
-          unreadAircraft: unreadAircraft(raw) > 0,
+          // With no lookup's answer in hand, the mark the last one left stands in.
+          unreadAircraft:
+            unreadAircraft(raw) > 0 ||
+            (raw === null &&
+              reader.hasUnreadAircraft(buildAirlineFlightNumberVariants(cfg, normalized), date)),
         }),
         fr24Error,
         ...(fr24Shed ? { fr24Shed } : {}),

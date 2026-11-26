@@ -52,6 +52,7 @@ import {
 } from "./airports";
 import {
   type AssignmentLogRow,
+  type DepartureReading,
   type LoggedAircraft,
   type ResolvedLeg,
   type ReturnedDeparture,
@@ -62,8 +63,10 @@ import {
   getListedSightings,
   getLoggedAircraft,
   getSameDayStarlinkAlternatives,
+  hasUnreadAircraft,
   isKnownFlightNumber,
   logResolvedAssignments,
+  noteUnreadAircraft,
   withdrawUnreturnedSightings,
 } from "./assignment-log";
 import {
@@ -442,6 +445,16 @@ export interface ScopedReader {
     returned: readonly ReturnedDeparture[],
     now: number
   ): void;
+  /** Marks the departures a lookup named an unreadable aircraft on, and clears
+   * the mark on those it returned without one; spans operatingPartners. */
+  noteUnreadAircraft(
+    flightNumber: string,
+    returned: readonly DepartureReading[],
+    now: number
+  ): void;
+  /** The last lookup to return a departure of the flight on that local date
+   * named an aircraft there we could not read. */
+  hasUnreadAircraft(variants: readonly string[], depDate: string): boolean;
 
   getQatarScheduleStats(): {
     total: number;
@@ -694,6 +707,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     logResolvedAssignments: (fn, legs, now) => logResolvedAssignments(db, airlines, fn, legs, now),
     withdrawUnreturnedSightings: (fn, returned, now) =>
       withdrawUnreturnedSightings(db, withOperatingPartners(airlines), fn, returned, now),
+    noteUnreadAircraft: (fn, returned, now) =>
+      noteUnreadAircraft(db, withOperatingPartners(airlines), fn, returned, now),
+    hasUnreadAircraft: (v, d) => hasUnreadAircraft(db, withOperatingPartners(airlines), v, d),
 
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),

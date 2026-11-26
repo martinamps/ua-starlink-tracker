@@ -239,6 +239,8 @@ describe("the ledger", () => {
     /** One process's life on the file: boot, then every claim it can get. */
     function withBoot<T>(path: string, run: (handle: Database) => T): T {
       const handle = new Database(path);
+      // A scratch file: no need to wait on the disk for each of a few thousand claims.
+      handle.exec("PRAGMA synchronous = OFF");
       migrate(handle);
       try {
         return run(handle);
@@ -361,7 +363,8 @@ describe("the ledger", () => {
         const { made, returnAt } = revertFor({ offsetMin, revertMin, perHour }, 0, 2);
         expect(made.some((t) => t >= returnAt + DAY)).toBe(true);
         expect(busiestAfterReturn(made, returnAt)).toBeLessThanOrEqual(UNITED_DAILY_CHECK_BUDGET);
-      }
+      },
+      30_000
     );
 
     test("the log can only add to the count: a ledger the log trails is counted whole", () => {

@@ -464,6 +464,14 @@ export async function lookupFlightTailVerdict(
     ],
     nowSec
   );
+  reader.noteUnreadAircraft(
+    normalizedFlightNumber,
+    [
+      ...assignments.map((a) => ({ ...a, unread: false })),
+      ...(unreadLegs.get(assignments) ?? []).map((u) => ({ ...u, unread: true })),
+    ],
+    nowSec
+  );
   if (segments.length > 0) reader.logResolvedAssignments(normalizedFlightNumber, segments, nowSec);
   unreadCounts.set(segments, unread);
   return segments;
