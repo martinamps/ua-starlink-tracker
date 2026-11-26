@@ -194,14 +194,19 @@ const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : ma
 /** A daily rate: whole above ten, one decimal below, so 0.5 a day is not "1". */
 export const perDayLabel = (n: number) => fmt(n, n >= 10 ? 0 : 1);
 
-/** The page's lead: the window's count, or the plainest true thing without one. */
-export function airportDek(board: AirportBoard): string {
+/**
+ * The page's lead: the window's count, or the plainest true thing without one.
+ * `destinations: false` leaves the count of destinations out, for a line that
+ * has to make room.
+ */
+export function airportDek(board: AirportBoard, { destinations = true } = {}): string {
   const { place, airline, windowHours, history } = board;
   const n = board.departures.length;
   const window = `the next ${windowHours} hours`;
   if (n > 0) {
     const m = board.destinations.filter((d) => d.departures.length > 0).length;
-    return `${fmt(n)} ${airline} ${plural(n, "departure")} from ${place} in ${window} ${n === 1 ? "is on a Starlink plane" : "are on Starlink planes"}, to ${fmt(m)} ${plural(m, "destination")}.`;
+    const to = destinations ? `, to ${fmt(m)} ${plural(m, "destination")}` : "";
+    return `${fmt(n)} ${airline} ${plural(n, "departure")} from ${place} in ${window} ${n === 1 ? "is on a Starlink plane" : "are on Starlink planes"}${to}.`;
   }
   const none = `No Starlink plane is assigned to ${article(airline)} ${airline} departure from ${place} in ${window}`;
   if (history.starlink > 0) {
@@ -232,18 +237,24 @@ export function airportQuestion(board: AirportBoard): string {
 
 /**
  * The search snippet: the lead, and the next flight when there is one and it
- * fits whole under `max`. The destination gives up its city before the
- * sentence is dropped: a snippet that ends mid-flight says less than the lead.
+ * fits whole under `max`. The destination gives up its city first, then the
+ * lead its count of destinations (the page gives it), before the sentence is
+ * dropped: with the longer place names four pages in five had lost the next
+ * flight, and a snippet that ends mid-flight says less than the lead.
  */
 export function airportMetaDescription(board: AirportBoard, max: number): string {
   const lead = airportDek(board);
   const next = board.departures[0];
   if (!next) return lead;
-  const sentence = (to: string) =>
-    `${lead} The next is ${next.flight_number} to ${to} on ${next.day} at ${next.time}.`;
+  const short = airportDek(board, { destinations: false });
+  const sentence = (opening: string, to: string) =>
+    `${opening} The next is ${next.flight_number} to ${to} on ${next.day} at ${next.time}.`;
   return (
-    [sentence(airportWithCode(next.destination)), sentence(next.destination)].find(
-      (t) => t.length <= max
-    ) ?? lead
+    [
+      sentence(lead, airportWithCode(next.destination)),
+      sentence(lead, next.destination),
+      sentence(short, airportWithCode(next.destination)),
+      sentence(short, next.destination),
+    ].find((t) => t.length <= max) ?? lead
   );
 }

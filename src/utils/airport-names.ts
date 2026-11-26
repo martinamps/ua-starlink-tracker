@@ -10,6 +10,11 @@
  *  - a city with several airports carries the airport's spoken name as the
  *    second value (O'Hare, Dulles), so a page says which one;
  *  - a name shared by two cities carries its state or country.
+ * Stewart (SWF) is "New York Stewart" by name and in Newburgh, 60 miles from
+ * the city, so it takes the register's municipality. Two codes the register
+ * no longer lists take the row of the airport they belong to: KIV is
+ * Chișinău's, now RMO there, and MLH is the Mulhouse code of Basel/Mulhouse
+ * (BSL), named for its own city so the two rows differ.
  * A wrong city is worse than a bare code: a code that is not here prints as
  * its code alone, so add one only after checking it.
  */
@@ -292,6 +297,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   KHH: ["Kaohsiung"],
   KHI: ["Karachi"],
   KIN: ["Kingston, Jamaica"],
+  KIV: ["Chișinău"],
   KIX: ["Osaka", "Kansai"],
   KOA: ["Kona"],
   KRK: ["Kraków"],
@@ -371,6 +377,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   MLA: ["Malta"],
   MLB: ["Melbourne, Florida"],
   MLE: ["Malé"],
+  MLH: ["Mulhouse"],
   MLI: ["Moline"],
   MLM: ["Morelia"],
   MNL: ["Manila"],
@@ -546,7 +553,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   SUX: ["Sioux City"],
   SVO: ["Moscow", "Sheremetyevo"],
   SVQ: ["Seville"],
-  SWF: ["New York", "Stewart"],
+  SWF: ["Newburgh", "Stewart"],
   SXB: ["Strasbourg"],
   SXM: ["St. Maarten"],
   SYD: ["Sydney"],
@@ -608,12 +615,17 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   ZRH: ["Zurich"],
 };
 
-/** "Chicago O'Hare", "Denver"; null for a code the table lacks. */
+/**
+ * "Chicago O'Hare", "Denver"; null for a code the table lacks. It is printed
+ * beside the code, so an airport people call by its code is the city alone:
+ * "JFK New York", not "JFK New York JFK".
+ */
 export function airportPlaceName(iata: string): string | null {
-  const entry = AIRPORT_NAMES[iata.toUpperCase()];
+  const code = iata.toUpperCase();
+  const entry = AIRPORT_NAMES[code];
   if (!entry) return null;
   const [city, airport] = entry;
-  return airport ? `${city} ${airport}` : city;
+  return airport && airport !== code ? `${city} ${airport}` : city;
 }
 
 /** "Chicago" for ORD: the city alone, for a sentence that needs no airport. */

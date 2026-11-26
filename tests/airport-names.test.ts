@@ -95,6 +95,28 @@ describe("the names table", () => {
     expect(airportWithCode("ord")).toBe(airportWithCode("ORD"));
   });
 
+  test("the name printed beside a code never repeats the code", () => {
+    // The ranking and a destination row print the code, then this: "JFK New York".
+    expect(airportPlaceName("JFK")).toBe("New York");
+    expect(airportPlaceName("LGA")).toBe("New York LaGuardia");
+    for (const [code] of entries) {
+      expect(airportPlaceName(code)?.split(/[ ,/]+/), code).not.toContain(code);
+    }
+  });
+
+  test("an airport named for a city it is not in takes the city it is in", () => {
+    // "New York Stewart" is 60 miles from New York: its times are Newburgh's.
+    expect(airportCity("SWF")).toBe("Newburgh");
+    expect(airportWithCode("SWF")).toBe("Newburgh Stewart (SWF)");
+  });
+
+  test("two codes the register lists under another code still have a name", () => {
+    for (const code of ["KIV", "MLH"]) {
+      expect(airportTimezone(code), code).toBeTruthy();
+      expect(airportWithCode(code), code).not.toBe(code);
+    }
+  });
+
   test("a code the table lacks comes back alone", () => {
     expect(AIRPORT_NAMES[UNKNOWN]).toBeUndefined();
     expect(airportWithCode(UNKNOWN)).toBe(UNKNOWN);
@@ -186,6 +208,39 @@ describe("the page", () => {
     expect(body).toContain(`Times local to ${airportCity("ORD")}.`);
     expect(body).not.toContain("Times are in UTC");
     for (const d of board("ORD").departures) expect(d.time).not.toMatch(/ UTC$/);
+  });
+
+  test("a long place name costs the description its count of destinations, not the next flight", () => {
+    const base = board("ORD");
+    const next = base.departures[0];
+    const says = `The next is ${next.flight_number} to`;
+    // Where the whole lead and the next flight fit, nothing changes.
+    const fits = airportMetaDescription(base, 400);
+    expect(fits).toContain(airportDek(base));
+    expect(fits).toContain(`${says} ${airportWithCode(next.destination)} on`);
+    let kept = 0;
+    let shortened = 0;
+    for (const code of Object.keys(AIRPORT_NAMES)) {
+      const b = { ...base, airport: code, place: airportWithCode(code) };
+      const d = airportMetaDescription(b, 158);
+      expect(d.length, d).toBeLessThanOrEqual(158);
+      expect(d, code).toContain(b.place);
+      if (!d.includes(says)) {
+        // Dropped only where even the short lead and the bare code do not fit.
+        expect(d).toBe(airportDek(b));
+        continue;
+      }
+      kept++;
+      if (!d.startsWith(airportDek(b))) {
+        shortened++;
+        expect(d.startsWith(airportDek(b, { destinations: false })), d).toBe(true);
+        // The count is given up only when keeping it would have lost the flight.
+        const whole = `${airportDek(b)} ${says} ${next.destination} on ${next.day} at ${next.time}.`;
+        expect(whole.length, code).toBeGreaterThan(158);
+      }
+    }
+    expect(shortened).toBeGreaterThan(0);
+    expect(kept / Object.keys(AIRPORT_NAMES).length).toBeGreaterThan(0.9);
   });
 
   test("every title fits the title budget, and no description is cut mid-sentence", () => {
