@@ -4,13 +4,12 @@
  * call are injected; nothing here touches the network.
  */
 
-import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { enabledAirlines } from "../src/airlines/registry";
-import { migrate, setMeta } from "../src/database/database";
+import { setMeta } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import {
   SOURCES,
@@ -34,7 +33,7 @@ import {
 } from "../src/scripts/united-verdict";
 import type { FleetStats } from "../src/types";
 import type { fetchAllSheets } from "../src/utils/utils";
-import { addFleet, addPlane, makeFreshDb, makeSyntheticDb } from "./helpers";
+import { addFleet, addPlane, makeFreshDb, makeSyntheticDb, openFileDb } from "./helpers";
 
 const HOUR = 3600 * 1000;
 const T0 = Date.UTC(2026, 10, 1, 12, 0, 0);
@@ -145,8 +144,7 @@ describe("the stored record", () => {
     const path = join(tmpdir(), `source-health-${process.pid}-${Date.now()}.sqlite`);
     try {
       withWebhook();
-      let db = new Database(path);
-      migrate(db);
+      let db = openFileDb(path);
       recordSourceSuccess(db, "sheet_scrape", "UA", T0);
       recordSourceFailure(db, "sheet_scrape", "UA", "refused", T0 + HOUR);
       const first = recorder();
@@ -154,8 +152,7 @@ describe("the stored record", () => {
       expect(about(first.sent, "sheet_scrape").length).toBe(1);
       db.close();
 
-      db = new Database(path);
-      migrate(db);
+      db = openFileDb(path);
       const state = readSourceState(db, "sheet_scrape", "UA");
       expect(state?.lastSuccessAt).toBe(T0);
       expect(state?.lastFailureKind).toBe("refused");
@@ -178,13 +175,11 @@ describe("the stored record", () => {
     const path = join(tmpdir(), `source-health-first-${process.pid}-${Date.now()}.sqlite`);
     try {
       withWebhook();
-      let db = new Database(path);
-      migrate(db);
+      let db = openFileDb(path);
       await checkSourceHealth(db, { now: T0, notify: recorder().notify });
       db.close();
 
-      db = new Database(path);
-      migrate(db);
+      db = openFileDb(path);
       const r = recorder();
       await checkSourceHealth(db, { now: T0 + 7 * HOUR, notify: r.notify });
       const notice = about(r.sent, "sheet_scrape");

@@ -59,6 +59,21 @@ export function makeFreshDb(): Database {
   return db;
 }
 
+/**
+ * A migrated database in a file, for a test that closes and reopens it.
+ * Building the schema on a new file commits each of its ~390 statements by
+ * itself, and every commit is an fsync: on a CI runner's disk they averaged
+ * ~13 ms in one run, so a first migrate alone could pass a test's 5 s.
+ * A reopen in the same process reads the OS page cache, not the platter, so
+ * syncing proves nothing here.
+ */
+export function openFileDb(path: string): Database {
+  const db = new Database(path);
+  db.exec("PRAGMA synchronous = OFF");
+  migrate(db);
+  return db;
+}
+
 /** The HTML from `heading` up to the next <h2>. Throws when the heading is
  * absent, so an assertion on the section can never pass on a missing one. */
 export function sectionOf(html: string, heading: string): string {
