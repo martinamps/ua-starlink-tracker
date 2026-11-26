@@ -65,6 +65,8 @@ export interface CheckFlightBody {
   prediction?: { probability: number; confidence?: string; n_observations?: number };
   flights?: WireFlight[];
   fallback?: { segments?: WireSegment[] };
+  /** The scheduled aircraft a type answer names. */
+  assignment?: { tail_number?: string | null };
   sameDayAlternatives?: WireAlternative[];
 }
 
@@ -429,7 +431,9 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
         ? `Based on the aircraft on ${fmt(n)} recent ${fn} flights.`
         : `We haven't seen ${fn} yet, so this is our estimate for flights like it.`
       : capitalize((body.message ?? "").replace(/^~\d+% Starlink probability: /, ""));
-  const note = degradedNote(body.message) ?? timingNote(ctx, ctx.airlineName);
+  const note =
+    degradedNote(body.message) ??
+    (body.assignment?.tail_number ? CHANGE_NOTE : timingNote(ctx, ctx.airlineName));
   // A type rule's headline is the whole answer; the API's sentence would repeat it.
   const detail = typeRule
     ? ""

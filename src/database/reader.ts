@@ -35,7 +35,11 @@ import {
   getAdsbFlightDraws,
   getAdsbFlightDrawsFor,
 } from "./adsb-flight-draws";
-import { programmeHeadlineWithChart } from "./airline-count";
+import {
+  type AirlineTypeCount,
+  airlineTypeCount,
+  programmeHeadlineWithChart,
+} from "./airline-count";
 import {
   type AirportDepartureRow,
   type AirportHistory,
@@ -45,11 +49,13 @@ import {
 } from "./airports";
 import {
   type AssignmentLogRow,
+  type LoggedAircraft,
   type ResolvedLeg,
   type SameDayAlternative,
   type SameDayAlternativesQuery,
   getAssignmentHistory,
   getFlownAssignmentHistory,
+  getLoggedAircraft,
   getSameDayStarlinkAlternatives,
   isKnownFlightNumber,
   logResolvedAssignments,
@@ -392,6 +398,12 @@ export interface ScopedReader {
   ): QatarScheduleRow[];
   /** Every tail the updater has seen on the flight's local date (Starlink Watch). */
   getAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
+  /** The newest tail logged per departure, with its fleet-list type; every
+   * date the log holds when `depDate` is absent. */
+  getLoggedAircraft(variants: readonly string[], depDate?: string): LoggedAircraft[];
+  /** The airline's own dated count for one aircraft family; null on the hub
+   * and wherever the stored chart has no usable line for it. */
+  getAirlineTypeCount(family: string): AirlineTypeCount | null;
   /** The same rows for a past date, read from the year-long flown record too. */
   getFlownAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
   /** A route, a scheduled leg or a logged assignment exists under one of the spellings. */
@@ -628,6 +640,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getQatarFetchCoverage: (p, d) => getQatarFetchCoverage(db, p, d),
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
+    getLoggedAircraft: (v, d) => getLoggedAircraft(db, withOperatingPartners(airlines), v, d),
+    getAirlineTypeCount: (family) => (scope === "ALL" ? null : airlineTypeCount(db, scope, family)),
     getFlownAssignmentHistory: (v, d) => getFlownAssignmentHistory(db, airlines, v, d),
     isKnownFlightNumber: (v) => isKnownFlightNumber(db, airlines, v),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),

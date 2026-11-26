@@ -3,6 +3,7 @@ import {
   capitalize,
   flightShare,
   fmt,
+  longDate,
   probLabel,
   probPhrase,
   probTier,
@@ -37,7 +38,8 @@ export function usualAnswer(flight: FlightFacts): UsualAnswer {
     };
   }
   const rule = flight.typeRule;
-  if (rule) {
+  if (rule?.aircraft) return aircraftAnswer(flight.airlineName, rule.aircraft, rule);
+  if (rule && rule.probability !== null) {
     const band = bandLabel(rule.label);
     if (rule.probability >= 1) {
       return {
@@ -78,5 +80,38 @@ export function usualAnswer(flight: FlightFacts): UsualAnswer {
     tone: "neutral",
   };
 }
+
+/** The answer the aircraft on this number decided: the airline's own count
+ * for its type as the figure, never a yes or no the count can't carry. */
+function aircraftAnswer(
+  airlineName: string,
+  sentence: string,
+  { probability, count }: NonNullable<FlightFacts["typeRule"]>
+): UsualAnswer {
+  if (count) {
+    return {
+      sentence: count.connected <= 0 ? `Not yet: ${lowerFirst(sentence)}` : sentence,
+      figure: `${fmt(count.connected)} of ${fmt(count.total)}`,
+      caption: `Connected, as counted by ${airlineName} on ${longDate(count.asOf)}`,
+      tone: "neutral",
+    };
+  }
+  if (probability === null) {
+    return {
+      sentence,
+      figure: "Depends",
+      caption: "On the aircraft that flies it",
+      tone: "neutral",
+    };
+  }
+  return {
+    sentence,
+    figure: probLabel(probability),
+    caption: "Of the aircraft that fly it have Starlink",
+    tone: PROB_TIER_TONE[probTier(probability)],
+  };
+}
+
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 export const usualSummary = (flight: FlightFacts): string => usualAnswer(flight).sentence;

@@ -67,7 +67,16 @@ export interface FlightFacts {
   } | null;
   /** For carriers whose flight-number band fixes the aircraft type (AS800–999
    * on Hawaiian widebodies): that band's Starlink share, the API's "type" answer. */
-  typeRule?: { probability: number; label: string } | null;
+  typeRule?: {
+    /** Null where the aircraft we know leaves no single share to quote. */
+    probability: number | null;
+    label: string;
+    /** Set when the aircraft we know on this number, not the band alone,
+     * decided the answer: the answer in prose. */
+    aircraft?: string;
+    /** The airline's own count behind `probability`, with the chart's date. */
+    count?: { connected: number; total: number; asOf: string };
+  } | null;
   aircraftTypes: string[];
   /** Newest check that found Starlink on this number: a check time, not a departure. */
   lastStarlink: { tail: string; checked_at: number } | null;

@@ -20,7 +20,13 @@ import {
 import { AIRLINES, type AirlineConfig } from "../airlines/registry";
 import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
-import { equippedSql, modHoldSql, starlinkFlag, tailEvidence } from "./sql/equipped";
+import {
+  equippedSql,
+  modHoldSql,
+  starlinkFlag,
+  tailEquippedSql,
+  tailEvidence,
+} from "./sql/equipped";
 import { airlineIn, placeholders } from "./sql/fragments";
 import { DAY_SEC } from "./sql/windows";
 
@@ -244,6 +250,63 @@ export function getAssignmentHistory(
        ORDER BY first_seen ASC, tail_number ASC`
     )
     .all(...a.params, ...variants, depDate) as AssignmentLogRow[];
+}
+
+/** The aircraft last logged on one departure of a flight. */
+export interface LoggedAircraft {
+  dep_date: string;
+  departure_airport: string;
+  arrival_airport: string | null;
+  tail_number: string;
+  /** From the fleet list, then the tail's listing; null for a tail in neither. */
+  aircraft_type: string | null;
+  equipped: boolean;
+}
+
+/**
+ * The newest tail logged for each departure of the flight (one local date, or
+ * every date the log still holds), with its type from our own fleet list. A
+ * swap leaves two tails on a departure; only the later sighting is current.
+ */
+export function getLoggedAircraft(
+  db: Database,
+  airlines: readonly string[],
+  variants: readonly string[],
+  depDate?: string
+): LoggedAircraft[] {
+  if (variants.length === 0) return [];
+  const a = airlineIn(airlines, "l.airline");
+  const scope = airlineIn(airlines, "_t.airline");
+  const listed = airlineIn(airlines, "_l.airline");
+  const rows = db
+    .query(
+      `SELECT l.dep_date, l.departure_airport, l.arrival_airport, l.tail_number,
+              COALESCE(
+                (SELECT _t.aircraft_type FROM united_fleet _t
+                 WHERE _t.tail_number = l.tail_number AND ${scope.sql} LIMIT 1),
+                (SELECT _l.Aircraft FROM starlink_planes _l
+                 WHERE _l.TailNumber = l.tail_number AND ${listed.sql} ORDER BY _l.id LIMIT 1)
+              ) AS aircraft_type,
+              CASE WHEN ${tailEquippedSql("l.tail_number")} THEN 1 ELSE 0 END AS equipped
+       FROM flight_assignment_log l
+       WHERE ${a.sql} AND l.flight_number IN (${placeholders(variants)})
+         ${depDate ? "AND l.dep_date = ?" : ""}
+       ORDER BY l.dep_date ASC, l.last_seen DESC, l.first_seen DESC`
+    )
+    .all(
+      ...scope.params,
+      ...listed.params,
+      ...a.params,
+      ...variants,
+      ...(depDate ? [depDate] : [])
+    ) as Array<Omit<LoggedAircraft, "equipped"> & { equipped: number }>;
+  const seen = new Set<string>();
+  return rows.flatMap((r) => {
+    const key = `${r.dep_date}|${r.departure_airport}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ ...r, equipped: r.equipped === 1 }];
+  });
 }
 
 /**

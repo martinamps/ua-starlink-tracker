@@ -44,6 +44,10 @@ export interface SubfleetDef {
   /** Flies only a fixed network (e.g. intra-Hawaii), so absence-based route
    * inference must never credit it to an unobserved route elsewhere. */
   routeScoped?: boolean;
+  /** Aircraft families (normalizeAircraftType keys) the band speaks for. The
+   * number only implies the aircraft: a flight we know is on another family
+   * is answered for that aircraft, not for the band. */
+  families?: readonly string[];
 }
 
 export interface PageBrand {
@@ -536,12 +540,14 @@ const AIRLINE_DEFS = {
         label: "Hawaiian-operated (A330/A321neo)",
         flightNumberHint: "AS800-999",
         penetrationOverride: 1,
+        families: ["A330", "A321"],
         match: (fn) => isHaMetal(flightNum(fn)),
       },
       {
         key: "mainline",
         label: "Mainline (737/787)",
         flightNumberHint: "AS1-799, AS1300-1999",
+        families: ["B737-700", "B737-800", "B737-900", "B737-MAX8", "B737-MAX9", "B787"],
         match: (fn) => {
           const n = flightNum(fn);
           return Number.isFinite(n) && n < 2000 && !isHaMetal(n) && !isHaInterisland(n);
@@ -554,6 +560,7 @@ const AIRLINE_DEFS = {
         penetrationOverride: 0,
         overrideReason: HA_INTERISLAND_REASON,
         routeScoped: true,
+        families: ["B717"],
         match: (fn) => isHaInterisland(flightNum(fn)),
       },
       {
@@ -566,6 +573,7 @@ const AIRLINE_DEFS = {
         // override keeps predictions right even before the type reconcile
         // settles a fresh roster's statuses.
         penetrationOverride: 1,
+        families: ["E175"],
         // AS9xxx are charters/positioning on mixed 737/HA metal, not E175s.
         match: (fn) => {
           const n = flightNum(fn);

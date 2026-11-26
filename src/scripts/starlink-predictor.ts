@@ -26,7 +26,11 @@
 
 import { Database } from "bun:sqlite";
 import { aircraftName, normalizeAircraftType } from "../airlines/aircraft-families";
-import { ensureAirlinePrefix, inferSubfleet } from "../airlines/flight-number";
+import {
+  buildAirlineFlightNumberVariants,
+  ensureAirlinePrefix,
+  inferSubfleet,
+} from "../airlines/flight-number";
 import {
   AIRLINES,
   type AirlineConfig,
@@ -43,8 +47,9 @@ import {
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import { formatFactDate } from "../airlines/rollout-facts";
-import { bandLabel } from "../components/ui/format";
+import { bandLabel, capitalize } from "../components/ui/format";
 import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
+import type { AirlineTypeCount } from "../database/airline-count";
 import type {
   FleetRosterEntry,
   GuideMark,
@@ -1206,9 +1211,9 @@ const MIN_PENETRATION_TOTAL = 5;
  * number; otherwise subfleet penetration; otherwise an honest no-model.
  */
 export type CarrierPrediction =
-  | { kind: "penetration"; sf: SubfleetDef; pen: ResolvedPenetration }
+  | { kind: "penetration"; sf: SubfleetDef; pen: ResolvedPenetration; aircraft?: AircraftBasis }
   | { kind: "type_split"; groups: { phase: WifiPhase; families: string[] }[] }
-  | { kind: "no_model"; reason: string }
+  | { kind: "no_model"; reason: string; aircraft?: AircraftBasis }
   // Community-source carriers (AF). Per programme type, never one blended
   // number: a flight number doesn't pin the type, and the types run from
   // "not started" to nearly done.
@@ -1245,6 +1250,33 @@ export type CarrierPrediction =
       guideStale: boolean;
     }
   | { kind: "partner_operated"; tail: string };
+
+/** One aircraft our own data puts on a flight. */
+export interface AircraftSighting {
+  tail: string;
+  aircraftType: string | null;
+  /** Listed as equipped: the flight updater logs these on its own, so a log
+   * holding them over-counts their type on the number. */
+  equipped: boolean;
+}
+
+/**
+ * Set on an answer the aircraft decided, where the flight number alone would
+ * have said something else: the band's fixed answer withdrawn, or one type's
+ * count in place of the band's blend.
+ */
+export interface AircraftBasis {
+  /** "scheduled": the aircraft on the asked date. "logged": every departure
+   * of the number the assignment log holds. */
+  basis: "scheduled" | "logged";
+  /** The one scheduled aircraft; null for a logged basis or several aircraft. */
+  tail: string | null;
+  aircraftType: string | null;
+  /** The answer in prose, without the probability lead. */
+  sentence: string;
+  /** The airline's own dated count the probability rests on, if any. */
+  count: AirlineTypeCount | null;
+}
 
 export function typeShare(t: Pick<TypeProgress, "equipped" | "total" | "excluded">): number {
   return t.excluded || t.total === 0 ? 0 : t.equipped / t.total;
@@ -1342,7 +1374,12 @@ export function carrierPrediction(
   cfg: AirlineConfig,
   reader: ScopedReader,
   flightNumber: string,
-  ctx: { aircraftType?: string | null; nowMs?: number } = {}
+  ctx: {
+    aircraftType?: string | null;
+    nowMs?: number;
+    /** The aircraft our data puts on the asked date; absent on an undated ask. */
+    scheduled?: readonly AircraftSighting[];
+  } = {}
 ): CarrierPrediction {
   const noModel: CarrierPrediction = {
     kind: "no_model",
@@ -1361,11 +1398,205 @@ export function carrierPrediction(
   if (groups) return { kind: "type_split", groups };
 
   const sf = cfg.subfleets.find((s) => s.match(flightNumber));
+  if (sf?.families) {
+    // The aircraft on the asked date, where we know it, speaks for that date;
+    // the number's other departures speak only where we don't.
+    const scheduled = typedSightings((ctx.scheduled ?? []).filter((a) => !a.equipped));
+    const byAircraft =
+      scheduled.length > 0
+        ? aircraftAnswer(cfg, reader, flightNumber, sf, "scheduled", scheduled)
+        : aircraftAnswer(
+            cfg,
+            reader,
+            flightNumber,
+            sf,
+            "logged",
+            typedSightings(loggedSightings(cfg, reader, flightNumber))
+          );
+    if (byAircraft) return byAircraft;
+  }
   const pen = sf ? subfleetPenetration(reader.getSubfleetPenetration(), sf) : null;
   if (sf && pen && (pen.synthetic || pen.total >= MIN_PENETRATION_TOTAL)) {
     return { kind: "penetration", sf, pen };
   }
   return noModel;
+}
+
+function loggedSightings(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string
+): AircraftSighting[] {
+  return reader
+    .getLoggedAircraft(buildAirlineFlightNumberVariants(cfg, flightNumber))
+    .map((r) => ({ tail: r.tail_number, aircraftType: r.aircraft_type, equipped: r.equipped }));
+}
+
+type TypedSighting = AircraftSighting & { family: string };
+
+/** A type string the normalizer can't place says nothing about the aircraft. */
+function typedSightings(sightings: readonly AircraftSighting[]): TypedSighting[] {
+  return sightings
+    .map((a) => ({ ...a, family: normalizeAircraftType(a.aircraftType) }))
+    .filter((a) => a.family !== "unknown" && a.family !== "other");
+}
+
+// One logged departure on a type is a swap as easily as a habit.
+const MIN_LOGGED_FOR_TYPE = 2;
+
+const article = (label: string) => (/^[AE]/.test(label) ? "an" : "a");
+
+function chartCountClause(cfg: AirlineConfig, c: AirlineTypeCount): string {
+  const name = plural(aircraftName(c.family));
+  const share =
+    c.connected <= 0
+      ? `none of its ${c.total} ${name}`
+      : c.connected >= c.total
+        ? `all ${c.total} of its ${name}`
+        : `${c.connected} of its ${c.total} ${name}`;
+  return `${cfg.shortName}'s own chart (${formatFactDate(c.asOf)}) counts ${share} as connected`;
+}
+
+/** "not the Hawaiian-operated A330/A321neo aircraft its number (AS800-999) usually means". */
+function overruledClause(sf: SubfleetDef): string {
+  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  return `not the ${bandLabel(sf.label)} aircraft its number${hint} usually means`;
+}
+
+/**
+ * The answer for a flight whose aircraft we know, or null where the flight
+ * number's own answer stands: no usable sighting, or every aircraft is one of
+ * the band's types and no single type's count applies.
+ *
+ * The aircraft can withdraw a band's fixed answer and can narrow a blended
+ * band to one type's count. It never grants a fixed yes the number did not
+ * already give: a tail is a yes only by being listed, which is settled before
+ * this is reached.
+ */
+function aircraftAnswer(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  sf: SubfleetDef,
+  basis: AircraftBasis["basis"],
+  typed: readonly TypedSighting[]
+): CarrierPrediction | null {
+  if (typed.length === 0) return null;
+  const inBand = (family: string) => sf.families?.includes(family) ?? false;
+  const fixed = sf.penetrationOverride != null;
+  const strays = typed.filter((a) => !inBand(a.family));
+  if (fixed ? strays.length === 0 : strays.length > 0) return null;
+
+  const flown = (family: string) => typed.filter((a) => a.family === family).length;
+  const families = [...new Set(typed.map((a) => a.family))].sort((a, b) => flown(b) - flown(a));
+  const label = (family: string) =>
+    aircraftName(typed.find((a) => a.family === family)?.aircraftType ?? family);
+  const scheduled = basis === "scheduled";
+  const one = typed.length === 1 && scheduled ? typed[0] : null;
+  if (!fixed && families.length > 1) return null;
+  const base = {
+    basis,
+    tail: one?.tail ?? null,
+    aircraftType: one?.aircraftType ?? null,
+  };
+
+  if (families.length > 1) {
+    const tails = (f: string) => typed.filter((a) => a.family === f).map((a) => a.tail);
+    const parts = families.map((f) =>
+      scheduled ? `${tails(f).join(", ")} (${label(f)})` : `the ${label(f)} on ${flown(f)}`
+    );
+    const notes = families.flatMap((f) => familyClause(cfg, reader, f) ?? []);
+    const sentence = joinSentences(
+      scheduled
+        ? `${flightNumber} is scheduled on more than one aircraft type: ${parts.join(" and ")}`
+        : `${flightNumber} flew on more than one aircraft type in the ${typed.length} departures we have on record: ${parts.join(" and ")}`,
+      ...notes.map(capitalize),
+      "Starlink depends on which aircraft flies yours"
+    );
+    return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count: null } };
+  }
+
+  const family = families[0];
+  const home = cfg.subfleets.find(
+    (s) => s.penetrationOverride == null && s.families?.includes(family)
+  );
+  const aLabel = `${article(label(family))} ${label(family)}`;
+  const who = one
+    ? `scheduled on ${one.tail}, ${aLabel}`
+    : scheduled
+      ? `scheduled on ${typed.map((a) => a.tail).join(" and ")}, each ${aLabel}`
+      : typed.length === 1
+        ? `the one departure we have on record was flown by ${aLabel}`
+        : `the ${typed.length} departures we have on record were all flown by the ${label(family)}`;
+  const subject = strays.length > 0 ? `${who}, ${overruledClause(sf)}` : who;
+
+  // A band of mixed types: the log can only narrow it on departures nobody
+  // tracked for having Starlink, and on more than one of them.
+  if (!fixed && !scheduled) {
+    if (typed.length < MIN_LOGGED_FOR_TYPE || typed.some((a) => a.equipped)) return null;
+  }
+
+  const count = home ? reader.getAirlineTypeCount(family) : null;
+  if (home && count) {
+    // A scheduled tail is not one we name, so it can only be among the
+    // connected aircraft the chart counts beyond those.
+    const unnamed = count.total - count.named;
+    const pct = scheduled
+      ? unnamed > 0
+        ? Math.max(0, count.connected - count.named) / unnamed
+        : 0
+      : count.connected / count.total;
+    const named =
+      scheduled && count.named > 0 && count.connected > 0
+        ? `We name ${count.named} of them by tail, and ${one ? `${one.tail} is not one` : "these are not among them"}`
+        : null;
+    const sentence = joinSentences(capitalize(subject), chartCountClause(cfg, count), named);
+    return {
+      kind: "penetration",
+      sf: home,
+      pen: { synthetic: false, equipped: count.connected, total: count.total, pct },
+      aircraft: { ...base, sentence, count },
+    };
+  }
+  if (!fixed) return null;
+
+  const pen = home ? subfleetPenetration(reader.getSubfleetPenetration(), home) : null;
+  if (home && pen && !pen.synthetic && pen.total >= MIN_PENETRATION_TOTAL) {
+    const sentence = joinSentences(
+      capitalize(subject),
+      `${pen.equipped} of ${pen.total} ${bandLabel(home.label)} aircraft have Starlink`
+    );
+    return { kind: "penetration", sf: home, pen, aircraft: { ...base, sentence, count: null } };
+  }
+  const sentence = joinSentences(
+    capitalize(subject),
+    capitalize(familyClause(cfg, reader, family) ?? "we have no Starlink count for that aircraft")
+  );
+  return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count: null } };
+}
+
+/** What we can say of one family on its own: its band's fixed answer, or the
+ * airline's count for it. */
+function familyClause(cfg: AirlineConfig, reader: ScopedReader, family: string): string | null {
+  const band = cfg.subfleets.find(
+    (s) => s.penetrationOverride != null && s.families?.includes(family)
+  );
+  if (band) {
+    const name = `${bandLabel(band.label)} aircraft`;
+    return (band.penetrationOverride ?? 0) >= 1
+      ? `every ${name} has Starlink`
+      : `${name} don't have Starlink`;
+  }
+  const count = reader.getAirlineTypeCount(family);
+  return count ? chartCountClause(cfg, count) : null;
+}
+
+/** The answer names the aircraft scheduled on the asked date. */
+export function namesScheduledAircraft(answer: CarrierPrediction): boolean {
+  return (
+    (answer.kind === "penetration" || answer.kind === "no_model") &&
+    answer.aircraft?.basis === "scheduled"
+  );
 }
 
 /** A named tail is a tail-level answer, not a per-type one. */
@@ -1529,6 +1760,10 @@ export function describeCarrierPrediction(
   }
   const { sf, pen } = answer;
   const pct = (pen.pct * 100).toFixed(0);
+  if (answer.aircraft) {
+    const said = answer.aircraft.sentence;
+    return `~${pct}% Starlink probability: ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
+  }
   // bandLabel drops the label's parentheses, so the hint is the only parenthetical.
   const band = `${bandLabel(sf.label)} aircraft${sf.flightNumberHint ? ` (${sf.flightNumberHint})` : ""}`;
   const lead = `~${pct}% Starlink probability`;

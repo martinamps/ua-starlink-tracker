@@ -76,6 +76,7 @@ import {
   describeCarrierPrediction,
   itineraryHourBudget,
   joinSentences,
+  namesScheduledAircraft,
   noModelConfidence,
   planItinerary,
   predictFlight,
@@ -881,7 +882,7 @@ export async function renderCheckFlightVerdict(
       // community carrier's named tail, which is itself the assignment.
       const lead = verdict.fr24Error
         ? `${fr24DegradedNote(verdict)} `
-        : noModelConfidence(verdict.answer) === "tail"
+        : noModelConfidence(verdict.answer) === "tail" || namesScheduledAircraft(verdict.answer)
           ? ""
           : "no assignment data. ";
       return textResult(

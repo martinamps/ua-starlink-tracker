@@ -67,6 +67,8 @@ const AIRPORT_ZONES: Record<string, string> = (() => {
 const typeSettled = (flight: FlightFacts) =>
   !flight.prediction?.n_observations &&
   !!flight.typeRule &&
+  !flight.typeRule.aircraft &&
+  flight.typeRule.probability !== null &&
   (flight.typeRule.probability >= 1 || flight.typeRule.probability <= 0);
 
 /** The flight has a number to quote for other dates, not just "no history yet". */

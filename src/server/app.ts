@@ -3428,8 +3428,25 @@ function permalinkTypeRule(
   if (cfg.flightHistoryModel) return null;
   try {
     const answer = carrierPrediction(cfg, reader, flightNumber);
-    return answer.kind === "penetration"
-      ? { probability: answer.pen.pct, label: answer.sf.label }
+    if (answer.kind === "penetration") {
+      const { aircraft } = answer;
+      return {
+        probability: answer.pen.pct,
+        label: answer.sf.label,
+        ...(aircraft ? { aircraft: aircraft.sentence } : {}),
+        ...(aircraft?.count
+          ? {
+              count: {
+                connected: aircraft.count.connected,
+                total: aircraft.count.total,
+                asOf: aircraft.count.asOf,
+              },
+            }
+          : {}),
+      };
+    }
+    return answer.kind === "no_model" && answer.aircraft
+      ? { probability: null, label: "", aircraft: answer.aircraft.sentence }
       : null;
   } catch {
     return null;

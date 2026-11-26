@@ -100,6 +100,37 @@ export function validateChartAgainstRoster(
   return boundedChart(db, code, today).problem;
 }
 
+/** One type's line on the airline's chart, beside the tails of that type this
+ * site names. */
+export interface AirlineTypeCount {
+  family: string;
+  connected: number;
+  total: number;
+  /** The chart's own "last updated" date, YYYY-MM-DD. */
+  asOf: string;
+  /** Aircraft of the type this site lists as equipped, tail by tail. */
+  named: number;
+}
+
+/**
+ * The airline's own count for one aircraft family, from the stored chart
+ * under the same bounds the headline applies; null without a chart, a line
+ * for the family, or a chart that passes.
+ */
+export function airlineTypeCount(
+  db: Database,
+  code: string,
+  family: string,
+  today = utcDay()
+): AirlineTypeCount | null {
+  const { chart } = boundedChart(db, code, today);
+  const line = chart?.types.find((t) => t.family === family);
+  if (!chart || !line || line.total <= 0) return null;
+  const named =
+    countRoster(tenantProgrammeRoster(db, code), (t) => t.family).get(family)?.equipped ?? 0;
+  return { family, connected: line.connected, total: line.total, asOf: chart.asOf, named };
+}
+
 /** The day the newest equipped listing in the programme was found, if dated. */
 function newestNamedDay(db: Database, airlines: readonly string[]): string | null {
   const marks = airlines.map(() => "?").join(",");

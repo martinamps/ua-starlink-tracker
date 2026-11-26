@@ -88,6 +88,14 @@ export function communityWireFields(answer: CarrierPrediction): Record<string, u
       };
     case "partner_operated":
       return { assignment: { tail_number: answer.tail, operated_by_other: true } };
+    case "penetration":
+    case "no_model": {
+      // A type answer that names the one aircraft scheduled that day.
+      const a = answer.aircraft;
+      return a?.basis === "scheduled" && a.tail
+        ? { assignment: { tail_number: a.tail, aircraft_type: a.aircraftType } }
+        : {};
+    }
     default:
       return {};
   }

@@ -50,6 +50,7 @@ import {
   normalizeScopeTag,
 } from "../observability";
 import {
+  type AircraftSighting,
   type CarrierPrediction,
   carrierPrediction,
   carrierPredictionTelemetry,
@@ -944,6 +945,7 @@ async function verdictFromRows(
   let fr24Error = false;
   let fr24Shed = false;
   let raw: FallbackSegment[] | null = null;
+  let live: FallbackSegment[] = [];
   let scopedTo: Pick<RowsAnswer, "segmentMatch" | "answeredSegment"> = {};
   if (deps.lookupTail !== null) {
     const lookup = deps.lookupTail ?? lookupFlightTailVerdict;
@@ -969,6 +971,7 @@ async function verdictFromRows(
     if (segSel) scopedTo = { segmentMatch: segSel.match, answeredSegment: segSel.items[0] };
     const segments = segSel && segSel.match !== "ambiguous" ? segSel.items : raw;
     if (segments !== null) {
+      live = segments;
       const starlink = segments.filter((s) => s.hasStarlink);
       if (starlink.length > 0) {
         return {
@@ -1020,6 +1023,7 @@ async function verdictFromRows(
         answer: carrierPrediction(cfg, reader, normalized, {
           aircraftType: deps.aircraftType,
           nowMs: now * 1000,
+          scheduled: scheduledAircraft(cfg, reader, normalized, date, live, leg),
         }),
         fr24Error,
         ...(fr24Shed ? { fr24Shed } : {}),
@@ -1042,6 +1046,40 @@ async function verdictFromRows(
     segments: raw,
     ...scopedTo,
   };
+}
+
+/**
+ * The aircraft our own data puts on the flight that day: the live lookup's
+ * tails where it ran and found any, else the newest logged tail of each
+ * departure. A listed tail is left out: one still on the flight was answered
+ * from the schedule before this, so here it is a stale row from before a swap.
+ */
+function scheduledAircraft(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  normalized: string,
+  date: string,
+  live: readonly FallbackSegment[],
+  leg?: LegQuery
+): AircraftSighting[] {
+  if (!cfg.subfleets.some((s) => s.families)) return [];
+  const logged = reader.getLoggedAircraft(buildAirlineFlightNumberVariants(cfg, normalized), date);
+  if (live.length > 0) {
+    // The lookup logs what it resolves, so the log carries our own type for its tails.
+    const ours = new Map(logged.map((r) => [r.tail_number, r.aircraft_type]));
+    return live.map((s) => ({
+      tail: s.tail_number,
+      aircraftType: ours.get(s.tail_number) ?? s.aircraft_model,
+      equipped: s.hasStarlink === true,
+    }));
+  }
+  const onLeg = (r: { departure_airport: string; arrival_airport: string | null }) =>
+    !leg ||
+    ((!leg.origin || rowDeparture(r) === leg.origin) &&
+      (!leg.destination || rowArrival(r) === leg.destination));
+  return logged
+    .filter((r) => onLeg(r) && !r.equipped)
+    .map((r) => ({ tail: r.tail_number, aircraftType: r.aircraft_type, equipped: false }));
 }
 
 function scopeSegments(segments: FallbackSegment[], leg: LegQuery): LegSelection<FallbackSegment> {
