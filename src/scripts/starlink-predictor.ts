@@ -1388,6 +1388,8 @@ export function carrierPrediction(
     nowMs?: number;
     /** The aircraft our data puts on the asked date; absent on an undated ask. */
     scheduled?: readonly AircraftSighting[];
+    /** The lookup named an aircraft for the asked date that we could not read. */
+    unreadAircraft?: boolean;
   } = {}
 ): CarrierPrediction {
   const noModel: CarrierPrediction = {
@@ -1407,7 +1409,12 @@ export function carrierPrediction(
   if (groups) return { kind: "type_split", groups };
 
   const sf = cfg.subfleets.find((s) => s.match(flightNumber));
-  if (sf?.families) {
+  // An aircraft we could not read may be any type. A fixed band's answer
+  // presumes the band's own aircraft, so it is withdrawn; a blended band keeps
+  // its blend, un-narrowed by whatever else was read beside it.
+  if (sf?.families && ctx.unreadAircraft) {
+    if (sf.penetrationOverride != null) return unreadAircraftAnswer(flightNumber, sf);
+  } else if (sf?.families) {
     // The aircraft on the asked date, where we know it, speaks for that date;
     // the number's other departures speak only where we don't.
     const scheduled = typedSightings((ctx.scheduled ?? []).filter((a) => !a.equipped));
@@ -1429,6 +1436,20 @@ export function carrierPrediction(
     return { kind: "penetration", sf, pen };
   }
   return noModel;
+}
+
+function unreadAircraftAnswer(flightNumber: string, sf: SubfleetDef): CarrierPrediction {
+  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  const sentence = joinSentences(
+    `An aircraft is scheduled on ${flightNumber}, but we could not read which one`,
+    `Its number${hint} usually means ${bandLabel(sf.label)} aircraft, and we can't confirm this is one`,
+    "Starlink depends on which aircraft flies yours"
+  );
+  return {
+    kind: "no_model",
+    reason: sentence,
+    aircraft: { basis: "scheduled", tail: null, aircraftType: null, sentence, count: null },
+  };
 }
 
 function loggedSightings(
@@ -1572,7 +1593,9 @@ function aircraftAnswer(
     // we name tails of, the answer turns on which tail flies, and the log
     // can't say how often a named one does. So no share is drawn from it: a
     // blended band keeps its own answer, a fixed band keeps no number.
-    if (!scheduled && count.named > 0) {
+    // A line the chart marks complete leaves nothing to depend on which tail
+    // flies: it falls through to the complete-line answer below.
+    if (!scheduled && count.named > 0 && !(fixed && count.connected >= count.total)) {
       if (!fixed) return null;
       const sentence = joinSentences(
         capitalize(subject),
@@ -1609,6 +1632,19 @@ function aircraftAnswer(
     };
   }
   if (!fixed) return null;
+
+  // No chart to quote, but the reason the log draws no share still holds for
+  // a type we name tails of: the answer turns on which tail flies, so the
+  // home band's blend would say more than we know.
+  const named = home && !scheduled ? reader.getNamedOfType(family) : 0;
+  if (named > 0) {
+    const sentence = joinSentences(
+      capitalize(subject),
+      `We name ${named} ${plural(aircraftName(family))} by tail`,
+      "Starlink depends on which aircraft flies yours"
+    );
+    return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count: null } };
+  }
 
   const pen = home ? subfleetPenetration(reader.getSubfleetPenetration(), home) : null;
   if (home && pen && !pen.synthetic && pen.total >= MIN_PENETRATION_TOTAL) {

@@ -3429,9 +3429,14 @@ export function getFleetEntryByTail(
   db: Database,
   tail: string,
   airline?: AirlineFilter
-): { starlink_status: string; verified_wifi: string | null; verified_at: number | null } | null {
+): {
+  starlink_status: string;
+  verified_wifi: string | null;
+  verified_at: number | null;
+  aircraft_type: string | null;
+} | null {
   const q = withAirline(
-    "SELECT starlink_status, verified_wifi, verified_at FROM united_fleet WHERE tail_number = ?",
+    "SELECT starlink_status, verified_wifi, verified_at, aircraft_type FROM united_fleet WHERE tail_number = ?",
     airline,
     "",
     [tail]
@@ -3440,6 +3445,7 @@ export function getFleetEntryByTail(
     starlink_status: string;
     verified_wifi: string | null;
     verified_at: number | null;
+    aircraft_type: string | null;
   } | null;
 }
 

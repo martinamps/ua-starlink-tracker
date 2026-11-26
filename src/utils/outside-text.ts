@@ -3,7 +3,8 @@
  * tail, type name and airports) before any of it is printed in a sentence, a
  * message or a key. A value of the right shape passes through unchanged; one
  * that isn't is dropped, never repaired, so nothing reads as a tail that
- * wasn't one.
+ * wasn't one. Callers trim surrounding space first: that is the lookup's
+ * formatting, not part of the value.
  */
 
 // N782HA, F-GSQA, A7-BEA, JA873A, 9V-SMA: letters and digits, one hyphen at most.

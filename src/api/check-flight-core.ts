@@ -70,7 +70,7 @@ import {
   flightDateWindow,
   matchesLocalDate,
 } from "../utils/airport-tz";
-import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
+import { type FallbackSegment, lookupFlightTailVerdict, unreadAircraft } from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
 import {
   type QatarGrade,
@@ -715,7 +715,7 @@ export async function resolveFlightVerdict(
       Math.max(u.last_updated, supersededAt.get(u.departure_time) ?? 0)
     );
   }
-  const rows = reader
+  const scheduled = reader
     .getFlightAssignments(variants, window.queryStart, window.queryEnd)
     .filter((r) => {
       if (seen.has(r.departure_time)) return false;
@@ -724,6 +724,13 @@ export async function resolveFlightVerdict(
     })
     .filter(onDate)
     .filter((r) => r.last_updated >= (supersededAt.get(r.departure_time) ?? 0));
+  // An answer made with no live lookup (the hub, a page's first paint) reads
+  // what an earlier lookup stored: a listed tail it named after our last read
+  // of that tail's schedule is on the flight as far as we know.
+  const rows =
+    scheduled.length === 0 && deps.lookupTail === null
+      ? reader.getListedSightings(variants, window.queryStart, window.queryEnd).filter(onDate)
+      : scheduled;
 
   const leg = deps.leg;
   if (!leg) {
@@ -1086,6 +1093,7 @@ async function verdictFromRows(
           aircraftType: deps.aircraftType,
           nowMs: now * 1000,
           scheduled: scheduledAircraft(cfg, reader, normalized, date, live, leg),
+          unreadAircraft: unreadAircraft(raw) > 0,
         }),
         fr24Error,
         ...(fr24Shed ? { fr24Shed } : {}),

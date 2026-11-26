@@ -21,9 +21,11 @@ import { AIRLINES, type AirlineConfig } from "../airlines/registry";
 import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
 import { isRegistration } from "../utils/outside-text";
+import type { FlightAssignmentRow } from "./database";
 import {
   equippedSql,
   modHoldSql,
+  settledNegativeJoin,
   starlinkFlag,
   tailEquippedSql,
   tailEvidence,
@@ -315,6 +317,53 @@ export function getLoggedAircraft(
     seen.add(key);
     return [{ ...r, equipped: r.equipped === 1 }];
   });
+}
+
+/**
+ * Listed tails seen on the flight since the flight updater last read that
+ * tail's schedule, shaped as the schedule rows they stand in for. A listed
+ * tail in the log and not in upcoming_flights is usually left over from a
+ * swap, but not when the sighting is newer than our last schedule read: then
+ * the schedule hasn't had the chance to hold it. Only the newest tail logged
+ * on a departure counts, so a later sighting of another aircraft outranks it.
+ */
+export function getListedSightings(
+  db: Database,
+  airlines: readonly string[],
+  variants: readonly string[],
+  start: number,
+  end: number
+): FlightAssignmentRow[] {
+  if (variants.length === 0) return [];
+  const a = airlineIn(airlines, "l.airline");
+  const listed = airlineIn(airlines, "sp.airline");
+  const rows = db
+    .query(
+      `SELECT 0 AS id, l.tail_number, l.flight_number, l.departure_airport, l.arrival_airport,
+              l.departure_time, l.arrival_time, l.last_seen AS last_updated, sp.airline,
+              sp.Aircraft AS aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi,
+              CASE WHEN _neg.tail_number IS NOT NULL THEN 1 ELSE 0 END AS settled_negative,
+              _neg.verified_wifi AS settled_wifi
+       FROM flight_assignment_log l
+       INNER JOIN starlink_planes sp ON sp.TailNumber = l.tail_number AND ${listed.sql}
+       ${settledNegativeJoin("_neg", "sp.TailNumber", "sp.airline")}
+       WHERE ${a.sql} AND l.flight_number IN (${placeholders(variants)})
+         AND l.departure_time >= ? AND l.departure_time < ? AND l.arrival_time IS NOT NULL
+         AND l.arrival_airport IS NOT NULL
+         AND l.last_seen > COALESCE(sp.last_flight_check, 0)
+         AND NOT EXISTS (
+           SELECT 1 FROM flight_assignment_log n
+           WHERE n.airline = l.airline AND n.flight_number = l.flight_number
+             AND n.dep_date = l.dep_date AND n.departure_airport = l.departure_airport
+             AND n.tail_number <> l.tail_number
+             AND (n.last_seen > l.last_seen
+               OR (n.last_seen = l.last_seen AND n.first_seen > l.first_seen)))
+         AND NOT (sp.verified_wifi IS NULL AND _neg.tail_number IS NULL
+           AND ${modHoldSql("sp.TailNumber", "sp.airline")})
+       ORDER BY l.last_seen DESC`
+    )
+    .all(...listed.params, ...a.params, ...variants, start, end) as FlightAssignmentRow[];
+  return rows.filter(printable);
 }
 
 /**
