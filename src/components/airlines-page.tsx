@@ -51,7 +51,7 @@ import {
   Td,
   Th,
 } from "./layout";
-import { fmt, pct } from "./ui/format";
+import { dateRuns, fmt, pct } from "./ui/format";
 import { Pill, TONE_TEXT, type Tone } from "./ui/tone";
 
 const FACTS_TONE: Record<RolloutFactsStatus, Tone> = {
@@ -252,6 +252,34 @@ const METHOD_LABEL = {
 const methodLabel = (cfg: AirlineOverview["cfg"]) =>
   partlyByType(cfg) ? "Part by type, part by plane" : METHOD_LABEL[trackingMethod(cfg)];
 
+/** A source line with each date held on one line: in a phone's narrow figure
+ * column it otherwise broke inside "Oct 26, 2026". */
+function Dated({ text }: { text: string }) {
+  return (
+    <>
+      {dateRuns(text).map((run) =>
+        run.date ? (
+          <span key={run.text} className="whitespace-nowrap">
+            {run.text}
+          </span>
+        ) : (
+          run.text
+        )
+      )}
+    </>
+  );
+}
+
+/** Below sm the stage sits under the airline's name. As a third column it left
+ * the figures 79px on a 360px phone, and cut them off. */
+function StageUnderName({ info }: { info: Parameters<typeof StagePill>[0]["info"] }) {
+  return (
+    <span className="mt-1.5 block sm:hidden">
+      <StagePill info={info} />
+    </span>
+  );
+}
+
 function EquippedCell({ o }: { o: AirlineOverview }) {
   const { cfg, stat } = o;
   if (stat.total === 0) return <span className="text-muted">No data yet</span>;
@@ -261,7 +289,9 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
     return (
       <>
         {fmt(published.count)}
-        <span className="block text-xs text-muted">{ownCountAsOf(published)}</span>
+        <span className="block text-xs text-muted">
+          <Dated text={ownCountAsOf(published)} />
+        </span>
         {published.reportedBy && (
           // Two short lines, so the credit never reads as part of the date.
           <span className="block text-xs text-muted">
@@ -276,8 +306,8 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
     return (
       <>
         {fmt(published.count)}
-        <span className="block text-xs text-muted">
-          {typeSumParts(published)}, {typeSumCredit(published)}
+        <span className="block text-xs text-muted text-balance">
+          <Dated text={`${typeSumParts(published)}, ${typeSumCredit(published)}`} />
         </span>
       </>
     );
@@ -338,7 +368,7 @@ export function AirlinesIndexPage({
             <thead>
               <tr>
                 <Th>Airline</Th>
-                <Th>Status</Th>
+                <Th optional>Status</Th>
                 <Th optional>Method</Th>
                 <Th numeric>With Starlink</Th>
                 <Th numeric optional>
@@ -364,8 +394,9 @@ export function AirlinesIndexPage({
                         {o.cfg.shortName} Starlink Tracker →
                       </a>
                     )}
+                    <StageUnderName info={trackedStage(o.cfg, o.stat)} />
                   </Td>
-                  <Td>
+                  <Td optional>
                     <StagePill info={trackedStage(o.cfg, o.stat)} />
                   </Td>
                   <Td optional className="text-secondary">
@@ -442,7 +473,7 @@ function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
         <thead>
           <tr>
             <Th>Airline</Th>
-            <Th>Status</Th>
+            <Th optional>Status</Th>
             <Th optional>Summary</Th>
             <Th numeric>As of</Th>
           </tr>
@@ -459,8 +490,9 @@ function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
                   >
                     {e.name}
                   </a>
+                  <StageUnderName info={factsStage(e.status)} />
                 </Td>
-                <Td className="align-top">
+                <Td optional className="align-top">
                   <StagePill info={factsStage(e.status)} />
                 </Td>
                 <Td optional className="align-top text-secondary">

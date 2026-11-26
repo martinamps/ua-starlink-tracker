@@ -23,6 +23,7 @@ import {
   formatFactDate,
 } from "../src/airlines/rollout-facts";
 import { factsHeadline } from "../src/components/airlines-page";
+import { dateRuns } from "../src/components/ui/format";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp, hubAirlinePageIndexable, hubUrlFamilies } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
@@ -117,6 +118,52 @@ describe("hub /airlines index", () => {
     const figureCells = table.match(/<td class="[^"]*text-right[^"]*text-primary[^"]*"/g) ?? [];
     expect(figureCells.length).toBeGreaterThan(0);
     for (const cell of figureCells) expect(cell).not.toContain("whitespace-nowrap");
+  });
+
+  test("on a phone the stage sits under the airline's name, in every table: a third column cut the figures off at 360px", async () => {
+    const body = await (await get("/airlines", hub.canonicalHost)).text();
+    const tables = body.match(/<table[\s\S]*?<\/table>/g) ?? [];
+    expect(tables.length).toBeGreaterThanOrEqual(2);
+    for (const table of tables) {
+      const status = table.match(/<th[^>]*>Status<\/th>/)?.[0] ?? "";
+      expect(status).toContain("hidden sm:table-cell");
+      const rows = table.match(/<tr>[\s\S]*?<\/tr>/g)?.slice(1) ?? [];
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        const cells = row.match(/<td[\s\S]*?<\/td>/g) ?? [];
+        // The same pill twice: under the name below sm, in its own column from sm up.
+        const underName = cells[0].match(
+          /<span class="[^"]*sm:hidden[^"]*">(<span[\s\S]*?<\/span>)<\/span>/
+        );
+        expect(underName).not.toBeNull();
+        expect(cells[1]).toContain("hidden sm:table-cell");
+        expect(cells[1]).toContain(underName?.[1] ?? "no pill");
+      }
+    }
+  });
+
+  test("a figure's source line never breaks inside its date, and keeps its words", async () => {
+    const body = await (await get("/airlines", hub.canonicalHost)).text();
+    const table = body.slice(body.indexOf("<table"), body.indexOf("</table>"));
+    const lines =
+      table.match(/<span class="block text-xs text-muted[^"]*">[\s\S]*?<\/span>(?=<|$)/g) ?? [];
+    const dated = lines.filter((l) => /\b[A-Z][a-z]{2} \d{1,2}, \d{4}/.test(l));
+    expect(dated.length).toBeGreaterThan(0);
+    for (const line of dated) {
+      expect(line).toMatch(/<span class="whitespace-nowrap">[A-Z][a-z]{2} \d{1,2}, \d{4}<\/span>/);
+    }
+    const text = "18 A321neos, per Alaska's tracker as of Oct 26, 2026 and Nov 3";
+    expect(
+      dateRuns(text)
+        .map((r) => r.text)
+        .join("")
+    ).toBe(text);
+    expect(
+      dateRuns(text)
+        .filter((r) => r.date)
+        .map((r) => r.text)
+    ).toEqual(["Oct 26, 2026", "Nov 3"]);
+    expect(dateRuns("no date here")).toEqual([{ text: "no date here", date: false }]);
   });
 
   test("negative entries are grouped under an explicit not-Starlink section", async () => {
