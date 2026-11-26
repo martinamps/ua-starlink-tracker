@@ -213,7 +213,20 @@ export function currentFacts(facts: readonly RolloutFact[]): RolloutFact[] {
     .sort((a, b) => factStamp(b).date.localeCompare(factStamp(a).date));
 }
 
-export function FactsList({ entry }: { entry: AirlineFactsEntry }) {
+/** Where the hub's /timeline holds this airline's dated record, replaced facts
+ * included; null where the page doesn't serve or has no dated fact to show. */
+export function hubTimelineHref(site: SiteConfig, entry: AirlineFactsEntry): string | null {
+  if (site.scope !== "ALL" || !site.features.timelinePage) return null;
+  return entry.facts.some((f) => f.asOf) ? `/timeline#${entry.slug}` : null;
+}
+
+export function FactsList({
+  entry,
+  timelineHref,
+}: {
+  entry: AirlineFactsEntry;
+  timelineHref?: string | null;
+}) {
   const stamp = factsStamp(entry);
   return (
     <Panel>
@@ -230,6 +243,13 @@ export function FactsList({ entry }: { entry: AirlineFactsEntry }) {
           <FactRow key={f.fact} fact={f} />
         ))}
       </ul>
+      {timelineHref && (
+        <p className="mt-3 text-xs">
+          <a href={timelineHref} className="text-accent hover:underline">
+            {entry.shortName} on the Starlink timeline →
+          </a>
+        </p>
+      )}
     </Panel>
   );
 }
@@ -605,7 +625,7 @@ export function AirlineDetailPage({
 
       {facts && (
         <section className={SECTION}>
-          <FactsList entry={facts} />
+          <FactsList entry={facts} timelineHref={hubTimelineHref(site, facts)} />
         </section>
       )}
 
@@ -707,7 +727,7 @@ export function AirlineFactsPage({
             <FactsStatusPill entry={entry} />
           </div>
         )}
-        <FactsList entry={entry} />
+        <FactsList entry={entry} timelineHref={hubTimelineHref(site, entry)} />
       </section>
 
       {trackedLinks.length > 0 && (
