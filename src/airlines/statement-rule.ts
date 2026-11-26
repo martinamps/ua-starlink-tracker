@@ -97,7 +97,7 @@ export function statementAnswer(
     switch (outcome) {
       case "likely":
         return rule.by === "type"
-          ? `Likely yes. That holds only if ${rule.typeName} that ${cfg.name} itself flies is on the flight. ${said}. We go by the aircraft type you gave and nothing else: we hold no ${cfg.name} schedule, so we can't check which aircraft flies it. An aircraft ${partner} is not covered, whatever its type, and an aircraft change can alter the answer.`
+          ? `Likely yes. That holds only if ${rule.typeName} that ${cfg.name} itself flies is on the flight. ${said}. ${rule.caution ? `${rule.caution}. ` : ""}We go by the aircraft type you gave and nothing else: we hold no ${cfg.name} schedule, so we can't check which aircraft flies it. An aircraft ${partner} is not covered, whatever its type, and an aircraft change can alter the answer.`
           : `Likely yes. ${said}. That holds for flights ${cfg.name} itself operates, not for a flight ${partner}, and a last-minute aircraft change can alter it.`;
       case "needs_route":
         return `${said}. ${rule.beyond}. We hold no ${cfg.name} schedule, so a flight number alone can't be placed on a route: give the origin and destination airports to get an answer for this flight.`;

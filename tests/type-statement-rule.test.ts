@@ -223,6 +223,25 @@ describe("statementAnswer for a type rule", () => {
     expect(sk).toContain("under an SK number is not covered, whatever its type");
   });
 
+  // Finding 1a of the second look: the yes was the one Virgin Atlantic answer
+  // without the airline's own caution, so it said more than the page by silence.
+  test("every Virgin Atlantic answer in date carries the airline's own caution", () => {
+    const caution = "availability may vary depending on your aircraft and route";
+    for (const type of ["Airbus A350-1000", "A350", "Boeing 787", "A330", undefined]) {
+      expect(ask("VS", type).sentence.split(caution)).toHaveLength(2);
+    }
+    const yes = ask("VS", "Airbus A350").sentence;
+    expect(yes).toContain(
+      `Starlink is now available across its A350 fleet. The same page says that ${caution}. We go by`
+    );
+    // SAS's release has no such sentence, and its yes gains none.
+    expect(RULES.SK.caution).toBeUndefined();
+    expect(ask("SK", "A320neo").sentence).not.toContain("may vary");
+    expect(ask("SK", "A320neo").sentence).toContain(
+      "are equipped with Starlink. We go by the aircraft type you gave"
+    );
+  });
+
   test("the route never turns a type answer into a yes or changes it", () => {
     const cfg = { name: VS.name, iata: "VS", statementRule: RULES.VS };
     const routed = (aircraftType?: string) =>

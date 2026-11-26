@@ -1220,7 +1220,7 @@
         "by": "aircraft_type",
         "aircraft_type": "Airbus A350-1000"
       },
-      "reason": "Likely yes. That holds only if an A350 that Virgin Atlantic itself flies is on the flight. Virgin Atlantic's own page, checked Nov 26, 2026, says that Starlink is now available across its A350 fleet. We go by the aircraft type you gave and nothing else: we hold no Virgin Atlantic schedule, so we can't check which aircraft flies it. An aircraft a partner airline flies under a VS number is not covered, whatever its type, and an aircraft change can alter the answer.",
+      "reason": "Likely yes. That holds only if an A350 that Virgin Atlantic itself flies is on the flight. Virgin Atlantic's own page, checked Nov 26, 2026, says that Starlink is now available across its A350 fleet. The same page says that availability may vary depending on your aircraft and route. We go by the aircraft type you gave and nothing else: we hold no Virgin Atlantic schedule, so we can't check which aircraft flies it. An aircraft a partner airline flies under a VS number is not covered, whatever its type, and an aircraft change can alter the answer.",
       "flights": []
     }
   },

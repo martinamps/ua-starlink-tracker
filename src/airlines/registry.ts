@@ -208,6 +208,9 @@ export interface TypeStatementRule extends StatementRuleBase {
   matchType: (stated: string) => StatedTypeMatch;
   /** Said of a stated type `matchType` calls "unclear", as a sentence. */
   unclearNote?: string;
+  /** The airline's own caution about the very aircraft its claim covers, as
+   * a sentence: the yes repeats it, so it never says more than the airline. */
+  caution?: string;
 }
 
 export type StatementRule = RouteStatementRule | TypeStatementRule;
@@ -974,6 +977,7 @@ const AIRLINE_DEFS = {
         "Of its other aircraft the page says that more get Starlink over time until rollout completes in 2027, and that availability may vary depending on your aircraft and route",
       typeName: "an A350",
       matchType: virginAtlanticA350,
+      caution: "The same page says that availability may vary depending on your aircraft and route",
       // Our own choice, as for Aer Lingus: the page is undated and promises
       // change ("more aircraft … over time"), so it is read again before the
       // summer schedule (from March 28, 2027).
