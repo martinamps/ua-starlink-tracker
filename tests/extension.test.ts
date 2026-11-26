@@ -687,6 +687,30 @@ describe("mixed-carrier itineraries fail closed", () => {
     expect(card.segments).toHaveLength(2);
   });
 
+  // An airline's code may start with a digit (IndiGo 6E, Cape Air 9K, Silver
+  // 3M). The pattern wanted a letter first, so such a leg was not seen at
+  // all and its card counted as the other flight alone.
+  test("a leg on an airline whose code starts with a digit is seen, and counted", () => {
+    for (const code of ["6E", "9K", "3M", "5J", "7C"]) {
+      for (const sep of [",", "-"]) {
+        const leg = ["BOS", "ACK", code, "12", "20260601"].join(sep);
+        const [seg] = extLib.parseTimSegments(tim(`itinerary=${leg}`));
+        expect(seg).toMatchObject({ carrier: code, flightNumber: `${code}12`, origin: "BOS" });
+        const ours = ["ORD", "BOS", "UA", "544", "20260601"].join(sep);
+        const card = extLib.timCardSegments([tim(`itinerary=${ours},${leg}`)]);
+        expect(card.segments.map((s: { flightNumber: string }) => s.flightNumber)).toEqual([
+          "UA544",
+        ]);
+        expect(card.untrackedLegs).toBe(1);
+      }
+    }
+    // Two digits are no airline code, and a date is not read as a flight.
+    expect(extLib.parseTimSegments(tim("itinerary=BOS-ACK-12-34-20260601"))).toEqual([]);
+    expect(
+      extLib.parseTimSegments(tim("itinerary=ORD-BOS-UA-544-20260601,BOS-ACK-9K-12-20260601"))
+    ).toHaveLength(2);
+  });
+
   test("a foreign leg repeated across TIM URLs is counted once", () => {
     const url = tim("itinerary=SFO,ORD,UA,1,20260601,ORD,FRA,LH,431,20260601");
     const card = extLib.timCardSegments([url, url, tim("itinerary=ORD,FRA,LH,431,20260601")]);

@@ -766,6 +766,121 @@ describe("the extension, 2.5.0", () => {
     expect(readVs("Ａｉｒｂｕｓ Ａ３５０")).toBe("Airbus A350");
   });
 
+  // The type alone on its line, and the line after it lengthening it. "900"
+  // and "-900" there were refused; "(900)", "900 series", "Series 900", "F"
+  // and "ULR" sent "Airbus A350" for what the card calls an A350-900.
+  test("a type whose next line lengthens it is refused, whatever the line's form", () => {
+    const tails = [
+      "900",
+      "-900",
+      "941",
+      "XWB",
+      "(900)",
+      "900)",
+      "[900]",
+      "900 series",
+      "Series 900",
+      "series 1000",
+      "variant 900",
+      "version: 900",
+      "F",
+      "F (freighter)",
+      "Freighter",
+      "ULR",
+      "900ULR",
+      "900 XWB",
+      "-900 (Delta)",
+      "/-900",
+      "– 900",
+      ": 900",
+      "& 900",
+      "Type 941",
+      "family",
+    ];
+    for (const tail of tails) {
+      for (const sep of ["\n", " · ", "\n\n", " | "]) {
+        expect(readVs(`Virgin Atlantic${sep}Airbus A350${sep}${tail}${sep}VS 3`)).toBeNull();
+      }
+    }
+    for (const tail of ["ceo", "(ceo)", "-200", "200 series", "LR", "Sharklets"]) {
+      expect(readSk(`SAS\nAirbus A320\n${tail}\nSK 903`)).toBeNull();
+    }
+    // What a card may print after its type and is no variant: the flight
+    // number, a class, a time, a quantity with its unit.
+    for (const next of [
+      "VS 3",
+      "VS 103",
+      "VS 4012",
+      "VS4012",
+      "Economy",
+      "Premium",
+      "10:05 AM",
+      "632 kg CO2e",
+      "Average legroom (31 in)",
+      "Travel time: 7 hr 55 min",
+      "Wi-Fi for a fee",
+      "Virgin Atlantic",
+    ]) {
+      expect(readVs(`Virgin Atlantic\nAirbus A350\n${next}`)).toBe("Airbus A350");
+    }
+  });
+
+  // The API and the MCP carried Virgin Atlantic's caution on the type yes;
+  // the badge built its own sentence from the quote and left it out.
+  test("the type yes's tooltip repeats the airline's own caution, read from the real answer", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const answer = (fn: string, type: string) =>
+      jsonOf(
+        app,
+        `/api/check-any-flight?flight_number=${fn}&date=${today}&aircraft_type=${encodeURIComponent(type)}`,
+        HUB
+      );
+    const caution = RULES.VS.caution;
+    if (!caution) throw new Error("the Virgin Atlantic rule has lost its caution");
+    for (const type of ["Airbus A350", "Airbus A350-1000"]) {
+      const body = await answer("VS3", type);
+      const claim = extLib.normalizeClaim(body);
+      expect(claim.statement.caution).toBe(`${caution}.`);
+      const title = extLib.badgeTitle(claim);
+      expect(title.split(caution)).toHaveLength(2);
+      expect(title).toContain(`"${RULES.VS.quote}" ${caution}. The tracker goes by`);
+      // The server's sentence and the tooltip hold the same caution.
+      expect(body.reason).toContain(`${caution}.`);
+    }
+    // SAS's release has none, and none is made up for it.
+    expect(RULES.SK.caution).toBeUndefined();
+    const sk = extLib.normalizeClaim(await answer("SK903", "Airbus A320neo"));
+    expect(sk.status).toBe("stated");
+    expect(sk.statement).not.toHaveProperty("caution");
+    expect(extLib.badgeTitle(sk)).toContain(`"${RULES.SK.quote}" The tracker goes by`);
+
+    // A reason in a form the reader does not know gives no caution, never a
+    // piece of some other sentence.
+    const base = await answer("VS3", "Airbus A350");
+    for (const reason of [
+      undefined,
+      null,
+      7,
+      "",
+      "Likely yes.",
+      " We go by the aircraft type you gave.",
+      "No full stop before We go by the aircraft type you gave",
+      `${"x".repeat(300)}. We go by the aircraft type you gave.`,
+      "Virgin Atlantic's own page says a thing. We go by the aircraft type you gave.",
+    ]) {
+      const claim = extLib.normalizeClaim({ ...base, reason });
+      expect(claim.status).toBe("stated");
+      expect(claim.statement).not.toHaveProperty("caution");
+    }
+    // A route yes (Aer Lingus) never reads one.
+    const routed = extLib.normalizeClaim({
+      airline: "Aer Lingus",
+      reason: "Likely yes. Mind the gap. We go by the aircraft type you gave.",
+      airline_statement: { answer: "likely", quote: "Q.", as_of: "2026-11-18" },
+    });
+    expect(routed.statement).not.toHaveProperty("caution");
+  });
+
   // Finding 1d: with the card's itinerary data undecoded, the fallback counts
   // any card as one flight, so another flight's type could be sent.
   test("a card whose itinerary data did not decode states no type", async () => {

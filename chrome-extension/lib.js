@@ -97,7 +97,11 @@ const StarlinkTrackerLib = (() => {
   // ORIGIN,DEST,CARRIER,NUMBER,YYYYMMDD (comma or dash separated). This is the
   // most drift-resistant hook on the page — it is semantic data Google itself
   // consumes, unlike the obfuscated class names.
-  const TIM_SEGMENT_RE = /([A-Z]{3})[-,]([A-Z]{3})[-,]([A-Z][A-Z0-9])[-,](\d{1,4})[-,](\d{8})/g;
+  // An airline code is two characters with at least one letter, and the letter
+  // need not come first (6E, 9K, 3M): a leg this pattern cannot see is a leg
+  // nobody judged, and its card would be badged on the other leg alone.
+  const TIM_SEGMENT_RE =
+    /([A-Z]{3})[-,]([A-Z]{3})[-,]([A-Z][A-Z0-9]|[0-9][A-Z])[-,](\d{1,4})[-,](\d{8})/g;
 
   function timDateToIso(yyyymmdd) {
     return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
@@ -197,9 +201,35 @@ const StarlinkTrackerLib = (() => {
   // a whole type is a type we cannot read, and the card then states none.
   const AIRCRAFT_WORD_RE =
     /\b(?:airbus|boeing|embraer|bombardier|canadair|atr|de havilland|dash|saab|fokker|mcdonnell|douglas|comac|sukhoi|cessna|pilatus|beechcraft|dornier|tupolev|antonov|ilyushin|avro|bae|mitsubishi|crj|erj|dreamliner|a[23]\d{2}\w*)\b/i;
-  // A field that would lengthen the type before it: "900", "-1000", "neo".
+  // A field that would lengthen the type before it, whatever its form: "900",
+  // "-1000", "neo", "(900)", "900 series", "Series 900", "F", "ULR". Wider
+  // than the forms seen so far on purpose: a line refused by mistake costs a
+  // badge, a variant missed turns an A350-900 into "Airbus A350".
   const TRAILING_VARIANT_RE =
     /^[-/]? ?(?:\d{3,4}[A-Za-z]{0,3}|neo|XLR|LR|ER|XWB|MAX(?: \d{1,2})?)$/i;
+  // A field that opens with a joiner continues the line before it.
+  const CONTINUES_RE = /^[-/\\([{<+~_,;:&]/;
+  // Short suffixes count only as the field's first word; they are too common
+  // inside ordinary text ("ER" in a name, "Max" in a baggage rule).
+  const LEADING_SUFFIX_RE = /^[^A-Za-z0-9]*(?:F|LR|ER|MAX|ceo|neo)(?![A-Za-z0-9])/i;
+  const VARIANT_WORD_RE =
+    /(?<![A-Za-z0-9])(?:XWB|ULR|XLR|series|variant|version|family|freighter|sharklets?|winglets?|stretch(?:ed)?)(?![A-Za-z0-9])/i;
+  // A three- or four-digit number is a variant ("900", "1000", "941",
+  // "900ULR") unless it is plainly something else: a quantity with its unit,
+  // or a clock time.
+  const VARIANT_NUMBER_RE =
+    /(?<![A-Za-z0-9.:])\d{3,4}[A-Za-z]{0,3}(?![A-Za-z0-9]|:\d| ?(?:kg|lbs?|min|mi|km|g|%)(?![A-Za-z]))/;
+  // A flight number alone ("VS 4012") is the one field with such a number
+  // that a card is known to print after its type.
+  const FLIGHT_NUMBER_FIELD_RE = /^[A-Z0-9]{2} ?\d{1,4}$/;
+
+  function lengthensType(field) {
+    if (TRAILING_VARIANT_RE.test(field) || CONTINUES_RE.test(field)) return true;
+    if (FLIGHT_NUMBER_FIELD_RE.test(field)) return false;
+    return (
+      LEADING_SUFFIX_RE.test(field) || VARIANT_WORD_RE.test(field) || VARIANT_NUMBER_RE.test(field)
+    );
+  }
   const TYPE_TEXT_RE = /^[A-Za-z0-9 -]{1,40}$/;
   const MAX_CARD_TEXT = 20000;
 
@@ -288,7 +318,8 @@ const StarlinkTrackerLib = (() => {
    *    another airline or operator (namesAnotherOperator).
    *  - Exactly one type, and every field that speaks of an aircraft must be a
    *    whole type we know: a type followed by anything (" 900", "/900",
-   *    " (Sharklets)") is refused, never shortened.
+   *    " (Sharklets)") is refused, never shortened, and so is a type whose
+   *    next field would lengthen it (lengthensType).
    */
   function statedAircraftType(text, card) {
     if (!card || card.decoded !== true || card.segmentCount !== 1) return null;
@@ -304,7 +335,7 @@ const StarlinkTrackerLib = (() => {
     const found = new Set();
     for (let i = 0; i < fields.length; i++) {
       if (WHOLE_TYPE_RE.test(fields[i])) {
-        if (i + 1 < fields.length && TRAILING_VARIANT_RE.test(fields[i + 1])) return null;
+        if (i + 1 < fields.length && lengthensType(fields[i + 1])) return null;
         found.add(fields[i]);
       } else if (AIRCRAFT_WORD_RE.test(fields[i])) {
         return null;
@@ -449,6 +480,9 @@ const StarlinkTrackerLib = (() => {
           checked: statement.as_of_kind === "checked",
           statedType: statement.by === "aircraft_type" ? typeOf(statement.aircraft_type) : null,
         };
+        const caution =
+          statement.by === "aircraft_type" ? statedCaution(payload.reason, claim.airline) : null;
+        if (caution) claim.statement.caution = caution;
       }
       return claim;
     }
@@ -479,6 +513,30 @@ const StarlinkTrackerLib = (() => {
       return claim;
     }
     return claim;
+  }
+
+  const OUR_OWN_WORDS = " We go by the aircraft type";
+
+  /**
+   * The airline's own caution about the aircraft its claim covers ("The same
+   * page says that availability may vary …"), read out of the server's
+   * sentence for a type yes: the wire key has no field for it. The server
+   * puts it between the airline's claim and the tracker's own words. With no
+   * caution the sentence there is the claim itself, which opens with the
+   * airline's name. tests/extension-page.test.ts and the type rule's tests
+   * hold this to the server's real answer.
+   */
+  function statedCaution(reason, airline) {
+    if (typeof reason !== "string" || typeof airline !== "string" || !airline) return null;
+    const end = reason.indexOf(OUR_OWN_WORDS);
+    if (end <= 0 || reason[end - 1] !== ".") return null;
+    const before = reason.slice(0, end);
+    // The sentence before it must itself follow one: the claim always does.
+    const start = before.lastIndexOf(". ", before.length - 2);
+    if (start < 0) return null;
+    const sentence = before.slice(start + 2);
+    if (sentence.startsWith(airline) || sentence.length > 240) return null;
+    return sentence;
   }
 
   /**
@@ -689,7 +747,7 @@ const StarlinkTrackerLib = (() => {
       if (type) {
         return (
           `Likely Starlink, only if this flight stays on the ${type} this card shows: ${quoted} ` +
-          `The tracker goes by the type on the card alone and holds no ${who} schedule. That holds for an aircraft ${who} itself flies, not a partner airline's, and an aircraft change can alter it.`
+          `${claim.statement.caution ? `${claim.statement.caution} ` : ""}The tracker goes by the type on the card alone and holds no ${who} schedule. That holds for an aircraft ${who} itself flies, not a partner airline's, and an aircraft change can alter it.`
         );
       }
       return (

@@ -109,11 +109,17 @@ depends on the airline:
   operator ("Operated by", "Plane and crew by", any "by/for/as" followed by a
   name, any other "Airlines" or "Airways"); and the card states exactly one
   aircraft type, as a whole field. A type followed by anything ("Airbus A350
-  900", "Airbus A320neo (Sharklets)") is refused, never shortened. A gray "Starlink (likely)" then
+  900", "Airbus A320neo (Sharklets)") is refused, never shortened, and so is
+  a type whose next line would lengthen it ("(900)", "900 series", "Series
+  900", "F", "ULR"). The extension's own badge is left out of what the reader
+  reads. A card is read again whenever something inside it changes, since
+  opening its details is what first shows a type. A gray "Starlink (likely)" then
   appears for an "Airbus A350" or "Airbus A350-1000" on Virgin Atlantic and an
   "Airbus A320neo" on SAS; "Airbus A320" alone, any other type, and no type
-  get no badge and are never dimmed. No other airline's request carries
-  `aircraft_type`.
+  get no badge and are never dimmed. The tooltip repeats the airline's own
+  caution where its page has one (Virgin Atlantic: "availability may vary
+  depending on your aircraft and route"), taken from the tracker's answer. No
+  other airline's request carries `aircraft_type`.
 - **Qatar** — no tail-level data, but Qatar publishes the scheduled aircraft
   type about a week ahead (selected routes only). Inside that window an A350 or
   777-200LR shows green "Starlink (installed)", because Qatar reports those
@@ -143,8 +149,9 @@ depends on the airline:
   resolves the marketing carrier server-side.
 - Multi-leg itineraries are badged by their weakest leg — a card is never
   marked "Starlink" when only one leg has it. An itinerary with any leg on an
-  airline the tracker doesn't cover (UA + Lufthansa, Alaska + American) gets
-  no badge and no lookup: that leg can't be vouched for.
+  airline the tracker doesn't cover (UA + Lufthansa, Alaska + American, or an
+  airline whose code starts with a digit, such as Cape Air's 9K) gets no
+  badge and no lookup: that leg can't be vouched for.
 - Answers are cached in-memory for 30 minutes (5 minutes for transient
   failures). At most 40 uncached lookups run per page pass, three cards at a
   time. Cards Google adds while a pass is running queue a follow-up pass.

@@ -286,10 +286,12 @@ against the tracker's own answers only.
 
 ## Virgin Atlantic and SAS (hub endpoint, the stated aircraft type, new in 2.5.0)
 
-Not yet run in a real browser: 2.5.0 was built on 2026-11-26 and tested
-against the tracker's own answers and made-up card text only. How Google
-Flights prints the aircraft type on a card was not seen, so the first three
-checks decide whether this feature works at all.
+Not yet run on Google Flights: 2.5.0 was built on 2026-11-26 and tested
+against the tracker's own answers and made-up cards only. The content script
+itself runs in Chromium on those made-up pages (`tests/extension-page.test.ts`).
+How Google Flights prints the aircraft type on a card, and how it opens a
+card's details, was not seen, so the first three checks decide whether this
+feature works at all.
 
 - [ ] LHR → JFK on Virgin Atlantic, card closed: no badge
 - [ ] Open the card's details. Note exactly how the aircraft type is printed
@@ -298,8 +300,11 @@ checks decide whether this feature works at all.
 - [ ] With the details open on a Virgin Atlantic A350 flight: a gray
       "Starlink (likely)" badge. Its tooltip begins "Likely Starlink, only if
       this flight stays on the Airbus A350", quotes Virgin Atlantic's
-      sentence, says "checked 2026-11-26" (never "said on"), and ends with
-      the caution about a partner airline's aircraft and aircraft changes
+      sentence, says "checked 2026-11-26" (never "said on"), then "The same
+      page says that availability may vary depending on your aircraft and
+      route.", and ends with the caution about a partner airline's aircraft
+      and aircraft changes. The badge stays put while the list changes: it
+      does not blink off and on
 - [ ] A Virgin Atlantic 787 or A330 flight, details open: no badge, and with
       "Starlink only" on the card is not dimmed
 - [ ] A `VS` number operated by Delta, Air France or KLM (LHR → ATL, or any
@@ -308,7 +313,9 @@ checks decide whether this feature works at all.
       gray "Starlink (likely)"; on an "Airbus A320": no badge
 - [ ] An SAS flight operated by a partner (a CRJ, Embraer or ATR, "Operated
       by"): no badge
-- [ ] A two-flight card on Virgin Atlantic or SAS: no badge
+- [ ] A two-flight card on Virgin Atlantic or SAS: no badge, also when the
+      other flight is on an airline whose code starts with a digit (IndiGo
+      6E, Cape Air 9K)
 - [ ] The same Virgin Atlantic A350 card with Google Flights in another
       language (add `&hl=de`, `&hl=fr` or `&hl=sv` to the address): no badge,
       on purpose. Note the `lang` of the page's `<html>` element in DevTools,
