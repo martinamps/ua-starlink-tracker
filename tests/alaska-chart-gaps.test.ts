@@ -178,6 +178,9 @@ describe("the pages say it once, and keep our own count in the heading", () => {
     expect(max9).toContain(
       "Alaska doesn't say which aircraft it counts, so we list none by tail yet."
     );
+    // The tail list further down is the whole fleet list: it must not read
+    // as the tails that sentence says we cannot name.
+    expect(max9).toMatch(/All \d+ on our fleet list, with or without Starlink, in the order/);
     // A fresh database: the app keeps a rendered page for a while.
     const some = await seeded();
     name(some, "N900AS", "Boeing 737 MAX 9");

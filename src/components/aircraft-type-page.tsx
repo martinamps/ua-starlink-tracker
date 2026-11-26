@@ -403,13 +403,17 @@ function TailsSection({
 }: { site: SiteConfig; def: AircraftPageDef; data: AircraftTypePageData; airline: string }) {
   if (data.tails.length === 0) return null;
   const ownPages = data.tails.every((t) => tailHref(site, t.tail));
-  const labels = providerLabels(tenantCopy(data.airline).checksEveryTail ? "tail" : "type");
+  const checksEveryTail = tenantCopy(data.airline).checksEveryTail;
+  const labels = providerLabels(checksEveryTail ? "tail" : "type");
+  // Where no source names the equipped aircraft, the card above can say "we
+  // list none by tail yet"; this list is the fleet list, not a list of those.
+  const all = `All ${fmt(data.tails.length)}${checksEveryTail ? "" : " on our fleet list, with or without Starlink"}`;
   return (
     <section className={`${CARD} relative`} id="tails">
       <SkipLink to="tails-end">Skip the tail list</SkipLink>
       <h2 className={H2_CARD}>{`${airline} ${def.short} tail numbers`}</h2>
       <p className="text-sm text-muted mb-3">
-        {`All ${fmt(data.tails.length)}, in the order of the squares above. Click one ${
+        {`${all}, in the order of the squares above. Click one ${
           ownPages
             ? "for its page: Starlink status, checks and flights."
             : "to open it on FlightAware."
