@@ -278,8 +278,10 @@ function settleConsensus(
   // Read starlink_planes, NOT united_fleet: updateVerifiedWifi writes
   // starlink_planes.verified_wifi, and the two tables both carry the column.
   const listing = db
-    .query("SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'")
-    .get(tail) as { verified_wifi: string | null } | null;
+    .query(
+      "SELECT verified_wifi, verified_at FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'"
+    )
+    .get(tail) as { verified_wifi: string | null; verified_at: number | null } | null;
   // Before the writes below: a count it takes back also settles the roster,
   // so the re-check queued for a roster that disagrees is not queued for it.
   const firstRead = applyFirstRead(db, tail, "UA", consensus, "verifier");
@@ -291,7 +293,15 @@ function settleConsensus(
     // "verified_wifi → Starlink" for tails that were already Starlink).
     const prev = listing?.verified_wifi ?? null;
     updateVerifiedWifi(db, tail, "UA", consensus.verdict);
-    if (listing) emitSettleTransition(prev, consensus.verdict, consensus, "verifier", "UA");
+    if (listing) {
+      emitSettleTransition(
+        { wifi: prev, at: listing.verified_at },
+        consensus.verdict,
+        consensus,
+        "verifier",
+        "UA"
+      );
+    }
     const line = `${tail}${tag}: verified_wifi → ${consensus.verdict} (${consensus.reason})`;
     if (prev === consensus.verdict) (log.debug ?? log.info)(line);
     else log.info(line);
@@ -304,7 +314,15 @@ function settleConsensus(
     // Ambiguous — clear to NULL so the check-flight filter
     // (IS NULL OR = 'Starlink') falls through to spreadsheet trust.
     updateVerifiedWifi(db, tail, "UA", null);
-    if (listing) emitSettleTransition(listing.verified_wifi, null, consensus, "verifier", "UA");
+    if (listing) {
+      emitSettleTransition(
+        { wifi: listing.verified_wifi, at: listing.verified_at },
+        null,
+        consensus,
+        "verifier",
+        "UA"
+      );
+    }
     log.info(`${tail}${tag}: consensus ambiguous, verified_wifi cleared (${consensus.reason})`);
   }
   return consensus;

@@ -5080,10 +5080,16 @@ function reconcileAirlineConsensus(
   }
   const listed = db
     .query(
-      `SELECT TailNumber AS tail, verified_wifi AS current, (${INDEPENDENT_LISTING_WHERE}) AS sheet_row
+      `SELECT TailNumber AS tail, verified_wifi AS current, verified_at AS current_at,
+              (${INDEPENDENT_LISTING_WHERE}) AS sheet_row
        FROM starlink_planes WHERE airline = ?`
     )
-    .all(airline) as Array<{ tail: string; current: string | null; sheet_row: number }>;
+    .all(airline) as Array<{
+    tail: string;
+    current: string | null;
+    current_at: number | null;
+    sheet_row: number;
+  }>;
   const sheetCurrent = sheetFed(airline) && sheetImportCurrent(db, airline, now);
   const stamped = new Set(
     (
@@ -5105,7 +5111,7 @@ function reconcileAirlineConsensus(
   // Every first-read verdict, and every verdict on a tail that carries the
   // stamp, goes to applyFirstRead: it makes, confirms or takes back the count.
   const firstRead: Array<{ tail: string; settled: WifiConsensus }> = [];
-  const heal = listed.flatMap(({ tail, current, sheet_row }) => {
+  const heal = listed.flatMap(({ tail, current, current_at, sheet_row }) => {
     const window = obsByTail.get(tail);
     if (!window) return [];
     const obs = discountRegionalFlaps(window, () => hasPriorUnitedStarlink(db, tail, airline));
@@ -5127,7 +5133,7 @@ function reconcileAirlineConsensus(
     if (verdict !== null && verdict !== "Starlink" && skip.has(tail)) return [];
     if (isFirstReadRule(settled.rule) || stamped.has(tail)) firstRead.push({ tail, settled });
     if (verdict === null || verdict === current) return [];
-    return [{ tail, current, verdict, settled }];
+    return [{ tail, current, current_at, verdict, settled }];
   });
 
   // The fleet row follows the listing here, as syncSpreadsheetToFleet would on
@@ -5156,10 +5162,15 @@ function reconcileAirlineConsensus(
     }
   })();
   for (const h of heal) {
-    emitSettleTransition(h.current, h.verdict, h.settled, "reconcile", airline);
-    if (h.settled.rule === "disputed_hold" || h.settled.rule === "sustained_other") {
-      info(`${h.tail}: verified_wifi ${h.current ?? "NULL"} → ${h.verdict} (${h.settled.reason})`);
-    }
+    emitSettleTransition(
+      { wifi: h.current, at: h.current_at },
+      h.verdict,
+      h.settled,
+      "reconcile",
+      airline
+    );
+    // Every change is named, so a settle_transition burst traces to its tails.
+    info(`${h.tail}: verified_wifi ${h.current ?? "NULL"} → ${h.verdict} (${h.settled.reason})`);
   }
   metrics.gauge(GAUGES.CONSENSUS_DISPUTED_TAILS, disputed, {
     airline: normalizeAirlineTag(airline),
@@ -5191,18 +5202,23 @@ const onStarlink = (wifi: string | null) => wifi === null || wifi === "Starlink"
 
 /**
  * Count a listing's settle when it crosses the equipped line (an unverified
- * listing counts as equipped, so NULL sits on the Starlink side).
+ * listing counts as equipped, so NULL sits on the Starlink side). A listing
+ * that was never settled (no verified_at) was never counted on a read of its
+ * own, so its first settle off Starlink is `first_settle`, not a move: a new
+ * sheet row whose reads are Viasat would otherwise trip the from_starlink
+ * burst alert the hour it is listed.
  */
 export function emitSettleTransition(
-  prev: string | null,
+  prev: { wifi: string | null; at: number | null },
   next: string | null,
   settled: WifiConsensus,
   path: "reconcile" | "verifier",
   airline: string
 ): void {
-  if (onStarlink(prev) === onStarlink(next)) return;
+  if (onStarlink(prev.wifi) === onStarlink(next)) return;
+  const firstSettle = prev.wifi === null && prev.at === null;
   metrics.increment(COUNTERS.CONSENSUS_SETTLE_TRANSITION, {
-    direction: onStarlink(next) ? "to_starlink" : "from_starlink",
+    direction: onStarlink(next) ? "to_starlink" : firstSettle ? "first_settle" : "from_starlink",
     reason: normalizeSettleRule(settled.rule),
     path,
     airline: normalizeAirlineTag(airline),

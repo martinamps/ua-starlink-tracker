@@ -141,6 +141,8 @@ describe("classifyMcpClient", () => {
       ["claude-code/2.1.278 (cli)", "claude"],
       ["Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Claude/2.9939.4 Chrome/152.0", "claude"],
       ["openai-mcp/1.0.0 (Codex)", "chatgpt"],
+      ["codex-mcp-client/0.63.0 (Mac OS 15.6.1; arm64) iTerm.app/3.6.6", "chatgpt"],
+      ["codex-mcp-client/0.58.0", "chatgpt"],
       ["Cursor/3.21.18 (darwin arm64)", "cursor"],
       ["AgentIndexBot/0.1 (+https://agents.traderszone.net)", "bot"],
       ["node", "other"],
