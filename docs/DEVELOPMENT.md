@@ -315,6 +315,8 @@ Two endpoints power the [Chrome extension](https://chromewebstore.google.com/det
 - `error` — settled answer body (untracked carrier / bad input), not an outage.
 - `flights` — array; present on every branch.
 
+Beside an untracked-carrier `error`, the hub adds `airline_info` when `src/airlines/rollout-facts.ts` holds a current fact for that airline (`untrackedAirlineInfo`, `src/airlines/untracked-airline.ts`): the newest fact that isn't superseded, its date (`as_of`, or `checked` for an undated page), its `source`, the airline's hub `page`, the airline's own `how_to_check` where one is on file, and the whole as one `summary`. It is never a verdict, so the extension shows nothing for it. Airlines with a stated "no Starlink" entry get no `airline_info`. A single-airline host adds only `flight_number_note`, for an old Hawaiian HA number.
+
 Both endpoints ignore unknown query parameters. v2.0.1+ appends `client=ext-<version>` so request metrics can separate extension traffic (`client_class:extension`, `ext_version:1.x|2.0|2.1|2.x|other|none`) from website visitors; the service worker's fetch otherwise carries a stock Chrome user agent. Requests whose `Origin` is the extension's own `chrome-extension://jjfljoifenkfdbldliakmmjhdkbhehoi` also count as `extension` (with `ext_version:none` when no param is sent); other extension origins land in `other-extension`. v2.1.0+ also sends `origin`/`destination` for each itinerary-decoded leg, so a through flight gets one lookup per leg.
 
 ### Releasing the extension

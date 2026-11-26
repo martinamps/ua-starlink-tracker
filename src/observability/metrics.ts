@@ -41,8 +41,8 @@
  *                    flight.lookup_result     mirrors `outcome`                   (+4 new)
  *                                                                          union (16)
  *   dataset:         mirrors `job` on data.freshness_seconds             (~7)
- *   prefix:          flight_lookup.untracked: registry IATA codes + 20 named
- *                    carriers | other (~26)
+ *   prefix:          flight_lookup.untracked: registry IATA codes + 27 named
+ *                    carriers | other (~33)
  *   client_class:    classifyRequest: extension | other-extension, else
  *                    classifyUserAgent: claude | googleother | googlebot |
  *                    bingbot | gptbot | perplexity | seo-crawler | meta-ai |
@@ -590,6 +590,13 @@ const UNTRACKED_PREFIXES = new Set([
   "VS",
   "SK",
   "LX",
+  "ZG",
+  "XE",
+  "EI",
+  "IB",
+  "BT",
+  "KE",
+  "CM",
 ]);
 
 /** IATA designator of a caller-typed flight number, bounded to the registry

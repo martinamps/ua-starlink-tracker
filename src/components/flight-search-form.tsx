@@ -14,6 +14,7 @@
 import type React from "react";
 import { flightInputRules } from "../airlines/flight-number";
 import { type SiteConfig, liveAirlineSites, siteAirline } from "../airlines/registry";
+import { RETIRED_CODE_NOTES } from "../airlines/untracked-airline";
 import { ClientScriptTag, buttonClass } from "./layout";
 
 /** The form's input look, for `extra` fields (a select) that must match it. */
@@ -77,6 +78,10 @@ export function FlightSearchForm({
     mode === "check-any" && answer === "tracked"
       ? JSON.stringify(checkPagesByAirline())
       : undefined;
+  // The API answer for an HA number is pinned byte for byte, so the page says
+  // which number to use instead.
+  const numberNotes =
+    mode === "check-any" && answer === "tracked" ? JSON.stringify(RETIRED_CODE_NOTES) : undefined;
   return (
     <>
       <form
@@ -88,6 +93,7 @@ export function FlightSearchForm({
         data-rules={rules}
         data-answer={mode === "check-any" ? answer : undefined}
         data-check-pages={checkPages}
+        data-number-notes={numberNotes}
         data-prefill-date={prefillDate ? "" : undefined}
         className={`flex flex-col gap-3 sm:flex-row sm:items-end ${className}`}
       >

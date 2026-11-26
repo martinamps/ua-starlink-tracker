@@ -103,6 +103,7 @@ import {
   latestFactDate,
 } from "../airlines/rollout-facts";
 import { rolloutTargets } from "../airlines/targets";
+import { retiredCodeNote, untrackedAirlineInfo } from "../airlines/untracked-airline";
 import {
   type LegResolution,
   SWAP_DEGRADED_NOTE,
@@ -1032,8 +1033,25 @@ export function notTrackedMessage(
   return `${own} ${other.iata} flights: use ${new URL(airlineHomeUrl(other.code)).host}.`;
 }
 
-function notTrackedResponse(status: 200 | 404, error: string): Response {
-  return json({ error }, { status });
+/** `error` first and unchanged; what else is known rides behind it as added
+ * keys. The hub alone carries the dated fact: a single-airline host names no
+ * other airline's programme. */
+function notTrackedResponse(
+  status: 200 | 404,
+  error: string,
+  pinnedCfg: AirlineConfig | null,
+  flightNumber: string
+): Response {
+  const info = pinnedCfg ? null : untrackedAirlineInfo(flightNumber);
+  const note = pinnedCfg ? retiredCodeNote(flightNumber) : null;
+  return json(
+    {
+      error,
+      ...(info ? { airline_info: info } : {}),
+      ...(note ? { flight_number_note: note } : {}),
+    },
+    { status }
+  );
 }
 
 /** REST renderer over decideCarrier (check-flight-core owns the policy). */
@@ -1051,7 +1069,9 @@ function resolveCarrier(
     recordUntrackedLookup(flightNumber, route);
     return notTrackedResponse(
       notTrackedStatus,
-      notTrackedMessage(decision.pinnedCfg, decision.tracked, flightNumber)
+      notTrackedMessage(decision.pinnedCfg, decision.tracked, flightNumber),
+      decision.pinnedCfg,
+      flightNumber
     );
   }
   return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };

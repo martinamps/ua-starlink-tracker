@@ -198,7 +198,7 @@ const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: 
           site={site}
           id="hub-check-flight"
           mode="check-any"
-          placeholder="UA1736, HA51, AS118, QR1…"
+          placeholder="UA1736, AS118, QR1…"
           prefillDate
           hideLabels
           withScript={false}

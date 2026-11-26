@@ -54,6 +54,7 @@ import {
   airlineOwnCount,
   airlineOwnTypeSum,
 } from "../airlines/rollout-facts";
+import { retiredCodeNote, untrackedAirlineInfo } from "../airlines/untracked-airline";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
 import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/windows";
@@ -650,7 +651,11 @@ function resolveFlightToolCarrier(
         : `Airline not tracked. Tracked carriers: ${decision.tracked
             .map((a) => `${a.iata} (${a.name})`)
             .join(", ")}. Prefix the flight number with the carrier code, e.g. UA123.`;
-    return toolError(text, "not_tracked");
+    // The refusal stays word for word; what is known follows it.
+    const known = decision.pinnedCfg
+      ? retiredCodeNote(flightNumber)
+      : untrackedAirlineInfo(flightNumber)?.summary;
+    return toolError(known ? `${text}\n\n${known}` : text, "not_tracked");
   }
   return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };
 }
