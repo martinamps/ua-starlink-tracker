@@ -166,7 +166,8 @@ describe("guardrail: no optional-tenant United/hub defaults in src/", () => {
 
   test("every registered airline has homepage content (no hub fallback)", () => {
     const hub = getContent("ALL");
-    for (const cfg of Object.values(AIRLINES)) {
+    // An airline answered by statement alone has no site and so no homepage.
+    for (const cfg of Object.values(AIRLINES).filter((a) => !a.statementRule)) {
       const content = getContent(cfg);
       expect(content, `getContent(${cfg.code}) returned hub content`).not.toBe(hub);
       expect(content.faq.length).toBeGreaterThan(0);
@@ -202,7 +203,9 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/routes", "routesPage"],
   ["/airlines", "airlinesPages"],
   [comparePair, "comparePages"],
-  ["/mcp", "mcpPage"],
+  // Served on every host (registries print the address); mcpPage only decides
+  // whether it is advertised and indexable — pinned in seo-copy.test.ts.
+  ["/mcp", null],
   ["/newly-equipped", "newlyEquippedPage"],
   ["/embed", "embedPage"],
   ["/install-rate", "installRatePage"],

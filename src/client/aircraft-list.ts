@@ -8,7 +8,7 @@ export const FILTER_BUTTON =
   "js-filter-btn font-mono text-xs px-3 py-2 rounded border transition-all";
 export const FILTER_ACTIVE = "bg-accent/20 border-accent text-accent";
 export const FILTER_INACTIVE =
-  "bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent";
+  "bg-transparent border-neutral text-secondary hover:border-accent hover:text-accent";
 
 /** A complete US registration (n37502): a miss can jump straight to its /fleet entry. */
 const US_TAIL = /^n\d{1,5}[a-z]{0,2}$/;
@@ -38,7 +38,10 @@ function wireSearch(): void {
 
   const paintButtons = () => {
     for (const b of buttons) {
-      b.className = `${FILTER_BUTTON} ${b.dataset.filter === filter ? FILTER_ACTIVE : FILTER_INACTIVE}`;
+      const on = b.dataset.filter === filter;
+      b.className = `${FILTER_BUTTON} ${on ? FILTER_ACTIVE : FILTER_INACTIVE}`;
+      // The chosen filter is otherwise told by colour alone.
+      b.setAttribute("aria-pressed", String(on));
     }
   };
 
@@ -122,20 +125,18 @@ function wireExpand(): void {
   });
 }
 
-/** Flight-number tooltips, only where there is hover (not touch). */
+/** Flight-number tooltips: on hover where there is hover (not touch), and on
+ * keyboard focus everywhere, so a sighted keyboard user sees the number too. */
 function wireTooltips(): void {
-  if (!window.matchMedia("(hover: hover)").matches) return;
   let tip: HTMLDivElement | null = null;
   let current: Element | null = null;
   const remove = () => {
     tip?.remove();
     tip = null;
   };
-  document.addEventListener("mouseover", (e) => {
-    const pill = (e.target as Element | null)?.closest?.(
-      "[data-flight-tooltip]"
-    ) as HTMLElement | null;
-    if (!pill || pill === current) return;
+  const pillOf = (target: EventTarget | null) =>
+    (target as Element | null)?.closest?.("[data-flight-tooltip]") as HTMLElement | null;
+  const show = (pill: HTMLElement) => {
     remove();
     current = pill;
     const text = pill.dataset.flightTooltip;
@@ -148,6 +149,22 @@ function wireTooltips(): void {
     const rect = pill.getBoundingClientRect();
     tip.style.left = `${rect.left + rect.width / 2 - tip.offsetWidth / 2}px`;
     tip.style.top = `${rect.top - tip.offsetHeight - 6}px`;
+  };
+  // A tap focuses a pill too; :focus-visible is the keyboard's focus alone.
+  document.addEventListener("focusin", (e) => {
+    const pill = pillOf(e.target);
+    if (pill?.matches(":focus-visible")) show(pill);
+  });
+  document.addEventListener("focusout", (e) => {
+    if (!pillOf(e.target)) return;
+    remove();
+    current = null;
+  });
+  if (!window.matchMedia("(hover: hover)").matches) return;
+  document.addEventListener("mouseover", (e) => {
+    const pill = pillOf(e.target);
+    if (!pill || pill === current) return;
+    show(pill);
   });
   document.addEventListener("mouseout", (e) => {
     const pill = (e.target as Element | null)?.closest?.("[data-flight-tooltip]");

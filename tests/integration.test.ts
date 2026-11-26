@@ -432,13 +432,17 @@ describe("MCP tools", () => {
     expect(json.result.isError).toBeUndefined();
   });
 
-  test("search_starlink_flights: exact airport match (2-letter codes should return 0)", async () => {
+  test("search_starlink_flights: exact airport match (a 2-letter code never matches ORD)", async () => {
     const json = await mcpCall("tools/call", {
       name: "search_starlink_flights",
       arguments: { origin: "OR" },
     });
+    // Not an airport code: an error that says so, not ORD's flights and not a
+    // plain "none found" that would read as a real answer.
+    expect(json.result.isError).toBe(true);
     const text = json.result.content[0].text;
-    expect(text).toContain("No scheduled Starlink flights");
+    expect(text).toContain("Unknown airport code OR");
+    expect(text).not.toContain("ORD");
   });
 
   test("check_flight: rejects 5-digit flight numbers (REST 400s too — see core tests)", async () => {
@@ -1204,6 +1208,17 @@ describe("SEO meta", () => {
     expect(title).not.toContain("{{");
     expect(html).not.toContain("{{starlinkCount}}");
     expect(html).not.toContain("{{totalAircraftCount}}");
+  });
+
+  test("homepage description keeps the live count and says any date, unclamped", async () => {
+    const html = await getHtml("/");
+    const description = html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? "";
+    expect(description).toMatch(
+      /^Yes: [\d,]+ of [\d,]+ United planes \(\d+%\) have Starlink Wi-Fi/
+    );
+    expect(description).toContain("any flight on any date");
+    expect(description).not.toContain("…");
+    expect(description.length).toBeLessThanOrEqual(158);
   });
 
   test("homepage emits FAQPage JSON-LD with no unresolved {{vars}}", async () => {

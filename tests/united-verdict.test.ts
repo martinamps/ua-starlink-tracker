@@ -16,6 +16,7 @@ import {
   updateFleetVerificationResult,
   updateShipNumber,
 } from "../src/database/database";
+import { metrics } from "../src/observability";
 import { type VerifyPlaneDeps, verifyPlane } from "../src/scripts/fleet-discovery";
 import { verifyPlaneStarlink } from "../src/scripts/starlink-verifier";
 import type { StarlinkCheckResult } from "../src/scripts/united-starlink-checker";
@@ -527,6 +528,68 @@ describe("verifyPlane (discovery) write paths (injected checker + flights)", () 
     expect(uf.check_attempts).toBe(0);
     expect(uf.last_check_error).toBeNull();
     expect(planeWifi(db, TAIL)).toBe("Starlink"); // discovered row created
+    db.close();
+  });
+
+  /** discovery.lag_hours points emitted while `fn` runs. */
+  async function lagPoints(fn: () => Promise<unknown>): Promise<Array<Record<string, unknown>>> {
+    const points: Array<Record<string, unknown>> = [];
+    const original = metrics.distribution;
+    metrics.distribution = (name, value, tags) => {
+      if (name === "discovery.lag_hours") points.push({ value, ...(tags ?? {}) });
+      original(name, value, tags);
+    };
+    try {
+      await fn();
+    } finally {
+      metrics.distribution = original;
+    }
+    return points;
+  }
+
+  function addOldNegative(db: Database, tail: string, daysAgo: number): void {
+    db.query(
+      `INSERT INTO starlink_verification_log
+         (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, airline)
+       VALUES (?, 'united', ?, 0, 'Viasat', 1, 'UA')`
+    ).run(tail, NOW - daysAgo * 86400);
+  }
+
+  test("our own check finds a retrofit first: lag emitted as first_source:own", async () => {
+    const db = makeSyntheticDb();
+    addFleet(db, TAIL, "negative", { verifiedWifi: "Viasat" });
+    addOldNegative(db, TAIL, 40); // outside the consensus window, still the last "no"
+    addPriors(db, TAIL, "Starlink");
+
+    const points = await lagPoints(() =>
+      run(db, makePlane({ starlink_status: "negative", verified_wifi: "Viasat" }), starlinkOn(TAIL))
+    );
+    expect(fleetRow(db, TAIL).starlink_status).toBe("confirmed");
+    expect(points.length).toBe(1);
+    expect(points[0]).toMatchObject({
+      first_source: "own",
+      trigger: "scheduled",
+      fleet: "mainline",
+    });
+    expect(points[0].value as number).toBeGreaterThan(39 * 24);
+    db.close();
+  });
+
+  test("a tail the sheet already lists is not claimed as our own find", async () => {
+    const db = makeSyntheticDb();
+    addFleet(db, TAIL, "negative", { verifiedWifi: "Viasat" });
+    db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, DateFound, TailNumber, OperatedBy, fleet, airline)
+       VALUES ('Boeing 737-900', 'Starlink', '100', '2026-01-01', ?, 'United Airlines', 'mainline', 'UA')`
+    ).run(TAIL);
+    addOldNegative(db, TAIL, 40);
+    addPriors(db, TAIL, "Starlink");
+
+    const points = await lagPoints(() =>
+      run(db, makePlane({ starlink_status: "negative", verified_wifi: "Viasat" }), starlinkOn(TAIL))
+    );
+    expect(fleetRow(db, TAIL).starlink_status).toBe("confirmed");
+    expect(points).toEqual([]);
     db.close();
   });
 

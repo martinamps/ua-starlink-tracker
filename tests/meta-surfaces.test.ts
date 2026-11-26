@@ -99,7 +99,7 @@ const SWEEP_SAMPLE = 60;
 const SWEEP_TIMEOUT_MS = 60_000;
 
 const isParameterized = (p: string) =>
-  /^\/check-flight\/.+/.test(p) || /^\/route-planner\/.+\/.+/.test(p);
+  /^\/check-flight\/.+/.test(p) || /^\/route-planner\/.+\/.+/.test(p) || /^\/routes\/.+/.test(p);
 
 /**
  * Static URLs in full, plus every Nth parameterized URL — first and last
@@ -164,6 +164,15 @@ for (const site of Object.values(SITES)) {
             `${site.key} sitemap advertises ${path} with no data behind it`
           ).toBe(true);
           routesChecked++;
+          continue;
+        }
+        const airport = path.match(/^\/routes\/(.+)$/);
+        if (airport) {
+          expect(airport[1], `${site.key} sitemap advertises ${path}`).toMatch(ROUTE_AIRPORT_RE);
+          expect(
+            site.features.airportPages && reader!.airportHasData(airport[1]),
+            `${site.key} sitemap advertises ${path} with no page behind it`
+          ).toBe(true);
         }
       }
       // Guards the guard: if either enumerator stops emitting URLs this test
@@ -299,6 +308,8 @@ const BASE_HEADERS = [
   "Strict-Transport-Security",
   "Referrer-Policy",
   "Content-Security-Policy",
+  "X-App-Commit",
+  "X-App-Started",
 ] as const;
 
 function assertBaseHeaders(res: Response, label: string) {
@@ -328,6 +339,22 @@ describe("base security headers on every response", () => {
     ];
     for (const [path, host] of cases) {
       assertBaseHeaders(await get(path, host), `${path} on ${host}`);
+    }
+  });
+
+  test("build stamp rides preflight, MCP, and redirects too", async () => {
+    const UA = "unitedstarlinktracker.com";
+    const responses: Array<[string, Response]> = [
+      [
+        "OPTIONS /api/check-flight",
+        await app.dispatch(req("/api/check-flight", UA, { method: "OPTIONS" })),
+      ],
+      ["POST /mcp", await app.dispatch(mcpReq(UA, "tools/list", {}))],
+      ["www redirect", await get("/fleet", `www.${UA}`)],
+    ];
+    for (const [label, res] of responses) {
+      expect(res.headers.get("X-App-Commit"), label).toMatch(/^([0-9a-f]{7,40}|unknown)$/);
+      expect(Number.isNaN(Date.parse(res.headers.get("X-App-Started") ?? "")), label).toBe(false);
     }
   });
 
@@ -574,6 +601,11 @@ describe("plain 404", () => {
       expect(body).not.toContain("<script");
       expect(body).not.toContain('rel="canonical"');
       expect(body).not.toMatch(/{{\w+}}/);
+      // The heading font is `font-display: optional`: without its preload the fallback stays.
+      const full = await (await get("/", site.canonicalHost)).text();
+      const preload = full.match(/<link rel="preload" as="font"[^>]*>/)?.[0];
+      expect(preload).toBeDefined();
+      expect(body).toContain(preload as string);
     });
   }
 });

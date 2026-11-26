@@ -14,21 +14,31 @@ import {
   ASSIGNMENT_EMPTY_TTL,
   FR24_BREAKER_BASE_SEC,
   FR24_REQUEST_BUCKET_PER_MIN,
+  FR24_REQUEST_DEADLINE_MS,
   FR24_REQUEST_MAX_QUEUE_MS,
   cachedFlightAssignments,
   setAssignmentFetcher,
 } from "../src/api/flight-verdict";
 import {
+  FR24_ASSIGNMENT_FETCH_TIMEOUT_MS,
   FR24_QUEUE_SHED_MESSAGE,
   FlightRadar24API,
   Fr24UnavailableError,
   MIN_REQUEST_INTERVAL,
+  assignmentFetchTimeoutMs,
   reserveFr24Slot,
   resetFr24SlotClock,
 } from "../src/api/flightradar24-api";
 import type { FR24FetchResult } from "../src/api/fr24-browser-transport";
 import { createReaderFactory } from "../src/database/reader";
+import {
+  COUNTERS,
+  classifyLookupCaller,
+  metrics,
+  normalizeLookupCaller,
+} from "../src/observability";
 import { createApp } from "../src/server/app";
+import { CHROME_EXTENSION_ID } from "../src/utils/chrome-extension";
 import { makeSyntheticDb, stubPredict, utc } from "./helpers";
 
 const T0 = utc("2030-01-01T08:00:00Z");
@@ -222,6 +232,7 @@ describe("request-path FR24 queue and retry caps", () => {
     });
     reserveFr24Slot();
     reserveFr24Slot();
+    reserveFr24Slot();
     const started = performance.now();
     const err = await api
       .getFlightAssignments("UA1", nowSec(), {
@@ -237,6 +248,7 @@ describe("request-path FR24 queue and retry caps", () => {
 
   test("the default request-path fetcher is queue-capped", async () => {
     setAssignmentFetcher(null);
+    reserveFr24Slot();
     reserveFr24Slot();
     reserveFr24Slot();
     const now = nowSec();
@@ -312,5 +324,223 @@ describe("request-path FR24 queue and retry caps", () => {
     expect(err.message).toMatch(/429$/);
     expect(fetchedAt.length).toBe(1);
     expect(performance.now() - fetchedAt[0]).toBeLessThan(1000);
+  });
+});
+
+// The extension checks three cards at a time (CARD_CONCURRENCY in
+// chrome-extension/content.js) and gives each check FETCH_TIMEOUT_MS.
+describe("request-path lookups wait two slots inside the extension's timeout", () => {
+  beforeEach(() => resetFr24SlotClock());
+
+  const extensionTimeoutMs = async () => {
+    const src = await Bun.file(
+      new URL("../chrome-extension/background.js", import.meta.url).pathname
+    ).text();
+    const m = src.match(/FETCH_TIMEOUT_MS = ([\d_]+)/);
+    if (!m) throw new Error("FETCH_TIMEOUT_MS not found in the extension");
+    return Number(m[1].replaceAll("_", ""));
+  };
+  const cardConcurrency = async () => {
+    const src = await Bun.file(
+      new URL("../chrome-extension/content.js", import.meta.url).pathname
+    ).text();
+    const m = src.match(/CARD_CONCURRENCY = (\d+)/);
+    if (!m) throw new Error("CARD_CONCURRENCY not found in the extension");
+    return Number(m[1]);
+  };
+
+  test("every card of one extension pass gets a slot; the next caller is shed", async () => {
+    const t = Date.now();
+    const cards = await cardConcurrency();
+    const waits = Array.from({ length: cards }, () =>
+      reserveFr24Slot(t, FR24_REQUEST_MAX_QUEUE_MS)
+    );
+    expect(waits).toEqual(waits.map((_, i) => i * MIN_REQUEST_INTERVAL));
+    expect(reserveFr24Slot(t, FR24_REQUEST_MAX_QUEUE_MS)).toBeNull();
+  });
+
+  test("the wait is longer, the rate is not: slots stay one interval apart", () => {
+    const t = Date.now();
+    const a = reserveFr24Slot(t, FR24_REQUEST_MAX_QUEUE_MS) as number;
+    const b = reserveFr24Slot(t, FR24_REQUEST_MAX_QUEUE_MS) as number;
+    const c = reserveFr24Slot(t, FR24_REQUEST_MAX_QUEUE_MS) as number;
+    expect(b - a).toBe(MIN_REQUEST_INTERVAL);
+    expect(c - b).toBe(MIN_REQUEST_INTERVAL);
+  });
+
+  test("worst case, two slots waited and a fetch that times out, beats the extension", async () => {
+    const worstFetch = assignmentFetchTimeoutMs(
+      FR24_REQUEST_DEADLINE_MS,
+      FR24_REQUEST_MAX_QUEUE_MS
+    );
+    expect(FR24_REQUEST_MAX_QUEUE_MS).toBe(2 * MIN_REQUEST_INTERVAL);
+    expect(FR24_REQUEST_MAX_QUEUE_MS + worstFetch).toBe(FR24_REQUEST_DEADLINE_MS);
+    // A second of headroom for the trip to the server and back.
+    expect(FR24_REQUEST_DEADLINE_MS).toBeLessThanOrEqual((await extensionTimeoutMs()) - 1000);
+    // FR24 answers in 2.1s at p99; the squeezed fetch must still outlast that.
+    expect(worstFetch).toBeGreaterThanOrEqual(4000);
+  });
+
+  test("the fetch timeout is what the wait left, never more than the usual one", () => {
+    expect(assignmentFetchTimeoutMs(undefined, 60_000)).toBe(FR24_ASSIGNMENT_FETCH_TIMEOUT_MS);
+    expect(assignmentFetchTimeoutMs(FR24_REQUEST_DEADLINE_MS, 0)).toBe(
+      FR24_ASSIGNMENT_FETCH_TIMEOUT_MS
+    );
+    expect(assignmentFetchTimeoutMs(FR24_REQUEST_DEADLINE_MS, 4100)).toBe(4900);
+    expect(assignmentFetchTimeoutMs(FR24_REQUEST_DEADLINE_MS, 20_000)).toBe(0);
+  });
+
+  test("three lookups at once all reach FR24, the last with a shorter fetch", async () => {
+    const timeouts: number[] = [];
+    const api = new FlightRadar24API(async (_url, timeoutMs) => {
+      timeouts.push(timeoutMs as number);
+      return {
+        status: 200,
+        ok: true,
+        body: JSON.stringify({ result: { response: { data: [] } } }),
+      };
+    });
+    setAssignmentFetcher((flightNumber, targetDateUnix) =>
+      api.getFlightAssignments(flightNumber, targetDateUnix, {
+        maxRetries: 0,
+        maxWaitMs: FR24_REQUEST_MAX_QUEUE_MS,
+        deadlineMs: FR24_REQUEST_DEADLINE_MS,
+      })
+    );
+    const now = Math.floor(Date.now() / 1000);
+    const started = performance.now();
+    const results = await Promise.allSettled(
+      ["UA1", "UA2", "UA3"].map((fn) => cachedFlightAssignments(fn, now + 86400, now))
+    );
+    const elapsed = performance.now() - started;
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled", "fulfilled"]);
+    expect(timeouts.length).toBe(3);
+    expect(timeouts[0]).toBe(FR24_ASSIGNMENT_FETCH_TIMEOUT_MS);
+    expect(elapsed).toBeGreaterThanOrEqual(FR24_REQUEST_MAX_QUEUE_MS - 50);
+    for (const [i, timeout] of timeouts.entries()) {
+      expect(i * MIN_REQUEST_INTERVAL + timeout).toBeLessThanOrEqual(FR24_REQUEST_DEADLINE_MS);
+    }
+    expect(timeouts[2]).toBeGreaterThanOrEqual(4000);
+  }, 10_000);
+});
+
+describe("a shed lookup is tagged with who called", () => {
+  const sheds = async (run: () => Promise<unknown>) => {
+    const seen: Record<string, unknown>[] = [];
+    const original = metrics.increment;
+    metrics.increment = (name, tags) => {
+      if (name === COUNTERS.VENDOR_REQUEST && tags?.status === "shed") seen.push({ ...tags });
+    };
+    try {
+      await run();
+    } finally {
+      metrics.increment = original;
+    }
+    return seen;
+  };
+  const req = (path: string, headers: Record<string, string> = {}) => {
+    const url = new URL(`https://unitedstarlinktracker.com${path}`);
+    return [new Request(url, { headers }), url] as const;
+  };
+  const CHROME = "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/141.0 Safari/537.36";
+  const API = "/api/check-flight?flight_number=UA1&date=2030-01-01";
+
+  test("the caller is told from what the request already carries", () => {
+    expect(classifyLookupCaller(...req(`${API}&client=ext-2.2.0`, { "user-agent": CHROME }))).toBe(
+      "extension"
+    );
+    expect(
+      classifyLookupCaller(
+        ...req(API, { "user-agent": CHROME, origin: `chrome-extension://${CHROME_EXTENSION_ID}` })
+      )
+    ).toBe("extension");
+    expect(
+      classifyLookupCaller(...req(API, { "user-agent": CHROME, "sec-fetch-site": "same-origin" }))
+    ).toBe("page");
+    for (const headers of [
+      { "user-agent": CHROME },
+      { "user-agent": CHROME, "sec-fetch-site": "cross-site" },
+    ]) {
+      expect(classifyLookupCaller(...req(API, headers))).toBe("api");
+    }
+    for (const headers of [
+      { "user-agent": CHROME, origin: "chrome-extension://someoneelsesextensionid" },
+      { "user-agent": "curl/8.5.0", "sec-fetch-site": "same-origin" },
+      { "user-agent": "node" },
+      {},
+    ]) {
+      expect(classifyLookupCaller(...req(API, headers))).toBe("other");
+    }
+  });
+
+  test("the tag holds its five words, whatever is passed", () => {
+    for (const raw of ["page", "api", "extension", "mcp", "other"]) {
+      expect(normalizeLookupCaller(raw)).toBe(raw);
+    }
+    for (const raw of [null, undefined, "", "Page", "extension,env:prod", "x".repeat(500)]) {
+      expect(normalizeLookupCaller(raw)).toBe("other");
+    }
+  });
+
+  test("queue, bucket and breaker sheds each carry caller and airline", async () => {
+    const queue = await sheds(async () => {
+      countingFetcher(() => Promise.reject(new Fr24UnavailableError(FR24_QUEUE_SHED_MESSAGE)));
+      await cachedFlightAssignments("UA20", TARGET, T0, "extension").catch(() => {});
+      await cachedFlightAssignments("UA21", TARGET, T0, "page").catch(() => {});
+      await cachedFlightAssignments("UA22", TARGET, T0).catch(() => {});
+      await Bun.sleep(0);
+    });
+    expect(queue.map((t) => [t.reason, t.caller])).toEqual([
+      ["queue", "extension"],
+      ["queue", "page"],
+      ["queue", "other"],
+    ]);
+
+    const bucket = await sheds(async () => {
+      countingFetcher();
+      for (let i = 0; i <= FR24_REQUEST_BUCKET_PER_MIN; i++) {
+        await cachedFlightAssignments(`UA${300 + i}`, TARGET, T0, "page").catch(() => {});
+      }
+    });
+    expect(bucket.map((t) => [t.reason, t.caller])).toEqual([["bucket", "page"]]);
+
+    const breaker = await sheds(async () => {
+      countingFetcher(throttled);
+      await cachedFlightAssignments("UA30", TARGET, T0, "extension").catch(() => {});
+      await Bun.sleep(0);
+      await cachedFlightAssignments("UA31", TARGET, T0 + 1, "extension").catch(() => {});
+    });
+    expect(breaker.map((t) => [t.reason, t.caller])).toEqual([["breaker", "extension"]]);
+
+    for (const t of [...queue, ...bucket, ...breaker]) {
+      expect(t.vendor).toBe("fr24");
+      expect(t.type).toBe("assignments");
+      expect(t.airline).toBe("united");
+    }
+  });
+
+  test("/api/check-flight hands its caller to the lookup", async () => {
+    const db = makeSyntheticDb();
+    const app = createApp(db);
+    const now = Math.floor(Date.now() / 1000);
+    const date = new Date((now + 3600) * 1000).toISOString().slice(0, 10);
+    const seen = await sheds(async () => {
+      countingFetcher(() => Promise.reject(new Fr24UnavailableError(FR24_QUEUE_SHED_MESSAGE)));
+      const ask = (fn: string, extra: string, headers: Record<string, string>) =>
+        app.dispatch(
+          new Request(`http://x/api/check-flight?flight_number=${fn}&date=${date}${extra}`, {
+            headers: { Host: "unitedstarlinktracker.com", "user-agent": CHROME, ...headers },
+          })
+        );
+      const responses = [
+        await ask("UA9101", "&client=ext-2.2.0", {}),
+        await ask("UA9102", "", { "sec-fetch-site": "same-origin" }),
+        await ask("UA9103", "", {}),
+      ];
+      for (const r of responses) expect(r.status).toBe(200);
+      await Bun.sleep(0);
+    });
+    expect(seen.map((t) => t.caller)).toEqual(["extension", "page", "api"]);
+    db.close();
   });
 });

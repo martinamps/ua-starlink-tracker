@@ -10,6 +10,16 @@
 
 import { aircraftName } from "../airlines/aircraft-families";
 import {
+  checkedPlaneByPlane,
+  countingMethodSentences,
+  ownCountAsOf,
+  partlyByType,
+  publishedCount,
+  trackingMethod,
+  typeSumCredit,
+  typeSumParts,
+} from "../airlines/published-count";
+import {
   type AirlineConfig,
   type SiteConfig,
   type WifiPhase,
@@ -24,14 +34,15 @@ import {
   factsStamp,
   formatFactDate,
 } from "../airlines/rollout-facts";
+import { siteShowsAircraftNotWifi } from "../api/check-flight-core";
 import type { PerAirlineStat } from "../types";
 import {
   ROLLOUT_TONE,
   StagePill,
+  StagePillAgain,
   factsStage,
   shareIsPublishable,
   trackedStage,
-  trackingMethod,
 } from "./atoms";
 import {
   ButtonLink,
@@ -47,7 +58,7 @@ import {
   Td,
   Th,
 } from "./layout";
-import { fmt, pct } from "./ui/format";
+import { dateRuns, fmt, pct } from "./ui/format";
 import { Pill, TONE_TEXT, type Tone } from "./ui/tone";
 
 const FACTS_TONE: Record<RolloutFactsStatus, Tone> = {
@@ -85,6 +96,9 @@ export interface TypePhase {
   /** Roster counts for the family, when known. */
   equipped?: number;
   total?: number;
+  /** Roster aircraft of the family held back by name: not confirmed fitted,
+   * so "every one" would overstate a confirmed family. */
+  heldBack?: { count: number; group: string };
 }
 
 const PHASE_LABEL: Record<WifiPhase, { text: string; tone: Tone }> = {
@@ -113,8 +127,14 @@ export function PhaseTable({
   return (
     <div className="mb-4">
       <Eyebrow className="mb-1">By aircraft type</Eyebrow>
-      {phases.map(({ family, label, phase, equipped, total }) => {
-        const p = PHASE_LABEL[phase];
+      {phases.map(({ family, label, phase, equipped, total, heldBack }) => {
+        const p =
+          phase === "confirmed" && heldBack
+            ? {
+                text: `Starlink on most · ${fmt(heldBack.count)} ${heldBack.group} not confirmed`,
+                tone: PHASE_LABEL.confirmed.tone,
+              }
+            : PHASE_LABEL[phase];
         return (
           <div
             key={family}
@@ -132,7 +152,7 @@ export function PhaseTable({
                 </span>
               )}
             </span>
-            <span className={TONE_TEXT[p.tone]}>{p.text}</span>
+            <span className={`text-right ${TONE_TEXT[p.tone]}`}>{p.text}</span>
           </div>
         );
       })}
@@ -236,13 +256,77 @@ const METHOD_LABEL = {
   community: "Community fleet list",
 } as const;
 
+const methodLabel = (cfg: AirlineOverview["cfg"]) =>
+  partlyByType(cfg) ? "Part by type, part by plane" : METHOD_LABEL[trackingMethod(cfg)];
+
+/** A source line with each date held on one line: in a phone's narrow figure
+ * column it otherwise broke inside "Oct 26, 2026". */
+function Dated({ text }: { text: string }) {
+  return (
+    <>
+      {dateRuns(text).map((run) =>
+        run.date ? (
+          <span key={run.text} className="whitespace-nowrap">
+            {run.text}
+          </span>
+        ) : (
+          run.text
+        )
+      )}
+    </>
+  );
+}
+
+/** Below sm the stage sits under the airline's name. As a third column it left
+ * the figures 79px on a 360px phone, and cut them off. Its words are in the
+ * status column's markup already, so this copy has the stylesheet draw them:
+ * read without one, a row said "Installing Installing". */
+function StageUnderName({ info }: { info: Parameters<typeof StagePill>[0]["info"] }) {
+  return (
+    <span className="mt-1.5 block sm:hidden">
+      <StagePillAgain info={info} />
+    </span>
+  );
+}
+
 function EquippedCell({ o }: { o: AirlineOverview }) {
   const { cfg, stat } = o;
   if (stat.total === 0) return <span className="text-muted">No data yet</span>;
+  const published = publishedCount(cfg, stat.starlink);
+  if (published.basis === "type") return <span className="text-muted">By type</span>;
+  if (published.basis === "airline") {
+    return (
+      <>
+        {fmt(published.count)}
+        <span className="block text-xs text-muted">
+          <Dated text={ownCountAsOf(published)} />
+        </span>
+        {published.reportedBy && (
+          // Two short lines, so the credit never reads as part of the date.
+          <span className="block text-xs text-muted">
+            as reported by
+            <span className="block">{published.reportedBy}</span>
+          </span>
+        )}
+      </>
+    );
+  }
+  if (published.basis === "type-sum") {
+    return (
+      <>
+        {fmt(published.count)}
+        <span className="block text-xs text-muted text-balance">
+          <Dated text={`${typeSumParts(published)}, ${typeSumCredit(published)}`} />
+        </span>
+      </>
+    );
+  }
   if (shareIsPublishable(cfg, stat)) {
     return (
       <>
-        {fmt(stat.starlink)} of {fmt(stat.total)}{" "}
+        <span className="whitespace-nowrap">
+          {fmt(stat.starlink)} of {fmt(stat.total)}
+        </span>{" "}
         <span className="text-muted">({pct(stat.starlink, stat.total)})</span>
       </>
     );
@@ -271,18 +355,21 @@ export function AirlinesIndexPage({
 }) {
   const programmes = PROGRAMME_ORDER.flatMap((s) => roster.filter((e) => e.status === s));
   const negatives = roster.filter((e) => e.status === "not_starlink");
-  const perPlane = airlines
-    .filter((o) => trackingMethod(o.cfg) === "tail")
-    .map((o) => o.cfg.shortName);
   const byType = airlines
     .filter((o) => trackingMethod(o.cfg) === "type")
+    .map((o) => o.cfg.shortName);
+  const ownFigure = airlines
+    .filter((o) => publishedCount(o.cfg, o.stat.starlink).basis === "airline")
+    .map((o) => o.cfg.shortName);
+  const summed = airlines
+    .filter((o) => publishedCount(o.cfg, o.stat.starlink).basis === "type-sum")
     .map((o) => o.cfg.shortName);
   const scopeNotes = airlines.flatMap((o) => (o.scopeNote ? [o.scopeNote] : []));
   return (
     <PageShell site={site} pageLinks={pageLinks} currentPath={currentPath}>
       <PageHeader
         title="Starlink Wi-Fi by airline"
-        dek={`From finished fleets to airlines that picked another system. ${perPlane.join(" and ")} ${perPlane.length === 1 ? "is" : "are"} counted plane by plane.`}
+        dek={`From finished fleets to airlines that picked another system. ${countingMethodSentences(airlines.map((o) => o.cfg))}`}
       />
       <Section title="Tracked here" wide>
         <div className="overflow-x-auto">
@@ -290,7 +377,7 @@ export function AirlinesIndexPage({
             <thead>
               <tr>
                 <Th>Airline</Th>
-                <Th>Status</Th>
+                <Th optional>Status</Th>
                 <Th optional>Method</Th>
                 <Th numeric>With Starlink</Th>
                 <Th numeric optional>
@@ -311,19 +398,22 @@ export function AirlinesIndexPage({
                     {o.trackerHost && (
                       <a
                         href={`https://${o.trackerHost}/`}
-                        className="block text-xs text-accent hover:underline"
+                        className="mt-1 block py-1 text-xs text-accent hover:underline"
                       >
                         {o.cfg.shortName} Starlink Tracker →
                       </a>
                     )}
+                    <StageUnderName info={trackedStage(o.cfg, o.stat)} />
                   </Td>
-                  <Td>
+                  <Td optional>
                     <StagePill info={trackedStage(o.cfg, o.stat)} />
                   </Td>
                   <Td optional className="text-secondary">
-                    {METHOD_LABEL[trackingMethod(o.cfg)]}
+                    {methodLabel(o.cfg)}
                   </Td>
-                  <Td numeric className="whitespace-nowrap text-primary">
+                  {/* Wraps: a figure's source line alone is wider than a phone, and
+                      a cell that could not wrap pushed the column off the panel. */}
+                  <Td numeric className="text-primary">
                     <EquippedCell o={o} />
                   </Td>
                   <Td numeric optional className="text-secondary">
@@ -337,7 +427,11 @@ export function AirlinesIndexPage({
         {(byType.length > 0 || scopeNotes.length > 0) && (
           <p className="mt-3 text-xs text-muted">
             {byType.length > 0 &&
-              `${byType.join(" and ")} ${byType.length === 1 ? "is" : "are"} counted by aircraft type, so no fleet share is shown, and the count can run ahead of the airline's own figure. `}
+              `${byType.join(" and ")} ${byType.length === 1 ? "is" : "are"} counted by aircraft type, so no fleet share is shown: adding up aircraft types is not a count of installs. `}
+            {ownFigure.length > 0 &&
+              `${ownFigure.join(" and ")}'s figure is the airline's own, with its date. `}
+            {summed.length > 0 &&
+              `${summed.join(" and ")}'s figure is our sum of the per-type counts its source gives, with their date. `}
             {scopeNotes.join(" ")}
           </p>
         )}
@@ -388,7 +482,7 @@ function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
         <thead>
           <tr>
             <Th>Airline</Th>
-            <Th>Status</Th>
+            <Th optional>Status</Th>
             <Th optional>Summary</Th>
             <Th numeric>As of</Th>
           </tr>
@@ -405,8 +499,9 @@ function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
                   >
                     {e.name}
                   </a>
+                  <StageUnderName info={factsStage(e.status)} />
                 </Td>
-                <Td className="align-top">
+                <Td optional className="align-top">
                   <StagePill info={factsStage(e.status)} />
                 </Td>
                 <Td optional className="align-top text-secondary">
@@ -422,6 +517,15 @@ function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
       </table>
     </div>
   );
+}
+
+/** How the aircraft outside a type rule are known. Only the united backend
+ * reads a Wi-Fi listing; the others see which aircraft flies a flight, so a
+ * tail there is listed from a report and never checked. */
+function restOfFleetNote(cfg: AirlineConfig): string {
+  return cfg.verifierBackend === "united"
+    ? `The rest is checked one aircraft at a time against ${cfg.verifySite}.`
+    : `The rest is listed only where a report names the aircraft: ${siteShowsAircraftNotWifi(cfg)}.`;
 }
 
 export function AirlineDetailPage({
@@ -477,9 +581,11 @@ export function AirlineDetailPage({
             </div>
           )}
           <p className="text-sm text-muted leading-relaxed mt-3">
-            {trackingMethod(cfg) === "tail"
+            {checkedPlaneByPlane(cfg)
               ? `Checked plane by plane against ${cfg.verifySite}.`
-              : `Status follows aircraft type, per ${cfg.shortName}'s announcements.`}
+              : partlyByType(cfg)
+                ? `Part of the fleet follows aircraft type, per ${cfg.shortName}'s announcements. ${restOfFleetNote(cfg)}`
+                : `Status follows aircraft type, per ${cfg.shortName}'s announcements.`}
             {cfg.brand.pressReleaseUrl && (
               <>
                 {" "}

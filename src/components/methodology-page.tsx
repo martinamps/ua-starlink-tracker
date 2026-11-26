@@ -1,5 +1,6 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { ONBOARD_CHECK_NOTICE } from "../server/passenger-report-fields";
 import type { Link } from "./layout";
 import { PageHeader, PageShell, Section } from "./layout";
 import { longDate } from "./ui/format";
@@ -7,6 +8,8 @@ import { longDate } from "./ui/format";
 interface MethodologyPageProps {
   site: SiteConfig;
   lastUpdated: string;
+  /** The site runs the automatic onboard check for Starlink connections. */
+  onboardCheck?: boolean;
   pageLinks?: Link[];
   currentPath?: string;
 }
@@ -97,6 +100,7 @@ function Prose({ children }: { children: React.ReactNode }) {
 export default function MethodologyPage({
   site,
   lastUpdated,
+  onboardCheck = false,
   pageLinks,
   currentPath,
 }: MethodologyPageProps) {
@@ -169,6 +173,19 @@ export default function MethodologyPage({
           </ul>
         </Prose>
       </Section>
+
+      {onboardCheck && (
+        <Section title="What this site checks from your browser" id="onboard-check">
+          <Prose>
+            <p>{ONBOARD_CHECK_NOTICE.when}</p>
+            <p>{ONBOARD_CHECK_NOTICE.what}</p>
+            <p>
+              {ONBOARD_CHECK_NOTICE.kept} {ONBOARD_CHECK_NOTICE.use}
+            </p>
+            <p>{ONBOARD_CHECK_NOTICE.banner}</p>
+          </Prose>
+        </Section>
+      )}
 
       {/* The Dataset JSON-LD on this page declares /api/data as its
           distribution; Google requires the markup to describe content that is

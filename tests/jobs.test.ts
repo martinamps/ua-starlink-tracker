@@ -566,8 +566,13 @@ describe("alaska-verifier per-airline breaker", () => {
 describe("data-freshness coverage", () => {
   test("every enabled airline appears in some freshness job's coverage", () => {
     const covered = new Set(Object.values(FRESHNESS_COVERAGE).flat());
-    for (const cfg of enabledAirlines()) {
+    // An airline answered by statement alone has no job writing data for it,
+    // so nothing can go stale; its end date is what retires the answer.
+    for (const cfg of enabledAirlines().filter((a) => !a.statementRule)) {
       expect(covered).toContain(cfg.code);
+    }
+    for (const cfg of enabledAirlines().filter((a) => a.statementRule)) {
+      expect(covered).not.toContain(cfg.code);
     }
   });
 

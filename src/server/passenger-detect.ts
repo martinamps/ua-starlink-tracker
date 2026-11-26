@@ -3,11 +3,13 @@
  * is in Starlink's geofeed, and for matching visitors injects a no-UI probe
  * that beacons whether onboard.united.com's flight API resolves from their
  * browser. Everything client-sent is treated as untrusted claim; the only
- * server-observed signal is the IP. PASSENGER_VERIFY env: "off" disables
+ * server-observed signal is the IP, of which a row keeps the geofeed verdict
+ * and a short-lived keyed hash (see passenger-report-fields.ts), never the
+ * address. PASSENGER_VERIFY env: "off" disables
  * everything, "on" would surface UI (not built yet), default = probe only.
  */
 
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import {
   buildAirlineFlightNumberVariants,
   detectMarketingCarrier,
@@ -15,16 +17,24 @@ import {
 } from "../airlines/flight-number";
 import { looksLikeValidTailNumber } from "../airlines/registry";
 import {
+  expirePassengerDedupeKeys,
   getStarlinkPrefixes,
   isFlightAirborne,
   passengerReportSeenRecently,
   recordPassengerReport,
 } from "../database/database";
 import type { Database } from "../database/reader";
-import { COUNTERS, metrics, normalizeAirlineTag, normalizeProbeOutcome } from "../observability";
+import {
+  COUNTERS,
+  metrics,
+  normalizeAirborneMatch,
+  normalizeAirlineTag,
+  normalizeProbeOutcome,
+} from "../observability";
 import { PROBE_CONNECT_ORIGINS } from "../utils/constants";
 import { PrefixSet, dedupePrefix } from "../utils/ip-prefix";
 import { info } from "../utils/logger";
+import { DEDUPE_WINDOW_SEC } from "./passenger-report-fields";
 
 export const PASSENGER_VERIFY_MODE = process.env.PASSENGER_VERIFY ?? "probe";
 export const passengerVerifyEnabled = PASSENGER_VERIFY_MODE !== "off";
@@ -33,7 +43,6 @@ export const passengerVerifyEnabled = PASSENGER_VERIFY_MODE !== "off";
 export function isPassengerVerifyAudience(onStarlinkIp: boolean, siteScope: string): boolean {
   return passengerVerifyEnabled && onStarlinkIp && siteScope === "UA";
 }
-const DEDUPE_WINDOW_SEC = 6 * 3600;
 const RELOAD_TTL_MS = 10 * 60 * 1000;
 
 export class StarlinkIpDetector {
@@ -75,7 +84,22 @@ interface ProbeBody {
   claimed_flight?: unknown;
   claimed_tail?: unknown;
   claimed_date?: unknown;
-  router_id?: unknown;
+}
+
+// Lives only in this process's memory, so a stored key cannot be turned back
+// into a network by anyone holding the database, and a restart orphans every
+// key written before it. The cost is that a repeat report can slip through
+// once per deploy, which the 6-hour window already tolerates.
+const DEDUPE_SALT = randomBytes(32);
+export const DEDUPE_KEY_PREFIX = "h:";
+
+/** Keyed hash of the aggregation prefix (a plane's clients share one), never
+ * of the address: all the dedupe needs is "same network as a recent report". */
+export function reportDedupeKey(ip: string): string {
+  const digest = createHmac("sha256", DEDUPE_SALT)
+    .update(dedupePrefix(ip) ?? ip)
+    .digest("hex");
+  return `${DEDUPE_KEY_PREFIX}${digest.slice(0, 32)}`;
 }
 
 function clampString(v: unknown, max: number, re?: RegExp): string | null {
@@ -89,10 +113,9 @@ export function handlePassengerProbe(
   db: Database,
   ip: string,
   inGeofeed: boolean,
-  userAgent: string | null,
   body: ProbeBody
 ): "duplicate" | "stored" {
-  const ipPrefix = dedupePrefix(ip) ?? ip;
+  const dedupeKey = reportDedupeKey(ip);
 
   const source = clampString(body.source, 16, /^(probe|manual)$/) ?? "probe";
   const outcome = normalizeProbeOutcome(clampString(body.outcome, 32));
@@ -105,10 +128,10 @@ export function handlePassengerProbe(
       ? claimedTailRaw.toUpperCase()
       : null;
   const claimedDate = clampString(body.claimed_date, 10, DATE_RE);
-  const routerId = clampString(body.router_id, 64);
-  const uaHash = userAgent
-    ? createHash("sha256").update(userAgent).digest("hex").slice(0, 16)
-    : null;
+
+  const variants =
+    carrier && claimedFlight ? buildAirlineFlightNumberVariants(carrier, claimedFlight) : [];
+  const airborneMatch = inGeofeed && isFlightAirborne(db, variants);
 
   // Metric first so deduped beacons stay visible in DD; the dedupe key
   // includes source so the auto-probe row can never swallow a manual submit.
@@ -117,26 +140,23 @@ export function handlePassengerProbe(
     source,
     in_geofeed: inGeofeed ? "1" : "0",
     airline: normalizeAirlineTag(carrier?.code ?? null),
+    airborne_match: normalizeAirborneMatch(claimedFlight, airborneMatch),
   });
 
-  if (passengerReportSeenRecently(db, ipPrefix, source, claimedTail, DEDUPE_WINDOW_SEC)) {
+  expirePassengerDedupeKeys(db, DEDUPE_WINDOW_SEC);
+  if (passengerReportSeenRecently(db, dedupeKey, source, claimedTail, DEDUPE_WINDOW_SEC)) {
     return "duplicate";
   }
 
-  const variants =
-    carrier && claimedFlight ? buildAirlineFlightNumberVariants(carrier, claimedFlight) : [];
   recordPassengerReport(db, {
-    ip,
-    ip_prefix: ipPrefix,
+    dedupe_key: dedupeKey,
     in_geofeed: inGeofeed,
     source,
     outcome,
     claimed_flight: claimedFlight,
     claimed_tail: claimedTail,
     claimed_date: claimedDate,
-    router_id: routerId,
-    ua_hash: uaHash,
-    airborne_match: inGeofeed && isFlightAirborne(db, variants),
+    airborne_match: airborneMatch,
   });
   return "stored";
 }

@@ -4,8 +4,12 @@
  */
 import React from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
+import type { SiteConfig } from "../../airlines/registry";
+import { routePlaceNames } from "../../utils/airport-names";
 import { airportTimezone } from "../../utils/airport-tz";
 import { Chip, Section, StatInline } from "../layout";
+import { countSentence, followSentence } from "../outlook-copy";
+import { tailHref } from "../tail-link";
 import { fmt, formatDuration, shortDate, zonedDeparture } from "../ui/format";
 import type { FlightFacts } from "./types";
 
@@ -15,9 +19,11 @@ function lastSeenLabel(sec: number | null): string | null {
 }
 
 export function FlightFactBlocks({
+  site,
   flight,
   scheduledOnDate,
 }: {
+  site: SiteConfig;
   flight: FlightFacts;
   scheduledOnDate: boolean;
 }) {
@@ -28,6 +34,7 @@ export function FlightFactBlocks({
   const modelled = !!pred && pred.n_observations > 0;
   const checked = flight.observedTotal > 0;
   const last = flight.lastStarlink;
+  const outlook = flight.typeOutlook ?? null;
   return (
     <>
       {flight.upcoming.length > 0 && (
@@ -52,7 +59,16 @@ export function FlightFactBlocks({
                     </span>
                   </div>
                   <div className="text-muted">
-                    <span className="font-mono">{u.tail_number}</span>
+                    {u.starlink && tailHref(site, u.tail_number) ? (
+                      <a
+                        href={tailHref(site, u.tail_number) ?? undefined}
+                        className="font-mono hover:text-accent transition-colors"
+                      >
+                        {u.tail_number}
+                      </a>
+                    ) : (
+                      <span className="font-mono">{u.tail_number}</span>
+                    )}
                     {u.aircraft_type ? ` · ${aircraftName(u.aircraft_type)}` : ""}
                   </div>
                 </div>
@@ -122,6 +138,12 @@ export function FlightFactBlocks({
                 .
               </p>
             )}
+            {outlook && (
+              <p id="type-outlook">
+                {countSentence(outlook.outlook, `${outlook.airline} ${outlook.short}s`)}{" "}
+                {followSentence(outlook.outlook, outlook.airline, outlook.now)}
+              </p>
+            )}
           </div>
         </Section>
       )}
@@ -136,6 +158,7 @@ export function FlightFactBlocks({
           <ul className="divide-y divide-subtle text-sm">
             {flight.routes.map((r) => {
               const lastSeen = lastSeenLabel(r.last_seen_at);
+              const places = routePlaceNames(r.departure_airport, r.arrival_airport);
               return (
                 <li
                   key={`${r.departure_airport}-${r.arrival_airport}`}
@@ -148,6 +171,7 @@ export function FlightFactBlocks({
                         <span className="text-secondary"> · {formatDuration(r.dur_sec)}</span>
                       ) : null}
                     </div>
+                    {places && <div className="text-secondary">{places}</div>}
                     <div className="text-muted">
                       Seen {fmt(r.times)} time{r.times === 1 ? "" : "s"}
                       {lastSeen ? ` · ${lastSeen}` : ""}

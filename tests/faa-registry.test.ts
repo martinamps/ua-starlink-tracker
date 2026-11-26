@@ -17,6 +17,8 @@ const MASTER_LINES = [
   "N-NUMBER,SERIAL NUMBER,MFR MDL CODE,ENG MFR MDL,YEAR MFR,TYPE REGISTRANT,NAME,STREET,STREET2,CITY,STATE,ZIP CODE,REGION,COUNTY,COUNTRY,LAST ACTION DATE,CERT ISSUE DATE,CERTIFICATION,TYPE AIRCRAFT,TYPE ENGINE,STATUS CODE,MODE S CODE,FRACT OWNER,AIR WORTH DATE,OTHER NAMES(1),OTHER NAMES(2),OTHER NAMES(3),OTHER NAMES(4),OTHER NAMES(5),EXPIRATION DATE,UNIQUE ID,KIT MFR, KIT MODEL,MODE S CODE HEX",
   "73275,30581,1387815,30030,2001,3,UNITED AIRLINES INC,233 S WACKER DR,,CHICAGO,IL,60606,3,031,US,20240105,20011019,,5,5,V,52624414,,20011102,,,,,,20310131,01089105,,,A98D0C",
   "868AS,7474,3160009,52021,2001,3,SKYWEST AIRLINES INC,444 S RIVER RD,,ST GEORGE,UT,84790,4,053,US,20231002,20011207,,5,5,9,52764363,,20011219,,,,,,20261231,00569204,,,ABC123",
+  // Renewal notice mailed (status 25) but not yet expired: still registered
+  "69818,42177,1387815,30030,2014,3,UNITED AIRLINES INC,233 S WACKER DR,,CHICAGO,IL,60606,3,031,US,20251101,20140321,,5,5,25,52245412,,20140318,,,,,,20270331,01200001,,,A94B0A",
   "99999,1234,9999999,11111,1990,1,SOMEONE ELSE,1 MAIN ST,,AUSTIN,TX,78701,2,453,US,20200101,19900101,,4,1,V,50000001,,19900201,,,,,,20270101,00000001,,,A00001",
 ].join("\n");
 
@@ -37,7 +39,7 @@ const DEREG_LINES = [
 ].join("\n");
 
 async function fixtures() {
-  const wanted = new Set(["73275", "868AS", "652BR", "7943SK"]);
+  const wanted = new Set(["73275", "868AS", "652BR", "7943SK", "69818"]);
   const master = await collectMasterRows(MASTER_LINES.split("\n"), wanted);
   const acftref = await collectAcftref(
     ACFTREF_LINES.split("\n"),
@@ -50,15 +52,15 @@ async function fixtures() {
 describe("FAA registry parsing", () => {
   test("collects only wanted tails and resolves model names via ACFTREF", async () => {
     const { master, acftref } = await fixtures();
-    expect([...master.keys()].sort()).toEqual(["73275", "868AS"]);
+    expect([...master.keys()].sort()).toEqual(["69818", "73275", "868AS"]);
     expect(acftref.get("1387815")).toBe("BOEING 737-824");
   });
 
   test("buildFaaRecords applies serial-filtered dereg and flags Starlink-marked problem tails", async () => {
     const { master, acftref, dereg } = await fixtures();
     const { rows, flags } = buildFaaRecords({
-      tails: ["N73275", "N868AS", "N652BR", "N7943SK"],
-      starlinkTails: new Set(["N73275", "N7943SK", "N868AS"]),
+      tails: ["N73275", "N868AS", "N652BR", "N7943SK", "N69818"],
+      starlinkTails: new Set(["N73275", "N7943SK", "N868AS", "N69818"]),
       master,
       acftref,
       dereg,
@@ -76,12 +78,43 @@ describe("FAA registry parsing", () => {
     expect(byTail.get("N868AS")?.dereg_date).toBe("20231002");
     // Tail absent from MASTER entirely.
     expect(byTail.get("N7943SK")?.faa_status).toBe("NOT_IN_MASTER");
+    expect(byTail.get("N69818")?.faa_status).toBe("25");
     expect(byTail.get("N652BR")?.dereg_date).toBe("20231103");
 
     expect(flags.missingFromMaster.sort()).toEqual(["N652BR", "N7943SK"]);
     // Starlink-marked tails that aren't validly registered: the fabricated tail
-    // and the deregistered one; the valid N73275 must NOT be flagged.
+    // and the deregistered one; the valid N73275 and the renewal-notice N69818
+    // must NOT be flagged.
     expect(flags.wrongYes.map((f) => f.tail).sort()).toEqual(["N7943SK", "N868AS"]);
+  });
+
+  test("a renewal notice is not flagged; expired and unknown codes are, with the code in the reason", () => {
+    const row = (statusCode: string) => ({
+      serial: "1",
+      mfrMdlCode: "1387815",
+      yearMfr: "2014",
+      registrant: "UNITED AIRLINES INC",
+      statusCode,
+      modeSHex: "A94B0A",
+      expirationDate: "20270331",
+    });
+    const codes = ["V", "14", "15", "24", "25", "26", "28", "27", "29", "QQ", ""];
+    const tails = codes.map((_, i) => `N${100 + i}UA`);
+    const { flags } = buildFaaRecords({
+      tails,
+      starlinkTails: new Set(tails),
+      master: new Map(codes.map((c, i) => [`${100 + i}UA`, row(c)])),
+      acftref: new Map(),
+      dereg: new Map(),
+    });
+
+    const reasonByCode = new Map(
+      flags.wrongYes.map((f) => [codes[tails.indexOf(f.tail)], f.reason])
+    );
+    expect([...reasonByCode.keys()].sort()).toEqual(["", "27", "29", "QQ"]);
+    expect(reasonByCode.get("27")).toBe("FAA status 27 (Registration Expired)");
+    expect(reasonByCode.get("QQ")).toBe("FAA status QQ");
+    expect(reasonByCode.get("")).toBe("FAA status blank");
   });
 });
 

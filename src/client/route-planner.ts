@@ -7,7 +7,10 @@
  */
 import type { RouteFlightBoard } from "../api/route-flights";
 import { probLabel, probTier } from "../components/ui/format";
+import { orList, placeCodeAirports } from "../utils/airport-aliases";
+import type { AirportBox, attachAirportBox } from "./airport-picker";
 import { esc } from "./esc";
+import { HINT_ERROR, HINT_PLAIN } from "./hint-classes";
 import { renderRouteFlights } from "./route-flights";
 
 interface Leg {
@@ -160,6 +163,133 @@ function renderResults(out: HTMLElement, data: PlanBody, boardHasRows: boolean):
   out.innerHTML = `${baseline}${itins.map((it, i) => renderItinerary(it, i + 1)).join("")}`;
 }
 
+/** Three letters, or a four-letter ICAO spelling: what the boxes took before names. */
+const CODE_SHAPED = /^[A-Za-z]{3,4}$/;
+const NAME_MAX = 40;
+
+/**
+ * City names in the two boxes. The page arrives taking codes only, and works
+ * that way with no script. Here the boxes are opened to names, and the picker
+ * with its names table (a separate bundle, `data-picker-src` on the form) is
+ * fetched when a visitor first touches a box, so a page view that never
+ * searches by name never pays for the table.
+ */
+export function wireAirportNames(
+  form: HTMLFormElement,
+  boxes: HTMLInputElement[]
+): (box: HTMLInputElement) => Promise<string | null> {
+  const src = form.dataset.pickerSrc;
+  const asTyped = (box: HTMLInputElement) => Promise.resolve(box.value.trim().toUpperCase());
+  if (!src) return asTyped;
+  const prefer = (form.dataset.busyAirports ?? "").split(" ").filter(Boolean);
+  const status = document.getElementById("airport-status");
+  const announce = (text: string) => {
+    if (status) status.textContent = text;
+  };
+  const parts = (box: HTMLInputElement) => ({
+    list: document.getElementById(`${box.id}-list`),
+    hint: document.getElementById(`${box.id}-hint`),
+  });
+  for (const box of boxes) {
+    const { list, hint } = parts(box);
+    if (!list || !hint) return asTyped;
+    box.maxLength = NAME_MAX;
+    box.placeholder = "City or code";
+    box.setAttribute("role", "combobox");
+    box.setAttribute("aria-autocomplete", "list");
+    box.setAttribute("aria-expanded", "false");
+    box.setAttribute("aria-controls", list.id);
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", list.dataset.label ?? "Matching airports");
+    box.setAttribute("aria-describedby", hint.id);
+  }
+  const attached = new Map<HTMLInputElement, AirportBox>();
+  // A code sent before the picker arrived: it must not open a list over the results.
+  const sentAsTyped = new Map<HTMLInputElement, string>();
+  let loading: Promise<void> | null = null;
+  const load = () => {
+    loading ??= new Promise<void>((done) => {
+      const script = document.createElement("script");
+      script.src = src;
+      script.onload = () => {
+        const attach = (window as unknown as { attachAirportBox?: typeof attachAirportBox })
+          .attachAirportBox;
+        for (const box of boxes) {
+          const { list, hint } = parts(box);
+          if (attach && list && hint) {
+            const openNow = sentAsTyped.get(box) !== box.value;
+            attached.set(box, attach({ input: box, list, hint, announce, prefer, openNow }));
+          }
+        }
+        done();
+      };
+      // Offline, or blocked: the boxes still take codes, and the next name
+      // sent asks for the list again rather than failing until a reload.
+      script.onerror = () => {
+        script.remove();
+        loading = null;
+        done();
+      };
+      document.head.append(script);
+    });
+    return loading;
+  };
+  form.addEventListener("focusin", load, { once: true });
+  form.addEventListener("pointerdown", load, { once: true });
+  // The line under a box while the picker is not there to write it.
+  const say = (box: HTMLInputElement, text: string, error = false) => {
+    const { hint } = parts(box);
+    if (hint) {
+      hint.textContent = text;
+      hint.className = error ? HINT_ERROR : HINT_PLAIN;
+    }
+    if (error) box.setAttribute("aria-invalid", "true");
+    else box.removeAttribute("aria-invalid");
+  };
+  return async (box) => {
+    const typed = box.value.trim();
+    // Letters shaped like a code that name a city (NYC, typed fast or arriving
+    // in the address) are no code: they wait for the list like any name.
+    const cityAirports = attached.has(box) ? null : placeCodeAirports(typed);
+    // A code never waits on the table.
+    if (!attached.has(box) && !cityAirports && CODE_SHAPED.test(typed)) {
+      sentAsTyped.set(box, box.value);
+      // A "did not load" line from an earlier try no longer applies, under
+      // the box or in the status line.
+      say(box, "");
+      announce("");
+      return typed.toUpperCase();
+    }
+    if (!attached.has(box)) {
+      say(box, "Looking up airports…");
+      announce("Looking up airports.");
+    }
+    await load();
+    const picker = attached.get(box);
+    if (picker) return picker.resolve();
+    // Without the list, the city's airports are still known: one is searched,
+    // several are named for the visitor to type.
+    if (cityAirports?.length === 1) {
+      box.value = cityAirports[0];
+      say(box, "");
+      announce("");
+      return cityAirports[0];
+    }
+    if (cityAirports) {
+      const which = `${typed.toUpperCase()} covers several airports. Enter ${orList(cityAirports)}.`;
+      say(box, which, true);
+      announce(which);
+      box.focus();
+      return null;
+    }
+    const failed = "The airport list did not load. Enter a 3-letter airport code, or try again.";
+    say(box, failed, true);
+    announce(failed);
+    box.focus();
+    return null;
+  };
+}
+
 export function wireRoutePlanner(): void {
   const form = document.getElementById("route-form") as HTMLFormElement | null;
   const out = document.getElementById("route-results");
@@ -168,17 +298,24 @@ export function wireRoutePlanner(): void {
   const dateInput = document.getElementById("travel-date") as HTMLInputElement | null;
   const board = document.getElementById("route-flights");
   if (!form || !out || !originInput || !destInput) return;
+  const codeOf = wireAirportNames(form, [originInput, destInput]);
   const params = new URLSearchParams(window.location.search);
   if (params.get("origin") && params.get("destination")) {
-    originInput.value = params.get("origin") ?? "";
-    destInput.value = params.get("destination") ?? "";
+    originInput.value = (params.get("origin") ?? "").toUpperCase().slice(0, NAME_MAX);
+    destInput.value = (params.get("destination") ?? "").slice(0, NAME_MAX);
     if (dateInput) dateInput.value = params.get("date") ?? "";
+  } else if (params.get("origin")) {
+    // An airport page's "plan a trip from here": the origin arrives filled in.
+    originInput.value = (params.get("origin") ?? "").toUpperCase().slice(0, NAME_MAX);
+    destInput.focus();
   }
   // A newer search aborts the one in flight, so a slow answer can't land last.
   let inFlight: AbortController | null = null;
-  const search = () => {
-    const origin = originInput.value.trim().toUpperCase();
-    const dest = destInput.value.trim().toUpperCase();
+  const search = async () => {
+    if (!originInput.value.trim() || !destInput.value.trim()) return;
+    // One box at a time: a box that needs a choice takes the focus.
+    const origin = await codeOf(originInput);
+    const dest = origin ? await codeOf(destInput) : null;
     if (!origin || !dest) return;
     inFlight?.abort();
     const ctrl = new AbortController();

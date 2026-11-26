@@ -21,19 +21,27 @@ import {
 import {
   type AirlineConfig,
   COMMUNITY_SOURCE_UPDATED_META,
+  VERIFIER_SITE,
   enabledAirlines,
   hubLookupAirlines,
   isGuideStale,
   programTypeOf,
   publicAirlines,
+  verifierReadsWifi,
 } from "../airlines/registry";
-import type { FlightAssignmentRow, UnequippedAssignment } from "../database/database";
+import type {
+  DepartureSlot,
+  FlightAssignmentRow,
+  UnequippedAssignment,
+} from "../database/database";
+import { firstReadNote } from "../database/first-read";
 import type { Scope, ScopedReader } from "../database/reader";
 import { rowEvidence } from "../database/sql/equipped";
 import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   DISTRIBUTIONS,
+  type LookupCaller,
   type Tags,
   bucketDaysOut,
   metrics,
@@ -45,7 +53,9 @@ import {
   normalizeScopeTag,
 } from "../observability";
 import {
+  type AircraftSighting,
   type CarrierPrediction,
+  type QuotedCount,
   carrierPrediction,
   carrierPredictionTelemetry,
   legAsPrediction,
@@ -57,10 +67,11 @@ import { AIRPORT_COORDS } from "../utils/airport-geo";
 import {
   AIRPORT_TZ,
   type FlightDateWindow,
+  airportLocalDate,
   flightDateWindow,
   matchesLocalDate,
 } from "../utils/airport-tz";
-import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
+import { type FallbackSegment, lookupFlightTailVerdict, unreadAircraft } from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
 import {
   type QatarGrade,
@@ -348,6 +359,7 @@ export function verdictTelemetry(
       return { outcome: "no_data", confidence: "none" };
     case "qatar":
       if (verdict.qclass === "yes") return { outcome: "type_yes", confidence: "medium" };
+      if (verdict.qclass === "partly") return { outcome: "predicted", confidence: "medium" };
       if (verdict.qclass === "no") return { outcome: "type_no", confidence: "medium" };
       if (verdict.qclass === "cancelled") return { outcome: "no_data", confidence: "none" };
       return { outcome: "predicted", confidence: "low" };
@@ -395,6 +407,59 @@ export interface VerdictSummary {
   /** Flight-history observations behind `probability`; 0 for a type share. */
   observations: number | null;
   assignment: VerdictAssignment | null;
+  /** The airline's own dated count, where that count and not ours decided the
+   * answer. Every surface words such an answer as the airline's, with its
+   * date: never a yes or a no of our own. */
+  airlineCount: QuotedCount | null;
+  /** The named aircraft is counted on one Starlink read of ours and the
+   * sheet's listing, and waits for the next read. Every surface says so. */
+  firstRead: { tail: string; readAt: number } | null;
+}
+
+/**
+ * The additive wire key for `firstRead`; absent unless such a count stands.
+ * `note` is the sentence every surface shows, so none words its own.
+ */
+export function firstReadField(
+  summary: VerdictSummary,
+  cfg: Pick<AirlineConfig, "verifySite">
+): Record<string, unknown> {
+  const f = summary.firstRead;
+  return f
+    ? {
+        first_read: {
+          tail_number: f.tail,
+          read_at: f.readAt,
+          note: firstReadNote(f.readAt, cfg.verifySite),
+        },
+      }
+    : {};
+}
+
+/** The same sentence for a text answer; empty unless such a count stands. */
+export function firstReadSentence(
+  verdict: AnsweredVerdict,
+  cfg: Pick<AirlineConfig, "verifySite">
+): string {
+  const f = verdictSummary(verdict).firstRead;
+  return f ? firstReadNote(f.readAt, cfg.verifySite) : "";
+}
+
+/** The additive wire key for `airlineCount`; absent where no count decided. */
+export function airlineCountField(summary: VerdictSummary): Record<string, unknown> {
+  const c = summary.airlineCount;
+  return c
+    ? {
+        airline_count: {
+          airline: c.airline,
+          aircraft: c.aircraft,
+          connected: c.connected,
+          total: c.total,
+          named: c.named,
+          as_of: c.asOf,
+        },
+      }
+    : {};
 }
 
 type AssignedVerdict = Extract<
@@ -417,17 +482,64 @@ export function verdictAssignment(verdict: AssignedVerdict): VerdictAssignment {
   }
 }
 
+/**
+ * How a tail that is listed with Starlink and settled by no check is worded.
+ * "Not yet verified" holds only where our check reads Wi-Fi (united.com). A
+ * check that sees the aircraft and not its Wi-Fi (alaskaair.com) will never
+ * settle the tail, so those answers say what the site can't show instead of
+ * promising a check. The united wording is pinned by the contract goldens.
+ */
+export interface ListedWording {
+  /** After "Starlink": "listed, not yet verified". */
+  status: string;
+  /** Why the airline's site can't settle it; null where our check can. */
+  siteLimit: string | null;
+}
+
+/** "alaskaair.com shows which aircraft flies a flight, not its Wi-Fi": names
+ * the site our check reads, or the airline's own where we check none. */
+export function siteShowsAircraftNotWifi(
+  cfg: Pick<AirlineConfig, "verifierBackend" | "verifySite">
+): string {
+  const site = cfg.verifierBackend ? VERIFIER_SITE[cfg.verifierBackend] : cfg.verifySite;
+  return `${site} shows which aircraft flies a flight, not its Wi-Fi`;
+}
+
+export function listedWording(
+  cfg: Pick<AirlineConfig, "verifierBackend" | "verifySite">
+): ListedWording {
+  if (verifierReadsWifi(cfg)) return { status: "listed, not yet verified", siteLimit: null };
+  return {
+    status: "listed, not confirmed",
+    // No backend: we read nothing off that site, so we say nothing about it.
+    siteLimit: cfg.verifierBackend ? siteShowsAircraftNotWifi(cfg) : null,
+  };
+}
+
 export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
-  const none = { probability: null, observations: null, assignment: null };
+  const none = {
+    probability: null,
+    observations: null,
+    assignment: null,
+    airlineCount: null,
+    firstRead: null,
+  };
   switch (verdict.kind) {
     case "scheduled":
-    case "fr24":
+    case "fr24": {
+      const assignment = verdictAssignment(verdict);
+      const readAt =
+        verdict.kind === "scheduled"
+          ? scheduledFlights(verdict)[0].first_read_counted_at
+          : verdict.starlink[0].first_read_at;
       return {
         ...none,
         hasStarlink: true,
         confidence: verdictConfidence(verdict),
-        assignment: verdictAssignment(verdict),
+        assignment,
+        firstRead: readAt ? { tail: assignment.tail, readAt } : null,
       };
+    }
     case "scheduled_no":
       return {
         ...none,
@@ -443,9 +555,13 @@ export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
         assignment: verdictAssignment(verdict),
       };
     case "no_model": {
-      const pen = verdict.answer.kind === "penetration" ? verdict.answer.pen.pct : null;
+      const { answer } = verdict;
+      const pen = answer.kind === "penetration" ? answer.pen.pct : null;
+      const basis =
+        answer.kind === "penetration" || answer.kind === "no_model" ? answer.aircraft : undefined;
       return {
         ...none,
+        airlineCount: basis?.count ?? null,
         hasStarlink: null,
         confidence: noModelConfidence(verdict.answer),
         probability: pen,
@@ -461,7 +577,14 @@ export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
         observations: verdict.pred.n_observations,
       };
     case "qatar":
-      return { ...none, hasStarlink: verdict.hasStarlink, confidence: "type" };
+      return {
+        ...none,
+        hasStarlink: verdict.hasStarlink,
+        confidence: "type",
+        ...(verdict.probability !== undefined
+          ? { probability: verdict.probability, observations: 0 }
+          : {}),
+      };
     case "qatar_no_data":
       return { ...none, hasStarlink: null, confidence: "no_data" };
     case "qatar_history":
@@ -472,6 +595,56 @@ export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
         probability: verdict.probability,
       };
   }
+}
+
+/**
+ * The verdict for one departure slot whose aircraft our own rows already name,
+ * or null when they hold no settled answer for it. The undated flight page
+ * leads with this; it classifies the slot's row exactly as the dated lookup
+ * does, and answers only where the slot's own equipped test agrees, so the
+ * page's opening, its departures list and the lookup cannot contradict.
+ */
+export function slotVerdict(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  slot: DepartureSlot,
+  now: number = unixNow()
+): AssignedVerdict | null {
+  // Qatar answers per aircraft type; its rows never name a tail.
+  if (cfg.code === "QR") return null;
+  const date = airportLocalDate(slot.departure_airport, slot.departure_time);
+  const window = date ? flightDateWindow(date, now) : null;
+  if (!window) return null;
+  const normalized = ensureAirlinePrefix(cfg, flightNumber);
+  // Newest first, so a swap's stale row can't answer for the slot's current tail.
+  const row = reader
+    .getFlightAssignments(
+      buildAirlineFlightNumberVariants(cfg, normalized),
+      slot.departure_time,
+      slot.departure_time + 1
+    )
+    .find((r) => r.departure_airport === slot.departure_airport);
+  if (!row || row.tail_number !== slot.tail_number) return null;
+  const c = classifyRow(row);
+  if (c === "settled" || c === "verified_other") {
+    if (slot.equipped === 1) return null;
+    return {
+      kind: "scheduled_no",
+      window,
+      normalized,
+      flights: [{ ...row, negativeReason: c }],
+      fr24Error: false,
+    };
+  }
+  if (slot.equipped !== 1) return null;
+  return {
+    kind: "scheduled",
+    window,
+    normalized,
+    verified: c === "verified" ? [row] : [],
+    unverified: c === "verified" ? [] : [row],
+  };
 }
 
 function rowAssignment(f: FlightAssignmentRow, wifi: string | null): VerdictAssignment {
@@ -537,7 +710,8 @@ export function recordPrediction(
 export interface ResolveDeps {
   now?: number;
   /** The booking's aircraft type, for carriers whose answer is per programme
-   * type (community-source); used only when no tail is known. */
+   * type (community-source), used only when no tail is known, and for an
+   * airline whose own statement names one type, where it is all there is. */
   aircraftType?: string | null;
   /** Override the FR24 reverse lookup; pass null to disable it (hub check-any-flight). */
   lookupTail?: typeof lookupFlightTailVerdict | null;
@@ -546,6 +720,8 @@ export interface ResolveDeps {
   leg?: LegQuery;
   /** A leg was asked for but can't be used: answer unscoped and say why. */
   unscoped?: UnscopedLeg;
+  /** Who is asking; tags a shed live lookup. Absent = other. */
+  caller?: LookupCaller;
 }
 
 export async function resolveFlightVerdict(
@@ -565,6 +741,7 @@ export async function resolveFlightVerdict(
   }
 
   if (cfg.code === "QR") return resolveQatarLeg(reader, normalized, date, window, now, deps);
+  if (cfg.statementRule) return statementVerdict(cfg, reader, normalized, date, window, now, deps);
 
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
 
@@ -586,7 +763,7 @@ export async function resolveFlightVerdict(
       Math.max(u.last_updated, supersededAt.get(u.departure_time) ?? 0)
     );
   }
-  const rows = reader
+  const scheduled = reader
     .getFlightAssignments(variants, window.queryStart, window.queryEnd)
     .filter((r) => {
       if (seen.has(r.departure_time)) return false;
@@ -595,6 +772,13 @@ export async function resolveFlightVerdict(
     })
     .filter(onDate)
     .filter((r) => r.last_updated >= (supersededAt.get(r.departure_time) ?? 0));
+  // An answer made with no live lookup (the hub, a page's first paint) reads
+  // what an earlier lookup stored: a listed tail it named after our last read
+  // of that tail's schedule is on the flight as far as we know.
+  const rows =
+    scheduled.length === 0 && deps.lookupTail === null
+      ? reader.getListedSightings(variants, window.queryStart, window.queryEnd).filter(onDate)
+      : scheduled;
 
   const leg = deps.leg;
   if (!leg) {
@@ -878,11 +1062,12 @@ async function verdictFromRows(
   let fr24Error = false;
   let fr24Shed = false;
   let raw: FallbackSegment[] | null = null;
+  let live: FallbackSegment[] = [];
   let scopedTo: Pick<RowsAnswer, "segmentMatch" | "answeredSegment"> = {};
   if (deps.lookupTail !== null) {
     const lookup = deps.lookupTail ?? lookupFlightTailVerdict;
     try {
-      raw = await lookup(reader, normalized, date, window.start, window.end, now);
+      raw = await lookup(reader, normalized, date, window.start, window.end, now, deps.caller);
     } catch (err) {
       // FR24 outage ≠ "no assignment published" — never a confident no.
       // Anything else (e.g. a DB error) must not masquerade as an outage.
@@ -903,6 +1088,7 @@ async function verdictFromRows(
     if (segSel) scopedTo = { segmentMatch: segSel.match, answeredSegment: segSel.items[0] };
     const segments = segSel && segSel.match !== "ambiguous" ? segSel.items : raw;
     if (segments !== null) {
+      live = segments;
       const starlink = segments.filter((s) => s.hasStarlink);
       if (starlink.length > 0) {
         return {
@@ -954,6 +1140,12 @@ async function verdictFromRows(
         answer: carrierPrediction(cfg, reader, normalized, {
           aircraftType: deps.aircraftType,
           nowMs: now * 1000,
+          scheduled: scheduledAircraft(cfg, reader, normalized, date, live, leg),
+          // With no lookup's answer in hand, the mark the last one left stands in.
+          unreadAircraft:
+            unreadAircraft(raw) > 0 ||
+            (raw === null &&
+              reader.hasUnreadAircraft(buildAirlineFlightNumberVariants(cfg, normalized), date)),
         }),
         fr24Error,
         ...(fr24Shed ? { fr24Shed } : {}),
@@ -976,6 +1168,40 @@ async function verdictFromRows(
     segments: raw,
     ...scopedTo,
   };
+}
+
+/**
+ * The aircraft our own data puts on the flight that day: the live lookup's
+ * tails where it ran and found any, else the newest logged tail of each
+ * departure. A listed tail is left out: one still on the flight was answered
+ * from the schedule before this, so here it is a stale row from before a swap.
+ */
+function scheduledAircraft(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  normalized: string,
+  date: string,
+  live: readonly FallbackSegment[],
+  leg?: LegQuery
+): AircraftSighting[] {
+  if (!cfg.subfleets.some((s) => s.families)) return [];
+  const logged = reader.getLoggedAircraft(buildAirlineFlightNumberVariants(cfg, normalized), date);
+  if (live.length > 0) {
+    // The lookup logs what it resolves, so the log carries our own type for its tails.
+    const ours = new Map(logged.map((r) => [r.tail_number, r.aircraft_type]));
+    return live.map((s) => ({
+      tail: s.tail_number,
+      aircraftType: ours.get(s.tail_number) ?? s.aircraft_model,
+      equipped: s.hasStarlink === true,
+    }));
+  }
+  const onLeg = (r: { departure_airport: string; arrival_airport: string | null }) =>
+    !leg ||
+    ((!leg.origin || rowDeparture(r) === leg.origin) &&
+      (!leg.destination || rowArrival(r) === leg.destination));
+  return logged
+    .filter((r) => onLeg(r) && !r.equipped)
+    .map((r) => ({ tail: r.tail_number, aircraftType: r.aircraft_type, equipped: false }));
 }
 
 function scopeSegments(segments: FallbackSegment[], leg: LegQuery): LegSelection<FallbackSegment> {
@@ -1043,6 +1269,49 @@ function assignedFromSegments(
     mark: guide?.mark ?? null,
     guideUpdated,
     guideStale: isGuideStale(guideUpdated, now * 1000),
+  };
+}
+
+/**
+ * An airline held by its own statement: no row, no schedule and no live
+ * lookup exists to read, so the route the caller gives is the whole of what
+ * places the flight. With no route the answer is the statement and an ask
+ * for one; `leg` appears only when a leg was sent, as everywhere else.
+ */
+function statementVerdict(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  normalized: string,
+  date: string,
+  window: FlightDateWindow,
+  now: number,
+  deps: ResolveDeps
+): FlightVerdict {
+  const verdict: AnsweredVerdict = {
+    kind: "no_model",
+    window,
+    normalized,
+    answer: carrierPrediction(cfg, reader, normalized, {
+      route: deps.leg,
+      aircraftType: deps.aircraftType,
+      date,
+      nowMs: now * 1000,
+    }),
+    fr24Error: false,
+  };
+  if (deps.unscoped) return { ...verdict, leg: unscopedResolution(deps.unscoped) };
+  if (!deps.leg) return verdict;
+  return {
+    ...verdict,
+    leg: {
+      origin: deps.leg.origin ?? null,
+      destination: deps.leg.destination ?? null,
+      // No assignment row is held for any leg of such an airline.
+      match: "no_data",
+      otherLegs: [],
+      answered: null,
+      unscopedOutcome: "none",
+    },
   };
 }
 

@@ -10,13 +10,19 @@ import {
   targetFact,
   tenantCopy,
 } from "../airlines/aircraft-pages";
-import type { SiteConfig } from "../airlines/registry";
+import {
+  type ProgrammeExclusionCaveat,
+  type SiteConfig,
+  programmeExclusionCaveat,
+  siteAirline,
+} from "../airlines/registry";
 import { type RolloutFact, formatFactDate } from "../airlines/rollout-facts";
+import { MIN_INSTALLS_FOR_PACE } from "../outlook/pace";
 import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "../types";
 import type { AircraftSpec } from "../utils/aircraft-specs";
 import { article } from "../utils/grammar";
 import { Faq } from "./faq";
-import { TailGrid } from "./fleet/hangar";
+import { TailGrid, TypeTailList } from "./fleet/hangar";
 import {
   MovementsPanel,
   PipelineBar,
@@ -28,7 +34,25 @@ import { ProviderLegend, providerLabels } from "./fleet/providers";
 import { ShareBarRow, providerCounts } from "./fleet/type-bars";
 import { FlightSearchForm } from "./flight-search-form";
 import type { Link } from "./layout";
-import { EYEBROW, H2, LINK, PANEL, PageHeader, PageShell, StatInline } from "./layout";
+import {
+  EYEBROW,
+  H2,
+  LINK,
+  PANEL,
+  PageHeader,
+  PageShell,
+  SkipLink,
+  SkipTarget,
+  StatInline,
+} from "./layout";
+import {
+  type TypeOutlookRef,
+  forecastSentence,
+  foundSentence,
+  paceBlocks,
+  targetSentence,
+} from "./outlook-copy";
+import { tailHref } from "./tail-link";
 import { capitalize, fmt, shortDate } from "./ui/format";
 
 interface AircraftTypeSibling {
@@ -36,6 +60,7 @@ interface AircraftTypeSibling {
   short: string;
   starlink: number;
   total: number;
+  outsideProgramme?: { label: string };
 }
 
 interface AircraftTypePageProps {
@@ -51,6 +76,9 @@ interface AircraftTypePageProps {
   lastUpdated: string | null;
   checkFlight: boolean;
   spec: AircraftSpec | null;
+  /** Install pace and the next two months; absent where there's nothing
+   * backtested to say (a complete type, an airline without dated installs). */
+  outlook?: TypeOutlookRef | null;
 }
 
 const VERDICT_CLASS: Record<AircraftVerdictKind, string> = {
@@ -62,6 +90,7 @@ const VERDICT_CLASS: Record<AircraftVerdictKind, string> = {
   installing: "verdict verdict-no",
   none: "verdict verdict-no",
   official_none: "verdict verdict-no",
+  not_in_programme: "verdict verdict-no",
   unknown: "verdict verdict-wait",
 };
 
@@ -90,6 +119,8 @@ function TailMatrix({
   // Where the airline publishes nothing per tail, an unlit square is "no
   // data", never "not checked yet": nobody is going to check it.
   const labels = providerLabels(copy.checksEveryTail ? "tail" : "type");
+  const counts = providerCounts(data.tails);
+  const listed = counts.starlink_listed;
   return (
     <div
       className="mt-5 border-t border-subtle pt-4"
@@ -100,12 +131,23 @@ function TailMatrix({
       <div className={EYEBROW}>
         Wi-Fi on {airline} {def.short}s
       </div>
-      <TailGrid tails={data.tails} anchorBase="/fleet" size="lg" />
-      <ProviderLegend counts={providerCounts(data.tails)} labels={labels} className="mt-3" />
+      <TailGrid tails={data.tails} size="lg" labels={labels} />
+      <ProviderLegend counts={counts} labels={labels} className="mt-3" />
       <p className="text-xs text-muted mt-2">
         {copy.checksEveryTail
           ? "One square per aircraft, as last checked on united.com."
-          : `${airline} doesn't publish Wi-Fi per aircraft, so only tails we've confirmed are lit.`}
+          : official && official.count > data.equipped
+            ? // The figure and its date stand on the line above; this is why
+              // fewer squares are lit than the airline counts.
+              `${airline} doesn't say which aircraft it counts, so we list ${data.equipped === 0 ? "none" : `only ${fmt(data.equipped)}`} by tail${data.equipped === 0 ? " yet" : ""}.`
+            : listed > 0
+              ? // A listed square is unsettled: lit by the airline's own word
+                // for the whole type, or from a report naming the tail.
+                // Nothing we read confirms either, so "confirmed" overstates.
+                official?.all
+                ? `${airline} counts every ${def.short} as connected, so the ${fmt(listed)} listed ${listed === 1 ? "tail is" : "tails are"} lit by aircraft type, not checked one by one.`
+                : `${airline} doesn't publish Wi-Fi per aircraft, so the ${fmt(listed)} listed ${listed === 1 ? "tail is" : "tails are"} on our list from reports, not confirmed.`
+              : `${airline} doesn't publish Wi-Fi per aircraft, so only tails we've confirmed are lit.`}
       </p>
     </div>
   );
@@ -221,7 +263,74 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
   );
 }
 
-function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftTypePageData }) {
+const PACE_BAR_PX = 48;
+
+/** How fast the type is being fitted: the last 90 days in three bars, the
+ * backtested two-month range, then the airline's own date. */
+function PaceSection({
+  def,
+  outlook,
+  airline,
+}: {
+  def: AircraftPageDef;
+  outlook: TypeOutlookRef | null;
+  airline: string;
+}) {
+  if (!outlook) return null;
+  const o = outlook.outlook;
+  const blocks = paceBlocks(o);
+  const peak = Math.max(...blocks.map((b) => b.installs));
+  // Three bars for a handful of installs would draw noise as a trend.
+  const drawn = blocks.reduce((sum, b) => sum + b.installs, 0) >= MIN_INSTALLS_FOR_PACE;
+  const forecast = forecastSentence(o, outlook.now);
+  const target = targetSentence(o, airline);
+  return (
+    <section className={CARD} id="pace">
+      <h2 className={H2_CARD}>How fast {def.short}s are getting Starlink</h2>
+      <p className="text-sm text-secondary leading-relaxed">
+        {foundSentence(o, def.short)}
+        {forecast ? ` ${forecast}` : ""}
+      </p>
+      {drawn && (
+        <div
+          className="mt-4 flex max-w-md items-end gap-2"
+          role="img"
+          aria-label={blocks.map((b) => `${b.label}: ${fmt(b.installs)}`).join(", ")}
+        >
+          {blocks.map((b, i) => (
+            <div key={b.label} className="flex flex-1 flex-col items-center gap-1">
+              <span className="text-xs text-secondary tabular-nums">{fmt(b.installs)}</span>
+              <div
+                className={`w-full rounded-t bg-[var(--color-accent)] ${
+                  i === blocks.length - 1 ? "opacity-80" : "opacity-40"
+                }`}
+                style={{ height: `${Math.max(2, (b.installs / peak) * PACE_BAR_PX)}px` }}
+              />
+              <span className="text-xs text-muted text-center">{b.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {target && <p className="text-sm text-secondary leading-relaxed mt-4">{target}</p>}
+      {peak > 0 && (
+        <p className="text-xs text-muted mt-3">
+          Counted by the day we first saw Starlink on each aircraft.
+          {o.status === "projected" && o.next60Days && o.next60Days.high < o.remaining
+            ? " Our two-month range held in about two of three past checks."
+            : ""}{" "}
+          We don't forecast a finish date: the last aircraft of a type have come slower than the
+          rest.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function RecentSection({
+  site,
+  def,
+  data,
+}: { site: SiteConfig; def: AircraftPageDef; data: AircraftTypePageData }) {
   if (data.recentInstalls.length === 0) return null;
   return (
     <section className={CARD}>
@@ -229,7 +338,10 @@ function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftType
       <ul className="text-sm text-secondary grid grid-cols-2 sm:grid-cols-3 gap-1">
         {data.recentInstalls.map((r) => (
           <li key={r.tail}>
-            <a href={`/fleet#t-${r.tail}`} className={`${LINK} font-mono text-xs`}>
+            <a
+              href={tailHref(site, r.tail) ?? `/fleet#t-${r.tail}`}
+              className={`${LINK} font-mono text-xs`}
+            >
               {r.tail}
             </a>{" "}
             <span className="text-muted">{shortDate(r.date.slice(0, 10))}</span>
@@ -276,6 +388,39 @@ function RoutesSection({ def, data }: { def: AircraftPageDef; data: AircraftType
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+/** Every tail of the type as a row: what each square above jumps to, and the
+ * way in for a finger or a keyboard, which the 12px squares are not. Last on
+ * the page, so nothing a reader came for sits below a long list. */
+function TailsSection({
+  site,
+  def,
+  data,
+  airline,
+}: { site: SiteConfig; def: AircraftPageDef; data: AircraftTypePageData; airline: string }) {
+  if (data.tails.length === 0) return null;
+  const ownPages = data.tails.every((t) => tailHref(site, t.tail));
+  const checksEveryTail = tenantCopy(data.airline).checksEveryTail;
+  const labels = providerLabels(checksEveryTail ? "tail" : "type");
+  // Where no source names the equipped aircraft, the card above can say "we
+  // list none by tail yet"; this list is the fleet list, not a list of those.
+  const all = `All ${fmt(data.tails.length)}${checksEveryTail ? "" : " on our fleet list, with or without Starlink"}`;
+  return (
+    <section className={`${CARD} relative`} id="tails">
+      <SkipLink to="tails-end">Skip the tail list</SkipLink>
+      <h2 className={H2_CARD}>{`${airline} ${def.short} tail numbers`}</h2>
+      <p className="text-sm text-muted mb-3">
+        {`${all}, in the order of the squares above. Click one ${
+          ownPages
+            ? "for its page: Starlink status, checks and flights."
+            : "to open it on FlightAware."
+        }`}
+      </p>
+      <TypeTailList tails={data.tails} labels={labels} tailHref={(tail) => tailHref(site, tail)} />
+      <SkipTarget id="tails-end">End of the tail list.</SkipTarget>
     </section>
   );
 }
@@ -328,7 +473,28 @@ function FlightsSection({
   );
 }
 
-function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: string }) {
+function CaveatReport({ caveat }: { caveat: ProgrammeExclusionCaveat }) {
+  if (!caveat.report) return null;
+  return (
+    <>
+      {" "}
+      <a href={caveat.report.url} className={LINK} rel="noopener noreferrer" target="_blank">
+        {caveat.report.label}
+      </a>
+    </>
+  );
+}
+
+function FactsSection({
+  facts,
+  airline,
+  caveat,
+}: {
+  facts: RolloutFact[];
+  airline: string;
+  /** Set on a type the airline's own statements do not square with. */
+  caveat: ProgrammeExclusionCaveat | null;
+}) {
   if (facts.length === 0) return null;
   return (
     <section className={CARD}>
@@ -347,6 +513,12 @@ function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: strin
           </li>
         ))}
       </ul>
+      {caveat && (
+        <p className="mt-4 border-t border-subtle pt-3 text-sm text-secondary leading-relaxed">
+          <strong className="text-primary">How this fits the answer above.</strong> {caveat.text}
+          <CaveatReport caveat={caveat} />
+        </p>
+      )}
     </section>
   );
 }
@@ -397,6 +569,7 @@ function SiblingsSection({
             href={`/fleet/${s.slug}`}
             n={s.starlink}
             total={s.total}
+            status={s.outsideProgramme?.label}
           />
         ))}
       </ul>
@@ -417,6 +590,7 @@ export default function AircraftTypePage({
   lastUpdated,
   checkFlight,
   spec,
+  outlook = null,
 }: AircraftTypePageProps) {
   const airline = tenantCopy(data.airline).airline;
   const target = targetFact(facts, def.slug);
@@ -462,6 +636,7 @@ export default function AircraftTypePage({
                 site={site}
                 id="type-flight-search"
                 submitLabel="Check my flight"
+                prefillDate
                 hideLabels
                 className="mt-3"
               />
@@ -469,12 +644,21 @@ export default function AircraftTypePage({
           </section>
         )}
 
+        <PaceSection def={def} outlook={outlook} airline={airline} />
         <VariantsSection data={data} />
         <PipelineSection def={def} data={data} />
-        <RecentSection def={def} data={data} />
+        <RecentSection site={site} def={def} data={data} />
         <RoutesSection def={def} data={data} />
         <FlightsSection def={def} data={data} answer={answer} />
-        <FactsSection facts={facts.filter((f) => f !== headerTarget)} airline={airline} />
+        <FactsSection
+          facts={facts.filter((f) => f !== headerTarget)}
+          airline={airline}
+          caveat={
+            answer.kind === "not_in_programme"
+              ? programmeExclusionCaveat(siteAirline(site).code)
+              : null
+          }
+        />
         <SpecsSection def={def} spec={spec} />
         <Faq
           variant="card"
@@ -496,6 +680,7 @@ export default function AircraftTypePage({
           }))}
         />
         <SiblingsSection siblings={siblings} airline={airline} />
+        <TailsSection site={site} def={def} data={data} airline={airline} />
 
         <p className="text-sm text-muted text-center">
           {checkFlight ? (

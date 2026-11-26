@@ -13,7 +13,9 @@
 import type { Database } from "bun:sqlite";
 import { AIRLINES, OBSERVED_WIFI_SOURCES, verifierSourceTag } from "../airlines/registry";
 import {
+  type FirstReadEvent,
   type WifiConsensus,
+  applyFirstRead,
   bumpDiscoveryPriority,
   computeWifiConsensus,
   consensusToFleetStatus,
@@ -23,7 +25,9 @@ import {
   logVerification,
   updateVerifiedWifi,
 } from "../database/database";
+import { failureKindOf, recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import { debug, info, warn } from "../utils/logger";
+import { pingIndexNow } from "./indexnow";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 
 export const UNITED_SOURCE = verifierSourceTag(AIRLINES.UA);
@@ -196,6 +200,13 @@ export function applyUnitedObservation(
 ): WifiConsensus | null {
   const log = opts.log ?? ownLog;
 
+  // Source health asks one thing: did united.com give us a provider reading?
+  // A page that loads without one (blocked, redesigned, not yet published) is
+  // an empty answer, whichever tail it turned out to describe.
+  if (verdict.category === "error") recordSourceFailure(db, "united_site", "UA", "error");
+  else if (!verdict.wifiProvider) recordSourceFailure(db, "united_site", "UA", "empty");
+  else recordSourceSuccess(db, "united_site", "UA");
+
   return db.transaction(() => {
     if (verdict.tailMismatch) {
       log.warn(
@@ -269,6 +280,10 @@ function settleConsensus(
   const listing = db
     .query("SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'")
     .get(tail) as { verified_wifi: string | null } | null;
+  // Before the writes below: a count it takes back also settles the roster,
+  // so the re-check queued for a roster that disagrees is not queued for it.
+  const firstRead = applyFirstRead(db, tail, "UA", consensus, "verifier");
+  if (firstRead) announceFirstRead(firstRead);
   if (status !== null) {
     // Change-gated: a re-confirmation of the value already on file is a debug
     // fact, a transition is the event worth an info line. The un-gated version
@@ -296,6 +311,18 @@ function settleConsensus(
 }
 
 /**
+ * A first-read count changes the home page, /fleet, the install log, the feed
+ * and the tail's own page at once. A recrawl request cannot be recalled, but
+ * it claims nothing: it names pages whose answer changed. So the same pages
+ * are named when the count is made and again if it is taken back, and an
+ * engine that came for the first sees the correction on the second.
+ */
+function announceFirstRead(event: FirstReadEvent): void {
+  if (event.outcome === "confirmed") return;
+  pingIndexNow("UA", ["/", "/fleet", "/newly-equipped", "/feed.xml", `/fleet/${event.tail}`]);
+}
+
+/**
  * Shared checker-failure row (the checker threw — no page observation).
  * Unified format: flight_number is the UA-prefixed number when known
  * (discovery previously logged null) and aircraft_type is whatever the
@@ -307,6 +334,7 @@ export function logUnitedCheckFailure(
   errorMessage: string,
   opts: { flightNumber: string | null; aircraftType: string | null }
 ): void {
+  recordSourceFailure(db, "united_site", "UA", failureKindOf(errorMessage));
   logVerification(db, {
     tail_number: tailNumber,
     airline: "UA",

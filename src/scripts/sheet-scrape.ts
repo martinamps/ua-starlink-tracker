@@ -7,17 +7,22 @@
  */
 
 import type { Database } from "bun:sqlite";
+import type { AirlineCode } from "../airlines/registry";
 import {
+  type FirstReadEvent,
   SHEET_ROSTER_WHERE,
   reconcileConsensus,
   reconcileTypeDeterministicFleets,
   syncSpreadsheetToFleet,
   updateDatabase,
 } from "../database/database";
+import { applySubfleetOrder } from "../database/sheet-mod-notes";
+import { failureKindOf, recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { JobRunContext } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 import { fetchAllSheets, updateSpreadsheetCache } from "../utils/utils";
+import { pingIndexNow } from "./indexnow";
 import { computePrecision, emitPrecisionGauges } from "./precision-backtest";
 import { computeSurfaceContradictions, emitSweepGauges } from "./surface-sweep";
 
@@ -45,9 +50,10 @@ export async function runSheetScrape(
               .all("UA") as { sheet_gid: string | null }[]
           ).flatMap((r) => (r.sheet_gid ? [r.sheet_gid] : []))
         );
-        const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchSheets({
-          listedGids,
-        });
+        const { totalAircraftCount, starlinkAircraft, fleetStats, modNotes, sheetOrder } =
+          await fetchSheets({
+            listedGids,
+          });
         // A run the job runner has abandoned (stuck escape) can still have its
         // sheet fetch resolve minutes later. Its DELETE/re-INSERT + lastUpdated
         // stamp would silently regress the successor's roster under a fresh
@@ -57,12 +63,20 @@ export async function runSheetScrape(
           span.setTag("result", "abandoned");
           return { outcome: "abandoned", total: 0, starlinkCount: 0 };
         }
-        const refusal = updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats, "UA");
+        const refusal = updateDatabase(
+          db,
+          totalAircraftCount,
+          starlinkAircraft,
+          fleetStats,
+          "UA",
+          modNotes
+        );
         if (refusal) {
           // Roster sanity floor tripped (e.g. 200-with-HTML parsed to ~0 rows)
           // — same observable shape as fleet-sync's aborted path.
           span.setTag("error", true);
           span.setTag("abort_reason", refusal);
+          recordSourceFailure(db, "sheet_scrape", "UA", "refused");
           metrics.increment(COUNTERS.SCRAPER_SYNC, {
             source: "sheet",
             airline: normalizeAirlineTag("UA"),
@@ -79,6 +93,7 @@ export async function runSheetScrape(
             airline: normalizeAirlineTag("UA"),
             status: "success",
           });
+          recordSourceSuccess(db, "sheet_scrape", "UA");
           span.setTag("total_aircraft", totalAircraftCount);
           span.setTag("starlink_count", starlinkAircraft.length);
           info(
@@ -90,6 +105,13 @@ export async function runSheetScrape(
         if (synced > 0) {
           info(`Synced ${synced} new planes to united_fleet`);
           span.setTag("synced_to_fleet", synced);
+        }
+
+        // Check order only, from this read's own rows: a refused read's rows
+        // are not trusted for the roster, so not for this either.
+        if (!refusal && sheetOrder) {
+          const hinted = applySubfleetOrder(db, "UA", sheetOrder);
+          span.setTag("subfleet_order_hints", hinted);
         }
 
         // Sweep before the healers so the gauge measures pre-heal drift, not 0.
@@ -105,7 +127,21 @@ export async function runSheetScrape(
           );
         }
 
-        const healed = reconcileConsensus(db);
+        const firstReads: FirstReadEvent[] = [];
+        const healed = reconcileConsensus(db, undefined, firstReads);
+        // The same pages when a first-read count is made and when one is
+        // taken back (united-verdict.ts announceFirstRead).
+        for (const e of firstReads) {
+          if (e.outcome === "confirmed") continue;
+          pingIndexNow(e.airline as AirlineCode, [
+            "/",
+            "/fleet",
+            "/newly-equipped",
+            "/feed.xml",
+            `/fleet/${e.tail}`,
+          ]);
+        }
+        if (firstReads.length > 0) span.setTag("first_read_events", firstReads.length);
         if (healed > 0) {
           info(`Consensus reconciliation healed ${healed} tails`);
           span.setTag("consensus_healed", healed);
@@ -133,6 +169,7 @@ export async function runSheetScrape(
       } catch (err) {
         logError("Error updating starlink data", err);
         span.setTag("error", true);
+        recordSourceFailure(db, "sheet_scrape", "UA", failureKindOf(err));
         metrics.increment(COUNTERS.SCRAPER_SYNC, {
           source: "sheet",
           airline: normalizeAirlineTag("UA"),

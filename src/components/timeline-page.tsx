@@ -1,5 +1,5 @@
 import React from "react";
-import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { type SiteConfig, programmeExclusionCaveat, siteAirline } from "../airlines/registry";
 import {
   type RolloutTimeline,
   type TimelineSource,
@@ -62,6 +62,7 @@ export default function TimelinePage({
   const cfg = siteAirline(site);
   const timeline = rolloutTimeline(cfg.code) as RolloutTimeline;
   const gap = nearestPaceGap(stats);
+  const caveat = programmeExclusionCaveat(cfg.code);
   const showPace = site.features.installRatePage && stats.months.length > 0;
   const links = [
     ...(site.features.fleetPage ? [{ href: "/fleet", label: "Fleet" }] : []),
@@ -157,6 +158,24 @@ export default function TimelinePage({
             </li>
           ))}
         </ol>
+        {caveat && (
+          <p className="mt-4 text-sm text-secondary leading-relaxed">
+            {caveat.text}
+            {caveat.report && (
+              <>
+                {" "}
+                <a
+                  href={caveat.report.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline decoration-dotted underline-offset-2 hover:text-accent"
+                >
+                  {caveat.report.label}
+                </a>
+              </>
+            )}
+          </p>
+        )}
       </Section>
     </PageShell>
   );

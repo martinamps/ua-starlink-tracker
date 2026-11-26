@@ -1,13 +1,46 @@
-import type { SiteConfig } from "../airlines/registry";
+import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { ButtonLink, PageHeader, PageShell, primaryNavLinks } from "./layout";
 
+/** What the dead address looked like: a tail we don't track, or a flight on a
+ * host with no flight pages. Says where the answer is, and echoes nothing typed. */
+export type NotFoundKind = "page" | "aircraft" | "flight";
+
+export function notFoundCopy(site: SiteConfig, kind: NotFoundKind): { title: string; dek: string } {
+  if (kind === "aircraft") {
+    const whose = site.scope === "ALL" ? "" : `${siteAirline(site).shortName} `;
+    return {
+      title: "Aircraft not found",
+      dek: `That tail number isn't one of the ${whose}aircraft we track.${site.features.fleetPage ? " The fleet page lists every one." : ""}`,
+    };
+  }
+  if (kind === "flight") {
+    return {
+      title: "No flight page here",
+      dek: `The flight check on the homepage answers flights of the airlines we track, and no others.${site.features.airlinesPages ? " The airlines page lists them." : ""}`,
+    };
+  }
+  return { title: "Page not found", dek: "That page doesn't exist, or it has moved." };
+}
+
 /** Brand-static on purpose: the 404 is edge-cached, so nothing on it may vary
- * by request beyond the host's tenant. */
-export default function NotFoundPage({ site }: { site: SiteConfig }) {
-  const links = primaryNavLinks(site);
+ * by request beyond the host's tenant and the kind of address. */
+export default function NotFoundPage({
+  site,
+  kind = "page",
+}: {
+  site: SiteConfig;
+  kind?: NotFoundKind;
+}) {
+  const nav = primaryNavLinks(site);
+  // The fleet list is where a tail is found, so it leads for one.
+  const links =
+    kind === "aircraft"
+      ? [...nav].sort((a, b) => +(b.href === "/fleet") - +(a.href === "/fleet"))
+      : nav;
+  const { title, dek } = notFoundCopy(site, kind);
   return (
     <PageShell site={site}>
-      <PageHeader title="Page not found" dek="That page doesn't exist, or it has moved." />
+      <PageHeader title={title} dek={dek} />
       <div className="relative mx-auto mb-12 flex flex-wrap justify-center gap-3 text-sm">
         <ButtonLink href="/">Go to the homepage</ButtonLink>
         {links.slice(0, 2).map((l) => (

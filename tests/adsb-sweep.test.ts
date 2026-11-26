@@ -125,6 +125,33 @@ describe("runAdsbSweepShadow", () => {
     expect(obs.find((o) => o.tail_number === "N106SY")?.assigned_flight).toBe("SKW6027");
   });
 
+  test("stamps airborne sightings for discovery scheduling, and nothing about wifi", async () => {
+    const db = seedDb();
+    addFleet(db, "N12345", "negative", { aircraftType: "Boeing 737-824", verifiedWifi: "Viasat" });
+    const before = db
+      .query("SELECT tail_number, starlink_status, verified_wifi FROM united_fleet ORDER BY 1")
+      .all();
+    const fetcher = (async () => new Response(providerResponse, { status: 200 })) as typeof fetch;
+    await runAdsbSweepShadow(db, fetcher);
+
+    const stamp = (tail: string) =>
+      (
+        db
+          .query("SELECT adsb_last_airborne AS at FROM united_fleet WHERE tail_number = ?")
+          .get(tail) as {
+          at: number | null;
+        }
+      ).at;
+    expect(stamp("N73275")).toBeGreaterThan(0);
+    expect(stamp("N106SY")).toBeGreaterThan(0);
+    expect(stamp("N12345")).toBeNull(); // not in the provider's answer
+    expect(
+      db
+        .query("SELECT tail_number, starlink_status, verified_wifi FROM united_fleet ORDER BY 1")
+        .all()
+    ).toEqual(before);
+  });
+
   test("reports error without writing when every provider fails", async () => {
     const db = seedDb();
     const fetcher = (async () => new Response("nope", { status: 500 })) as typeof fetch;

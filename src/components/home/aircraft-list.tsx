@@ -6,18 +6,31 @@
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
 import { ensureAirlinePrefix } from "../../airlines/flight-number";
+import {
+  BY_TYPE_METHOD,
+  BY_TYPE_TAB_NOTE,
+  countedNames,
+  listed,
+  splitByMethod,
+  trackingMethod,
+} from "../../airlines/published-count";
 import { AIRLINES, type AirlineConfig } from "../../airlines/registry";
 import { FILTER_ACTIVE, FILTER_BUTTON, FILTER_INACTIVE } from "../../client/aircraft-list";
 import type { Aircraft, Flight } from "../../types";
 import { toIata } from "../../utils/airport-code";
-import { Panel, SECTION_WIDE, SectionTitle } from "../layout";
+import { Panel, SECTION_WIDE, SectionTitle, SkipLink, SkipTarget } from "../layout";
 import { fmt, formatPillTime } from "../ui/format";
 
 // SSR'ing every fleet row made the homepage a ~5 MB document with thousands of
 // outbound links. The list is sorted freshest-first, so the first rows carry
-// nearly all the value. Search and filters run over the rendered rows only, so
-// chip counts describe those rows and a miss points at /fleet, which lists all.
+// nearly all the value. Search and filters run over the rendered rows only: a
+// tab still counts every aircraft of its kind (a count of the rendered rows
+// read as "Hawaiian has none"), the note under the list says how many are
+// shown, and a miss points at /fleet, which lists all.
 const AIRCRAFT_LIST_CAP = 100;
+
+// Keeps the arrow on the link's line where the note wraps.
+const NBSP = "\u00a0";
 
 // Pills per row before the "+N" button, by breakpoint: mobile, md, xl.
 const PILLS_SM = 2;
@@ -127,7 +140,7 @@ function FlightPills({
       {mobileRemaining > 0 && (
         <button
           type="button"
-          className={`expand-flights ${expandVisibility} items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10`}
+          className={`expand-flights ${expandVisibility} items-center px-2 py-1 border border-accent/70 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10`}
           aria-expanded="false"
         >
           <span className="pill-more">
@@ -136,8 +149,14 @@ function FlightPills({
               <span className="hidden md:inline xl:hidden">+{tabletRemaining}</span>
             )}
             {desktopRemaining > 0 && <span className="hidden xl:inline">+{desktopRemaining}</span>}
+            {/* Only the count for this width is displayed, so the button's
+                name reads "+4 more flights" rather than a bare "+4". */}
+            <span className="sr-only"> more flights</span>
           </span>
-          <span className="pill-less">−</span>
+          <span className="pill-less">
+            <span aria-hidden="true">−</span>
+            <span className="sr-only">Show fewer flights</span>
+          </span>
         </button>
       )}
     </div>
@@ -167,6 +186,38 @@ function searchIndex(flights: Flight[], rowAirline: AirlineConfig | undefined) {
   };
 }
 
+/**
+ * "89 of the 134 United and Alaska aircraft counted on this site, and 11 of
+ * Hawaiian's 42 on our fleet list, counted by aircraft type, not checked plane
+ * by plane": the rows a capped list shows, each kind against its own whole.
+ * The two wholes are never added: only one of them is a count of aircraft.
+ */
+function capParts(
+  aircraft: Aircraft[],
+  shown: Aircraft[],
+  airlineOf: (p: Aircraft) => string
+): string | null {
+  const per = (rows: Aircraft[]) => {
+    const n = new Map<string, number>();
+    for (const p of rows) n.set(airlineOf(p), (n.get(airlineOf(p)) ?? 0) + 1);
+    return n;
+  };
+  const all = per(aircraft);
+  const inView = per(shown);
+  const split = splitByMethod([...all].map(([code, starlink]) => ({ code, starlink, total: 0 })));
+  if (split.byType.length === 0 || split.counted.starlink === 0) return null;
+  const of = (n: number) => (n === 0 ? "none" : fmt(n));
+  const shownByType = split.byType.reduce((s, b) => s + (inView.get(b.cfg.code) ?? 0), 0);
+  return [
+    `${of(shown.length - shownByType)} of the ${fmt(split.counted.starlink)} ${countedNames(split)} aircraft counted on this site`,
+    `${listed(
+      split.byType.map(
+        (b) => `${of(inView.get(b.cfg.code) ?? 0)} of ${b.cfg.shortName}'s ${fmt(b.sum)}`
+      )
+    )} on our fleet list, ${BY_TYPE_METHOD}`,
+  ].join(", and ");
+}
+
 export function AircraftList({
   aircraft,
   content,
@@ -175,6 +226,7 @@ export function AircraftList({
   permalinkAirline,
   showFleetLink,
   fleetTotal,
+  tailPages = false,
   title = "Aircraft with Starlink",
 }: {
   /** Every equipped tail, freshest flight data first. */
@@ -187,6 +239,8 @@ export function AircraftList({
   showFleetLink: boolean;
   /** Every aircraft /fleet lists, equipped or not: where a missed search falls back to. */
   fleetTotal: number;
+  /** /fleet/{tail} serves for the permalink airline's planes. */
+  tailPages?: boolean;
   /** Names the scope where it is narrower than the page's headline count. */
   title?: string;
 }) {
@@ -195,10 +249,28 @@ export function AircraftList({
   const shown = aircraft.slice(0, AIRCRAFT_LIST_CAP);
   const capped = aircraft.length > shown.length;
   const subfleetCount = (key: string) =>
-    shown.filter((p) => p.fleet === key || airlineOf(p) === key).length;
+    aircraft.filter((p) => p.fleet === key || airlineOf(p) === key).length;
+  // A list over several airlines may hold one known by aircraft type: its tab
+  // says so, and no figure adds its rows to the aircraft counted one by one.
+  const byTypeKeys = new Set(
+    content.subfleetFilters
+      .map((f) => f.key)
+      .filter((key) => AIRLINES[key] && trackingMethod(AIRLINES[key]) === "type")
+  );
+  const mixed = byTypeKeys.size > 0 && byTypeKeys.size < content.subfleetFilters.length;
+  // Past the cap such a list says how many rows it shows of each kind, apart.
+  const shownParts = mixed && capped ? capParts(aircraft, shown, airlineOf) : null;
+  const countLabel = !capped
+    ? ""
+    : shownParts
+      ? `${fmt(shown.length)} shown`
+      : `${fmt(shown.length)} of ${fmt(aircraft.length)}`;
 
   return (
     <Panel pad="none" className={`${SECTION_WIDE} overflow-hidden`}>
+      {/* Each row is a link, its flight pills and a "+N" button: without this a
+          keyboard heading for what follows walks every one of them. */}
+      {shown.length > 0 && <SkipLink to="aircraft-list-end">Skip the aircraft list</SkipLink>}
       <SectionTitle className="px-4 md:px-6 pt-4 pb-0">{title}</SectionTitle>
       <div className="px-4 md:px-6 py-3 border-b border-subtle">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -210,15 +282,14 @@ export function AircraftList({
               type="text"
               id="aircraft-search"
               placeholder="Tail, route (sfo-lax) or flight"
-              className="w-full font-mono text-xs sm:text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+              className="w-full font-mono text-xs sm:text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
             />
             <svg
               className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
-              role="img"
-              aria-label="Search icon"
+              aria-hidden="true"
             >
               <path
                 strokeLinecap="round"
@@ -233,13 +304,7 @@ export function AircraftList({
               className="absolute right-2 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted hover:text-primary transition-colors hidden"
               aria-label="Clear search"
             >
-              <svg
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                role="img"
-                aria-label="Clear"
-              >
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -252,20 +317,22 @@ export function AircraftList({
           <div
             id="search-count"
             aria-live="polite"
-            data-default={capped ? `${fmt(shown.length)} of ${fmt(aircraft.length)}` : ""}
+            data-default={countLabel}
             className="hidden sm:flex items-center text-xs font-mono text-muted whitespace-nowrap"
           >
-            {capped ? `${fmt(shown.length)} of ${fmt(aircraft.length)}` : null}
+            {countLabel || null}
           </div>
           <div className="flex gap-1.5 sm:gap-2">
             <button
               type="button"
               id="filter-all"
               className={`${FILTER_BUTTON} ${FILTER_ACTIVE}`}
+              aria-pressed="true"
               data-filter="all"
               data-count={shown.length}
             >
-              ALL <span className="hidden sm:inline">({fmt(shown.length)})</span>
+              ALL
+              {mixed ? null : <span className="hidden sm:inline"> ({fmt(aircraft.length)})</span>}
             </button>
             {content.subfleetFilters.length > 1 &&
               content.subfleetFilters.map((card) => (
@@ -274,10 +341,14 @@ export function AircraftList({
                   type="button"
                   id={`filter-${card.key}`}
                   className={`${FILTER_BUTTON} ${FILTER_INACTIVE}`}
+                  aria-pressed="false"
                   data-filter={card.key}
                 >
                   {card.label.toUpperCase()}{" "}
-                  <span className="hidden sm:inline">({fmt(subfleetCount(card.key))})</span>
+                  <span className="hidden sm:inline">
+                    ({fmt(subfleetCount(card.key))}
+                    {byTypeKeys.has(card.key) ? ` ${BY_TYPE_TAB_NOTE}` : ""})
+                  </span>
                 </button>
               ))}
           </div>
@@ -321,7 +392,13 @@ export function AircraftList({
                         <div className="status-dot flex-shrink-0" />
                         <div>
                           <div className="font-mono text-base md:text-sm font-bold md:font-semibold text-primary group-hover:text-accent transition-colors">
-                            {plane.TailNumber}
+                            {tailPages && airline === permalinkAirline?.code ? (
+                              <a href={`/fleet/${plane.TailNumber}`} className="hover:underline">
+                                {plane.TailNumber}
+                              </a>
+                            ) : (
+                              plane.TailNumber
+                            )}
                           </div>
                           <div className="md:hidden font-mono text-xs text-secondary">
                             {aircraftName(plane.Aircraft)}
@@ -381,22 +458,28 @@ export function AircraftList({
           </div>
         )}
       </div>
+      {/* A paragraph, so index.html's rule underlines the accent link in it. */}
       {capped && (
-        <div
+        <p
           id="list-cap"
           className="px-4 md:px-6 py-3 border-t border-subtle text-center text-sm text-muted"
         >
-          The {fmt(shown.length)} most recently flown of {fmt(aircraft.length)}. Search covers only
-          these.
+          {shownParts
+            ? `The ${fmt(shown.length)} most recently flown: ${shownParts}.`
+            : `The ${fmt(shown.length)} most recently flown of ${fmt(aircraft.length)}.`}{" "}
+          Search covers only these.
           {showFleetLink && (
             <>
               {" "}
-              <a href="/fleet" className="text-accent hover:underline">
-                See all →
+              <a href="/fleet" className="text-accent">
+                See all{NBSP}→
               </a>
             </>
           )}
-        </div>
+        </p>
+      )}
+      {shown.length > 0 && (
+        <SkipTarget id="aircraft-list-end">End of the aircraft list.</SkipTarget>
       )}
     </Panel>
   );

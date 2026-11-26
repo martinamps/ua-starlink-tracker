@@ -68,6 +68,22 @@ export function sectionOf(html: string, heading: string): string {
   return html.slice(start, next < 0 ? undefined : next);
 }
 
+/**
+ * A rendered page as its reader sees the text: entities decoded and the
+ * no-break spaces that tie a code to its city made plain. Compare a heading
+ * against this, never against the raw body: React escapes an apostrophe, so
+ * "N'Djamena" or "O'Hare" in a heading would fail a raw comparison.
+ */
+export function readableText(html: string): string {
+  return html
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/\u00a0/g, " ");
+}
+
 /** The attributes of the first element carrying `id`, entity-decoded. */
 export function elementAttrs(html: string, id: string): Record<string, string> {
   const tag = html.match(new RegExp(`<[a-z][^>]*\\sid="${id}"[^>]*>`))?.[0];
@@ -279,7 +295,9 @@ export function addQatarRow(
     departureAirport = "DOH",
     arrivalAirport = "LHR",
     flightStatus = "Scheduled",
-    equipmentCode = "77W",
+    // A fully fitted type: the 777-300ER and 787-8 have held-back aircraft,
+    // so their answers are odds, not the plain yes these fixtures stand for.
+    equipmentCode = "359",
   } = opts;
   db.query(
     `INSERT INTO qatar_schedule (flight_number, scheduled_date, departure_airport, arrival_airport, departure_time, arrival_time, equipment_code, wifi_verdict, flight_status, last_updated)

@@ -21,10 +21,13 @@ import {
   tailEquippedSql,
   tailEvidence,
 } from "../src/database/sql/equipped";
+import { addDays, modHoldsUntil, modNoteHolds, utcToday } from "../src/utils/sheet-mod-note";
 import { makeSyntheticDb } from "./helpers";
 
 const LISTINGS = [undefined, null, "Starlink", "Viasat", "None", ""] as const;
 const SETTLES = [undefined, null, "unknown", "confirmed", "negative"] as const;
+// The sheet's hangar note: none, one that holds, one the sheet doubts, one lapsed.
+const NOTES = ["none", "holds", "unsure", "lapsed"] as const;
 
 function seeded() {
   const db = makeSyntheticDb();
@@ -32,35 +35,62 @@ function seeded() {
     tail: string;
     listed: { verified_wifi: string | null } | null;
     fleet: { starlink_status: string | null } | null;
+    inMod: boolean;
   }> = [];
   let i = 0;
-  for (const wifi of LISTINGS) {
-    for (const status of SETTLES) {
-      const tail = `N${100 + i++}EQ`;
-      if (wifi !== undefined) {
-        db.query(
-          `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
-           VALUES ('Boeing 737-800', 'Starlink', '0', '2026-01-01', ?, 'United Airlines', 'mainline', ?, 'UA')`
-        ).run(tail, wifi);
+  const today = utcToday();
+  for (const note of NOTES) {
+    for (const wifi of LISTINGS) {
+      for (const status of SETTLES) {
+        const tail = `N${100 + i++}EQ`;
+        if (note !== "none") {
+          const n = {
+            tail,
+            station: "MIA",
+            started: addDays(today, -40),
+            due_back: addDays(today, note === "lapsed" ? -10 : 10),
+            unsure: note === "unsure",
+          };
+          db.query(
+            `INSERT INTO sheet_mod_notes (airline, tail_number, station, started, due_back, unsure, holds_until, read_at)
+             VALUES ('UA', ?, ?, ?, ?, ?, ?, 1)`
+          ).run(tail, n.station, n.started, n.due_back, n.unsure ? 1 : 0, modHoldsUntil(n));
+        }
+        seedCase(tail, wifi, status, note === "holds");
       }
-      if (status !== undefined) {
-        db.query(
-          `INSERT INTO united_fleet (tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at, fleet, starlink_status, verified_wifi, airline)
-           VALUES (?, 'Boeing 737-800', 'fr24', 1, 1, 'mainline', ?, ?, 'UA')`
-        ).run(
-          tail,
-          status,
-          status === "confirmed" ? "Starlink" : status === "negative" ? "Viasat" : null
-        );
-      }
-      cases.push({
-        tail,
-        listed: wifi === undefined ? null : { verified_wifi: wifi },
-        fleet: status === undefined ? null : { starlink_status: status },
-      });
     }
   }
   return { db, cases };
+
+  function seedCase(
+    tail: string,
+    wifi: (typeof LISTINGS)[number],
+    status: (typeof SETTLES)[number],
+    inMod: boolean
+  ) {
+    if (wifi !== undefined) {
+      db.query(
+        `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+         VALUES ('Boeing 737-800', 'Starlink', '0', '2026-01-01', ?, 'United Airlines', 'mainline', ?, 'UA')`
+      ).run(tail, wifi);
+    }
+    if (status !== undefined) {
+      db.query(
+        `INSERT INTO united_fleet (tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at, fleet, starlink_status, verified_wifi, airline)
+         VALUES (?, 'Boeing 737-800', 'fr24', 1, 1, 'mainline', ?, ?, 'UA')`
+      ).run(
+        tail,
+        status,
+        status === "confirmed" ? "Starlink" : status === "negative" ? "Viasat" : null
+      );
+    }
+    cases.push({
+      tail,
+      listed: wifi === undefined ? null : { verified_wifi: wifi },
+      fleet: status === undefined ? null : { starlink_status: status },
+      inMod,
+    });
+  }
 }
 
 describe("equipped: SQL predicate and JS twin", () => {
@@ -176,16 +206,35 @@ describe("equipped: SQL predicate and JS twin", () => {
       now + 86400,
       "UA"
     );
-    expect(rows.length).toBe(cases.filter((c) => c.listed).length);
+    // A listing held by a hangar note is left out, like an unlisted tail.
+    expect(rows.length).toBe(cases.filter((c) => c.listed && tailEvidence(c) !== "in_mod").length);
+    expect(cases.some((c) => tailEvidence(c) === "in_mod")).toBe(true);
     for (const r of rows) {
       const c = cases.find((x) => x.tail === r.tail_number);
       expect(rowEvidence(r), r.tail_number).toBe(tailEvidence(c as (typeof cases)[number]));
+    }
+    for (const c of cases) {
+      if (!c.listed) continue;
       const logged = db
         .query("SELECT starlink FROM flight_assignment_log WHERE tail_number = ?")
-        .get(r.tail_number) as { starlink: number | null };
-      expect(logged.starlink, r.tail_number).toBe(starlinkFlag(rowEvidence(r)));
+        .get(c.tail) as { starlink: number | null };
+      expect(logged.starlink, c.tail).toBe(starlinkFlag(tailEvidence(c)));
     }
     db.close();
+  });
+
+  test("a hangar note holds back only a listing nobody has observed", () => {
+    const listed = { verified_wifi: null };
+    expect(tailEvidence({ listed, fleet: null, inMod: true })).toBe("in_mod");
+    expect(isEquipped("in_mod")).toBe(false);
+    expect(starlinkFlag("in_mod")).toBe(0);
+    expect(tailEvidence({ listed: { verified_wifi: "Starlink" }, fleet: null, inMod: true })).toBe(
+      "verified"
+    );
+    expect(tailEvidence({ listed: null, fleet: null, inMod: true })).toBe("unknown");
+    expect(modNoteHolds({ unsure: true, holds_until: "9999-12-31" })).toBe(false);
+    expect(modNoteHolds({ unsure: false, holds_until: "2000-01-01" })).toBe(false);
+    expect(modNoteHolds(null)).toBe(false);
   });
 
   test("every equipped tail renders in a Starlink provider bucket", () => {

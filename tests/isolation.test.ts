@@ -281,10 +281,27 @@ describe("hub-only endpoints", () => {
   test("/api/check-any-flight: UA/HA/AS answers keep their key sets", async () => {
     const PINNED: Record<string, string[][]> = {
       // Every key set these carriers' renderers can emit (one per verdict kind).
+      // An old HA number also carries the note to use the AS number.
       HA50: [
-        ["airline", "confidence", "flights", "hasStarlink", "reason"],
-        ["airline", "confidence", "flights", "hasStarlink", "probability", "reason"],
-        ["airline", "confidence", "flights", "hasStarlink", "reason", "sameDayAlternatives"],
+        ["airline", "confidence", "flight_number_note", "flights", "hasStarlink", "reason"],
+        [
+          "airline",
+          "confidence",
+          "flight_number_note",
+          "flights",
+          "hasStarlink",
+          "probability",
+          "reason",
+        ],
+        [
+          "airline",
+          "confidence",
+          "flight_number_note",
+          "flights",
+          "hasStarlink",
+          "reason",
+          "sameDayAlternatives",
+        ],
       ],
       AS2100: [
         ["airline", "confidence", "flights", "hasStarlink", "reason"],

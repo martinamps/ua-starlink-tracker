@@ -258,6 +258,7 @@ describe("provider buckets (snapshot)", () => {
 // ── 5. answerFor ────────────────────────────────────────────────────────────
 
 const UA_E175 = aircraftPagesFor("UA").find((d) => d.slug === "e175") as AircraftPageDef;
+const UA_ERJ145 = aircraftPagesFor("UA").find((d) => d.slug === "erj-145") as AircraftPageDef;
 const UA_787 = aircraftPagesFor("UA").find((d) => d.slug === "787") as AircraftPageDef;
 const AS_MAX8 = aircraftPagesFor("AS").find((d) => d.slug === "737-max-8") as AircraftPageDef;
 const AS_E175 = aircraftPagesFor("AS").find((d) => d.slug === "e175") as AircraftPageDef;
@@ -343,6 +344,17 @@ describe("answerFor", () => {
       null,
     ],
     ["none", UA_787, input({ knownOther: 10 }), null],
+    [
+      "not_in_programme",
+      UA_ERJ145,
+      input({
+        family: "ERJ-145",
+        total: 55,
+        knownOther: 55,
+        outsideProgramme: { label: "Not in the programme" },
+      }),
+      null,
+    ],
     ["official_none", AS_738, input({ airline: "AS", unchecked: 10, checked: 0 }), official(0)],
     ["unknown", AS_738, input({ airline: "AS", unchecked: 10, checked: 0 }), null],
   ];
@@ -352,7 +364,9 @@ describe("answerFor", () => {
     expect(a.kind).toBe(kind);
     expect(a.indexable).toBe(!["none", "official_none", "unknown"].includes(kind));
     expect(a.shareLine === null).toBe(
-      ["verifying", "installing", "none", "official_none", "unknown"].includes(kind)
+      ["verifying", "installing", "none", "official_none", "not_in_programme", "unknown"].includes(
+        kind
+      )
     );
     if (["verifying", "official_none", "unknown"].includes(kind)) {
       expect(a.headline).not.toMatch(/^No\b/);
@@ -498,6 +512,41 @@ describe("answerFor edge verdicts", () => {
     );
     expect(a.kind).toBe("official_none");
     expect(`${a.headline} ${a.sentence}`).not.toContain("united.com");
+  });
+
+  test.each([
+    ["equal to our list", 1, 1, 0],
+    ["equal to a longer list", 19, 19, 12],
+    ["above our list", 12, 14, 7],
+  ])(
+    "a short roster's summary follows its headline: Alaska's count %s, and no share",
+    (_n, total, counted, starlink) => {
+      const data = input({
+        airline: "AS",
+        total,
+        starlink,
+        checked: starlink,
+        unchecked: total - starlink,
+      });
+      const a = answerFor(data, AS_MAX8, official(counted));
+      expect(a.rosterShort).toBe(true);
+      expect(a.headline).toBe(`${counted} do, per Alaska.`);
+      const summary = answerSummary(data, AS_MAX8, a);
+      expect(summary).toBe(`${a.headline} ${a.sentence}`);
+      expect(summary).toContain("so no share is shown");
+      expect(summary).not.toMatch(/\d+%|\d+ of Alaska's \d+/);
+      const [first] = aircraftTypeFaq(data, AS_MAX8, [], official(counted));
+      expect(first.a).toBe(summary);
+    }
+  );
+
+  test("a count short of our list still gets its share in the summary", () => {
+    const data = input({ airline: "AS", total: 20, starlink: 7, checked: 7, unchecked: 13 });
+    const a = answerFor(data, AS_MAX8, official(12));
+    expect(a.rosterShort).toBe(false);
+    expect(answerSummary(data, AS_MAX8, a)).toMatch(
+      /^12 of Alaska's 20 737 MAX 8s have Starlink \(60%\), per Alaska\./
+    );
   });
 
   test("an official count without 'all' never becomes 'every one' on a short roster", () => {

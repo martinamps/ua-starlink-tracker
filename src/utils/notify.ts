@@ -5,7 +5,7 @@
 
 import { info, error as logError } from "./logger";
 
-const MENTION = process.env.SLACK_MENTION ?? "<@U07HKUAAD0B>";
+export const SLACK_MENTION = process.env.SLACK_MENTION ?? "<@U07HKUAAD0B>";
 
 export interface NewPlaneNotice {
   tail: string;
@@ -43,7 +43,7 @@ export function formatNewPlaneNotice(n: NewPlaneNotice): string {
   const type = n.aircraftType ? ` (${n.aircraftType}${n.fleet ? `, ${n.fleet}` : ""})` : "";
   return (
     `🛰️ *New Starlink plane:* \`${n.tail}\`${type}${route} ` +
-    `· was \`${n.prevStatus}\` · <https://unitedstarlinktracker.com/fleet|fleet> ${MENTION}`
+    `· was \`${n.prevStatus}\` · <https://unitedstarlinktracker.com/fleet|fleet> ${SLACK_MENTION}`
   );
 }
 

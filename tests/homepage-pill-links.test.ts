@@ -344,9 +344,12 @@ describe("sites without a flight-permalink page keep pills outbound", () => {
     for (const p of pills) {
       expect(p.href).toStartWith("https://www.flightaware.com/live/flight/");
     }
-    // The hub 404s /check-flight entirely, so linking there would be a dead end.
-    expect(await app.dispatch(req("/check-flight/UA123", HUB_HOST)).then((r) => r.status)).toBe(
-      404
+    // The hub has no flight page of its own: a typed flight hops to its
+    // airline's site, so a pill linking the hub's address would be a detour.
+    const typed = await app.dispatch(req("/check-flight/UA123", HUB_HOST));
+    expect(typed.status).toBe(302);
+    expect(typed.headers.get("location")).toBe(
+      "https://unitedstarlinktracker.com/check-flight/UA123"
     );
   });
 });
