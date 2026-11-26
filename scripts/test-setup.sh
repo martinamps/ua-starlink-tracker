@@ -12,9 +12,9 @@ if [[ ! -f "$SRC" ]]; then
   SRC=plane-data.sqlite.example
 fi
 
+# A side file left by an earlier snapshot must never pair with this copy.
+rm -f "$DB-wal" "$DB-shm" "$DB-journal"
 cp "$SRC" "$DB"
-
-sqlite3 "$DB" 'PRAGMA journal_mode=DELETE;'
 
 # Run the real migration path so test schema can never drift from prod.
 DB_PATH="$DB" DISABLE_JOBS=1 bun -e 'import {initializeDatabase} from "./src/database/database"; initializeDatabase().close()'
@@ -119,5 +119,16 @@ INSERT OR IGNORE INTO meta (key, value) VALUES
   ('AS:mainlinePercentage', '50.00'),
   ('AS:lastUpdated', '2026-04-12T00:00:00.000Z');
 SQL
+
+# openDatabase (run by the migration above) switches the file to WAL, and WAL
+# is stored in the file. Under WAL even a readonly handle opens -wal and -shm
+# read-write and shares state through them, which is where CI's random
+# "disk I/O error" on snapshot reads came from. Rollback mode leaves readers
+# with one file they only read. tests/snapshot.test.ts holds this.
+mode="$(sqlite3 "$DB" 'PRAGMA journal_mode=DELETE;')"
+if [[ "$mode" != "delete" ]] || [[ -e "$DB-wal" ]] || [[ -e "$DB-shm" ]]; then
+  echo "test snapshot left in journal mode '$mode' or with side files beside it" >&2
+  exit 1
+fi
 
 echo "test DB ready at $DB"
