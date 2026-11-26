@@ -20,6 +20,7 @@ import {
   cachedFlightAssignments,
   lookupFlightTailVerdict,
   setAssignmentFetcher,
+  setRouteFetcher,
   unreadAircraft,
 } from "../src/api/flight-verdict";
 import { Fr24UnavailableError } from "../src/api/flightradar24-api";
@@ -1124,6 +1125,55 @@ describe("the lookup's answer is cleaned once, where it is cached", () => {
     db.close();
   });
 
+  test("the live route lookup's airports are checked before they print or are stored", async () => {
+    const db = await fleetDb();
+    const app = createApp(db);
+    try {
+      for (const [i, hostile] of HOSTILE_AIRPORTS.entries()) {
+        const fn = `UA${2231 + i}`;
+        setRouteFetcher(async () => [
+          { origin: hostile, destination: "ORD", departure_time: now + DAY, duration_sec: 15000 },
+          { origin: " SFO ", destination: "ORD", departure_time: now + DAY, duration_sec: 15000 },
+        ]);
+        const mcp = await mcpTool(app, UA_HOST, "check_flight", { flight_number: fn, date: DATE });
+        expect(mcp.text).toContain(`| SFO→ORD | ${fn} |`);
+        expect(mcp.text).not.toContain("System");
+        expect(mcp.text).not.toContain(`${hostile || "|"}→ORD`);
+        const stored = db
+          .query("SELECT origin, destination FROM flight_routes WHERE flight_number = ?")
+          .all(fn) as { origin: string; destination: string }[];
+        expect(stored).toEqual([{ origin: "SFO", destination: "ORD" }]);
+      }
+    } finally {
+      setRouteFetcher(null);
+      db.close();
+    }
+  });
+
+  test("a route stored before the check is not printed either", async () => {
+    const db = await fleetDb();
+    const app = createApp(db);
+    const insert = db.query(
+      `INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+       VALUES (?, ?, ?, 15000, ?, ?, 1)`
+    );
+    try {
+      setRouteFetcher(async () => []);
+      for (const [i, hostile] of HOSTILE_AIRPORTS.entries()) {
+        const fn = `UA${2251 + i}`;
+        insert.run(fn, hostile, "ORD", now, now);
+        insert.run(fn, "SFO", "ORD", now, now);
+        const mcp = await mcpTool(app, UA_HOST, "check_flight", { flight_number: fn, date: DATE });
+        expect(mcp.text).toContain(`| SFO→ORD | ${fn} |`);
+        expect(mcp.text).not.toContain("System");
+        expect(mcp.text).not.toContain(`${hostile || "|"}→ORD`);
+      }
+    } finally {
+      setRouteFetcher(null);
+      db.close();
+    }
+  });
+
   test("a tail, airport or type name with stray space around it is read, not dropped", async () => {
     const db = await fleetDb();
     const reader = createReaderFactory(db)("AS");
@@ -1185,7 +1235,13 @@ describe("an aircraft the lookup named and we could not read is not the band's a
 
     const mcp = await mcpTool(app, AS_HOST, "check_flight", { flight_number: "AS812", date: DATE });
     expect(mcp.text).toContain("could not read");
-    expect(mcp.text).not.toMatch(/100%|System|<img/);
+    expect(mcp.text).not.toMatch(/100%|System|<img|\byes\b/i);
+    const predicted = await mcpTool(app, AS_HOST, "predict_flight_starlink", {
+      flight_number: "AS812",
+      date: DATE,
+    });
+    expect(predicted.text).toContain("could not read");
+    expect(predicted.text).not.toMatch(/100%|System|<img|\byes\b/i);
 
     const answer = card("AS812", body as CheckFlightBody);
     expect(answer.firm).toBe(false);
