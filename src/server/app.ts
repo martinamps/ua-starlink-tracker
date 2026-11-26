@@ -275,7 +275,7 @@ import type {
   RouteSchedule,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
-import { airportCityWithCode, routePairLabel } from "../utils/airport-names";
+import { airportCity, airportCityWithCode, routePairLabel } from "../utils/airport-names";
 import {
   airportLocalDate,
   airportTimezone,
@@ -3893,8 +3893,9 @@ function routeFlightNumbers(ctx: RequestContext, board: RouteFlightBoard): strin
 
 /**
  * The search snippet: the board's own facts, never a count it doesn't show.
- * The pair is named by city where that fits whole under `max`; a long pair
- * gives up the next-flight sentence first (the page gives it), then the cities.
+ * The pair is named by city and code where that fits whole under `max`. A
+ * long pair gives up its codes first (the title and the heading carry them),
+ * so the next-flight sentence stays; then that sentence; then the cities.
  */
 export function routeMetaDescription(
   cfg: AirlineConfig,
@@ -3904,9 +3905,14 @@ export function routeMetaDescription(
 ): string {
   const named = routePairLabel(board.origin, board.destination);
   const codes = `${board.origin} to ${board.destination}`;
+  const from = airportCity(board.origin);
+  const to = airportCity(board.destination);
+  // Two airports of one city would read "Washington to Washington".
+  const cities = from && to && from !== to ? `${from} to ${to}` : null;
   return (
     [
       routeDescription(cfg, board, flightNumbers, named, true),
+      ...(cities ? [routeDescription(cfg, board, flightNumbers, cities, true)] : []),
       routeDescription(cfg, board, flightNumbers, named, false),
     ].find((t) => t.length <= max) ?? routeDescription(cfg, board, flightNumbers, codes, true)
   );

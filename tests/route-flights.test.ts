@@ -23,6 +23,7 @@ import {
   jsonOf,
   makeFreshDb,
   openSnapshot,
+  readableText,
   req,
 } from "./helpers";
 
@@ -199,7 +200,7 @@ describe("route page", () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain(`<title>${routeTitle(AIRLINES.UA.shortName, origin, destination)}<`);
-    expect(body.replace(/\u00a0/g, " ")).toContain(
+    expect(readableText(body)).toContain(
       `Which ${routePairLabel(origin, destination)} flights have Starlink?`
     );
     expect(body).toContain('id="all-flights"');

@@ -204,12 +204,13 @@ describe("the route page", () => {
     );
   });
 
-  test("a description fits whole: a long pair gives up the next flight, then the cities", () => {
+  test("a description fits whole: a long pair gives up its codes, then the next flight, then the cities", () => {
     const short = board("ORD", "DEN");
     const d = routeMetaDescription(AIRLINES.UA, short, ["UA100"], 400);
     expect(d).toContain(routePairLabel("ORD", "DEN"));
     expect(d).toContain("The next is UA100 on ");
-    let withNext = 0;
+    let whole = 0;
+    let citiesAndNext = 0;
     let withoutNext = 0;
     let codesOnly = 0;
     const codes = Object.keys(AIRPORT_NAMES);
@@ -220,17 +221,49 @@ describe("the route page", () => {
         const text = routeMetaDescription(AIRLINES.UA, b, ["UA100"], DESCRIPTION_MAX);
         expect(text.length, text).toBeLessThanOrEqual(DESCRIPTION_MAX);
         expect(text.endsWith("."), text).toBe(true);
-        if (!text.includes(routePairLabel(o, dest))) {
+        const cities = `${airportCity(o)} to ${airportCity(dest)} nonstops`;
+        if (text.includes(routePairLabel(o, dest))) {
+          if (text.includes("The next is")) whole++;
+          else withoutNext++;
+        } else if (text.includes(cities)) {
+          citiesAndNext++;
+          // The codes go only to make room for the next flight.
+          expect(text).toContain("The next is UA100 on ");
+          expect(text).not.toContain(`(${o})`);
+          expect(airportCity(o)).not.toBe(airportCity(dest));
+        } else {
           codesOnly++;
           expect(text).toContain(`${o} to ${dest}`);
-        } else if (text.includes("The next is")) withNext++;
-        else withoutNext++;
+        }
       }
     }
-    expect(withNext).toBeGreaterThan(0);
-    expect(withoutNext).toBeGreaterThan(0);
+    expect(whole).toBeGreaterThan(0);
+    expect(citiesAndNext).toBeGreaterThan(0);
+    // The next flight is dropped far less often than it is kept without codes.
+    expect(withoutNext).toBeLessThan(citiesAndNext);
     // The named sentence alone always fits for these pairs.
     expect(codesOnly).toBe(0);
+  });
+
+  test("a long pair keeps the next flight by naming its cities without their codes", () => {
+    const long = board("ORD", "DEN");
+    const b = { ...long, origin: "SFO", destination: "SBA" };
+    const text = routeMetaDescription(AIRLINES.UA, b, ["UA100"], DESCRIPTION_MAX);
+    expect(routeMetaDescription(AIRLINES.UA, b, ["UA100"], 400).length).toBeGreaterThan(
+      DESCRIPTION_MAX
+    );
+    expect(text).toContain("San Francisco to Santa Barbara nonstops");
+    expect(text).toContain("The next is UA100 on ");
+    expect(text).not.toMatch(/\((SFO|SBA)\)/);
+  });
+
+  test("two airports of one city are never named without their codes", () => {
+    const b = { ...board("ORD", "DEN"), origin: "IAD", destination: "DCA" };
+    for (const max of [DESCRIPTION_MAX, 140, 120]) {
+      expect(routeMetaDescription(AIRLINES.UA, b, ["UA100"], max)).not.toContain(
+        "Washington to Washington"
+      );
+    }
   });
 
   test("the page of a long pair holds the same bounds", async () => {

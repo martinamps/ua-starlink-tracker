@@ -18,7 +18,7 @@ import { getRouteSummary, getSitemapRoutes, routeHasData } from "../src/database
 import { createReaderFactory } from "../src/database/reader";
 import { createApp, parseRoutePath } from "../src/server/app";
 import { routePairLabel } from "../src/utils/airport-names";
-import { openSnapshot, req } from "./helpers";
+import { openSnapshot, readableText, req } from "./helpers";
 
 /** Route pages actually rendered by the link sweep; the rest is DB-checked. */
 const ROUTE_PAGE_SAMPLE = 40;
@@ -91,7 +91,7 @@ describe("/route-planner/{origin}/{destination}", () => {
     const res = await get(`/route-planner/${origin}/${destination}`);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body.replace(/\u00a0/g, " ")).toContain(
+    expect(readableText(body)).toContain(
       `Which ${routePairLabel(origin, destination)} flights have Starlink?`
     );
     expect(body).toContain('id="all-flights"');
