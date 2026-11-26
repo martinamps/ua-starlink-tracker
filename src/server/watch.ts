@@ -152,7 +152,7 @@ export function loggedTailLookup(
     const byLeg = new Map<string, AssignmentLogRow>();
     for (const r of history) {
       if (r.departure_time === null || r.arrival_time === null) continue;
-      if (reader.getStarlinkPlaneByTail(r.tail_number)) continue;
+      if (reader.assignedTails.getStarlinkPlaneByTail(r.tail_number)) continue;
       const cur = byLeg.get(r.departure_airport);
       if (!cur || r.last_seen > cur.last_seen) byLeg.set(r.departure_airport, r);
     }

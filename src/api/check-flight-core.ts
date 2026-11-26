@@ -52,6 +52,7 @@ import {
 import {
   type AircraftSighting,
   type CarrierPrediction,
+  type QuotedCount,
   carrierPrediction,
   carrierPredictionTelemetry,
   legAsPrediction,
@@ -403,6 +404,27 @@ export interface VerdictSummary {
   /** Flight-history observations behind `probability`; 0 for a type share. */
   observations: number | null;
   assignment: VerdictAssignment | null;
+  /** The airline's own dated count, where that count and not ours decided the
+   * answer. Every surface words such an answer as the airline's, with its
+   * date: never a yes or a no of our own. */
+  airlineCount: QuotedCount | null;
+}
+
+/** The additive wire key for `airlineCount`; absent where no count decided. */
+export function airlineCountField(summary: VerdictSummary): Record<string, unknown> {
+  const c = summary.airlineCount;
+  return c
+    ? {
+        airline_count: {
+          airline: c.airline,
+          aircraft: c.aircraft,
+          connected: c.connected,
+          total: c.total,
+          named: c.named,
+          as_of: c.asOf,
+        },
+      }
+    : {};
 }
 
 type AssignedVerdict = Extract<
@@ -426,7 +448,7 @@ export function verdictAssignment(verdict: AssignedVerdict): VerdictAssignment {
 }
 
 export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
-  const none = { probability: null, observations: null, assignment: null };
+  const none = { probability: null, observations: null, assignment: null, airlineCount: null };
   switch (verdict.kind) {
     case "scheduled":
     case "fr24":
@@ -451,9 +473,13 @@ export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
         assignment: verdictAssignment(verdict),
       };
     case "no_model": {
-      const pen = verdict.answer.kind === "penetration" ? verdict.answer.pen.pct : null;
+      const { answer } = verdict;
+      const pen = answer.kind === "penetration" ? answer.pen.pct : null;
+      const basis =
+        answer.kind === "penetration" || answer.kind === "no_model" ? answer.aircraft : undefined;
       return {
         ...none,
+        airlineCount: basis?.count ?? null,
         hasStarlink: null,
         confidence: noModelConfidence(verdict.answer),
         probability: pen,

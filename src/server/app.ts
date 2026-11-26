@@ -107,6 +107,7 @@ import { retiredCodeNote, untrackedAirlineInfo } from "../airlines/untracked-air
 import {
   type LegResolution,
   SWAP_DEGRADED_NOTE,
+  airlineCountField,
   answersOtherLeg,
   carrierReader,
   decideCarrier,
@@ -1242,6 +1243,7 @@ function checkFlightBody(
           ? { prediction: { probability: summary.probability } }
           : {}),
         ...communityWireFields(verdict.answer),
+        ...airlineCountField(summary),
         message,
         ...legField(verdict),
         flights: [],
@@ -1396,6 +1398,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
         // Additive top-level `probability` for the extension claim ladder.
         ...(summary.probability !== null ? { probability: summary.probability } : {}),
         ...communityWireFields(verdict.answer),
+        ...airlineCountField(summary),
         reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer, { date }), verdict),
         ...legField(verdict),
         flights: [],
@@ -3421,6 +3424,12 @@ function permalinkPrediction(
 /** A model-less carrier's flight-number band and its Starlink share (AS800–999
  * all, AS1 a few percent), so the undated page quotes the same number as the
  * meta and the API instead of claiming no history. */
+const quotedCount = (c: { connected: number; total: number; asOf: string }) => ({
+  connected: c.connected,
+  total: c.total,
+  asOf: c.asOf,
+});
+
 function permalinkTypeRule(
   reader: ScopedReader,
   cfg: AirlineConfig,
@@ -3435,19 +3444,16 @@ function permalinkTypeRule(
         probability: answer.pen.pct,
         label: answer.sf.label,
         ...(aircraft ? { aircraft: aircraft.sentence } : {}),
-        ...(aircraft?.count
-          ? {
-              count: {
-                connected: aircraft.count.connected,
-                total: aircraft.count.total,
-                asOf: aircraft.count.asOf,
-              },
-            }
-          : {}),
+        ...(aircraft?.count ? { count: quotedCount(aircraft.count) } : {}),
       };
     }
     return answer.kind === "no_model" && answer.aircraft
-      ? { probability: null, label: "", aircraft: answer.aircraft.sentence }
+      ? {
+          probability: null,
+          label: "",
+          aircraft: answer.aircraft.sentence,
+          ...(answer.aircraft.count ? { count: quotedCount(answer.aircraft.count) } : {}),
+        }
       : null;
   } catch {
     return null;

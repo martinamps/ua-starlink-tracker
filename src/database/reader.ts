@@ -385,6 +385,16 @@ export interface ScopedReader {
     opts?: { sources?: readonly VerificationSource[] }
   ): WifiConsensus;
   bumpDiscoveryPriority(tail: string): void;
+  /** The same four lookups for a tail found on one of this scope's flights.
+   * Like getFlightAssignments they span operatingPartners (a Hawaiian A330 on
+   * an AS number); no other airline's tail resolves through them. */
+  assignedTails: Pick<
+    ScopedReader,
+    | "getStarlinkPlaneByTail"
+    | "getFleetEntryByTail"
+    | "computeWifiConsensus"
+    | "bumpDiscoveryPriority"
+  >;
 
   // Qatar uses a separate schedule cache (per-flight equipment, no per-tail).
   // These are airline-agnostic on the reader because qatar_schedule has no
@@ -502,6 +512,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   // Hub ('ALL') is the union of *enabled* airlines, not every row in the DB —
   // disabled-airline canaries/test data stay invisible until that airline ships.
   const airlines = scope === "ALL" ? publicCodes() : ([scope] as const);
+  // A tail found on one of the scope's flights may be an operating partner's.
+  const flown = withOperatingPartners(airlines);
   // Route-compare methods are only meaningful per-airline; assert it.
   const soleAirline = () => {
     if (airlines.length !== 1)
@@ -636,6 +648,13 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     computeWifiConsensus: (tail, opts) =>
       computeWifiConsensus(db, tail, { ...opts, airline: airlines }),
     bumpDiscoveryPriority: (tail) => bumpDiscoveryPriority(db, tail, airlines),
+    assignedTails: {
+      getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, flown),
+      getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, flown),
+      computeWifiConsensus: (tail, opts) =>
+        computeWifiConsensus(db, tail, { ...opts, airline: flown }),
+      bumpDiscoveryPriority: (tail) => bumpDiscoveryPriority(db, tail, flown),
+    },
 
     getQatarScheduleByFlight: (v, s, e) => getQatarScheduleByFlight(db, v, s, e),
     getQatarScheduleByRoute: (o, d, s, e) => getQatarScheduleByRoute(db, o, d, s, e),

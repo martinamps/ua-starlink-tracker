@@ -20,6 +20,7 @@ import {
 import { AIRLINES, type AirlineConfig } from "../airlines/registry";
 import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
+import { isRegistration } from "../utils/outside-text";
 import {
   equippedSql,
   modHoldSql,
@@ -137,7 +138,7 @@ export function logFlightAssignments(
   >[],
   now: number
 ): void {
-  if (flights.length === 0) return;
+  if (flights.length === 0 || !isRegistration(tailNumber)) return;
   const cfg = AIRLINES[airline];
   const starlink = tailStarlinkFlag(db, tailNumber, airline);
   const upsert = db.query(`
@@ -234,6 +235,10 @@ export function pruneAssignmentLog(db: Database, now: number): void {
   })();
 }
 
+// Rows logged before the write refused them can hold a lookup's raw text,
+// and every reader of these rows prints the tail.
+const printable = (r: { tail_number: string }) => isRegistration(r.tail_number);
+
 /** Every tail seen assigned to the flight on its local date, oldest first. */
 export function getAssignmentHistory(
   db: Database,
@@ -243,13 +248,15 @@ export function getAssignmentHistory(
 ): AssignmentLogRow[] {
   if (variants.length === 0) return [];
   const a = airlineIn(airlines);
-  return db
-    .query(
-      `SELECT * FROM flight_assignment_log
+  return (
+    db
+      .query(
+        `SELECT * FROM flight_assignment_log
        WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND dep_date = ?
        ORDER BY first_seen ASC, tail_number ASC`
-    )
-    .all(...a.params, ...variants, depDate) as AssignmentLogRow[];
+      )
+      .all(...a.params, ...variants, depDate) as AssignmentLogRow[]
+  ).filter(printable);
 }
 
 /** The aircraft last logged on one departure of a flight. */
@@ -302,6 +309,7 @@ export function getLoggedAircraft(
     ) as Array<Omit<LoggedAircraft, "equipped"> & { equipped: number }>;
   const seen = new Set<string>();
   return rows.flatMap((r) => {
+    if (!printable(r)) return [];
     const key = `${r.dep_date}|${r.departure_airport}`;
     if (seen.has(key)) return [];
     seen.add(key);
@@ -322,13 +330,15 @@ export function getFlownAssignmentHistory(
   const recent = getAssignmentHistory(db, airlines, variants, depDate);
   if (recent.length > 0 || variants.length === 0) return recent;
   const a = airlineIn(airlines);
-  return db
-    .query(
-      `SELECT * FROM flown_assignments
+  return (
+    db
+      .query(
+        `SELECT * FROM flown_assignments
        WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND dep_date = ?
        ORDER BY first_seen ASC, tail_number ASC`
-    )
-    .all(...a.params, ...variants, depDate) as AssignmentLogRow[];
+      )
+      .all(...a.params, ...variants, depDate) as AssignmentLogRow[]
+  ).filter(printable);
 }
 
 /**
