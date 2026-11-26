@@ -34,6 +34,7 @@ import type {
   FlightAssignmentRow,
   UnequippedAssignment,
 } from "../database/database";
+import { firstReadNote } from "../database/first-read";
 import type { Scope, ScopedReader } from "../database/reader";
 import { rowEvidence } from "../database/sql/equipped";
 import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
@@ -410,6 +411,38 @@ export interface VerdictSummary {
    * answer. Every surface words such an answer as the airline's, with its
    * date: never a yes or a no of our own. */
   airlineCount: QuotedCount | null;
+  /** The named aircraft is counted on one Starlink read of ours and the
+   * sheet's listing, and waits for the next read. Every surface says so. */
+  firstRead: { tail: string; readAt: number } | null;
+}
+
+/**
+ * The additive wire key for `firstRead`; absent unless such a count stands.
+ * `note` is the sentence every surface shows, so none words its own.
+ */
+export function firstReadField(
+  summary: VerdictSummary,
+  cfg: Pick<AirlineConfig, "verifySite">
+): Record<string, unknown> {
+  const f = summary.firstRead;
+  return f
+    ? {
+        first_read: {
+          tail_number: f.tail,
+          read_at: f.readAt,
+          note: firstReadNote(f.readAt, cfg.verifySite),
+        },
+      }
+    : {};
+}
+
+/** The same sentence for a text answer; empty unless such a count stands. */
+export function firstReadSentence(
+  verdict: AnsweredVerdict,
+  cfg: Pick<AirlineConfig, "verifySite">
+): string {
+  const f = verdictSummary(verdict).firstRead;
+  return f ? firstReadNote(f.readAt, cfg.verifySite) : "";
 }
 
 /** The additive wire key for `airlineCount`; absent where no count decided. */
@@ -484,16 +517,29 @@ export function listedWording(
 }
 
 export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
-  const none = { probability: null, observations: null, assignment: null, airlineCount: null };
+  const none = {
+    probability: null,
+    observations: null,
+    assignment: null,
+    airlineCount: null,
+    firstRead: null,
+  };
   switch (verdict.kind) {
     case "scheduled":
-    case "fr24":
+    case "fr24": {
+      const assignment = verdictAssignment(verdict);
+      const readAt =
+        verdict.kind === "scheduled"
+          ? scheduledFlights(verdict)[0].first_read_counted_at
+          : verdict.starlink[0].first_read_at;
       return {
         ...none,
         hasStarlink: true,
         confidence: verdictConfidence(verdict),
-        assignment: verdictAssignment(verdict),
+        assignment,
+        firstRead: readAt ? { tail: assignment.tail, readAt } : null,
       };
+    }
     case "scheduled_no":
       return {
         ...none,

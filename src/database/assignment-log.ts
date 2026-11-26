@@ -31,7 +31,7 @@ import {
   tailEquippedSql,
   tailEvidence,
 } from "./sql/equipped";
-import { airlineIn, placeholders } from "./sql/fragments";
+import { airlineIn, firstReadStampSql, placeholders } from "./sql/fragments";
 import { DAY_SEC } from "./sql/windows";
 
 export const ASSIGNMENT_LOG_DDL = `
@@ -554,7 +554,8 @@ export function getListedSightings(
               l.departure_time, l.arrival_time, l.last_seen AS last_updated, sp.airline,
               sp.Aircraft AS aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi,
               CASE WHEN _neg.tail_number IS NOT NULL THEN 1 ELSE 0 END AS settled_negative,
-              _neg.verified_wifi AS settled_wifi
+              _neg.verified_wifi AS settled_wifi,
+              ${firstReadStampSql("sp")} AS first_read_counted_at
        FROM flight_assignment_log l
        INNER JOIN starlink_planes sp ON sp.TailNumber = l.tail_number AND ${listed.sql}
        ${settledNegativeJoin("_neg", "sp.TailNumber", "sp.airline")}

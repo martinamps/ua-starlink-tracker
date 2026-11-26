@@ -662,6 +662,8 @@ export const SETTLE_RULES = [
   "sustained_other",
   "regional_flap",
   "legacy_only",
+  "first_read",
+  "first_read_taken_back",
 ] as const;
 export type SettleRule = (typeof SETTLE_RULES)[number];
 const SETTLE_RULE_SET: ReadonlySet<string> = new Set(SETTLE_RULES);
@@ -760,6 +762,14 @@ export const COUNTERS = {
   //   from_starlink), reason (normalizeSettleRule), path (reconcile|verifier),
   //   airline. Normal is ~0–1 from_starlink a day; a burst means upstream noise.
   CONSENSUS_SETTLE_TRANSITION: "consensus.settle_transition",
+
+  // A sheet-listed tail counted on our first Starlink read (first-read.ts),
+  // and how each such count ended. tags: outcome (counted|confirmed|
+  //   taken_back), reason (first_read for counted; second_read for confirmed;
+  //   other_provider|sheet_delisted for taken_back), path (verifier|reconcile),
+  //   airline. taken_back over counted is the rule's error rate: none in the
+  //   30 days it was backtested on.
+  FIRST_READ_COUNT: "consensus.first_read_count",
 
   // Consensus verdict disagrees with the Google Sheet's wifi claim
   // tags: fleet, sheet_says (starlink|not_starlink), crawler_says, airline

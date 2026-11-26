@@ -7,7 +7,9 @@
  */
 
 import type { Database } from "bun:sqlite";
+import type { AirlineCode } from "../airlines/registry";
 import {
+  type FirstReadEvent,
   SHEET_ROSTER_WHERE,
   reconcileConsensus,
   reconcileTypeDeterministicFleets,
@@ -20,6 +22,7 @@ import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observabili
 import type { JobRunContext } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 import { fetchAllSheets, updateSpreadsheetCache } from "../utils/utils";
+import { pingIndexNow } from "./indexnow";
 import { computePrecision, emitPrecisionGauges } from "./precision-backtest";
 import { computeSurfaceContradictions, emitSweepGauges } from "./surface-sweep";
 
@@ -124,7 +127,21 @@ export async function runSheetScrape(
           );
         }
 
-        const healed = reconcileConsensus(db);
+        const firstReads: FirstReadEvent[] = [];
+        const healed = reconcileConsensus(db, undefined, firstReads);
+        // The same pages when a first-read count is made and when one is
+        // taken back (united-verdict.ts announceFirstRead).
+        for (const e of firstReads) {
+          if (e.outcome === "confirmed") continue;
+          pingIndexNow(e.airline as AirlineCode, [
+            "/",
+            "/fleet",
+            "/newly-equipped",
+            "/feed.xml",
+            `/fleet/${e.tail}`,
+          ]);
+        }
+        if (firstReads.length > 0) span.setTag("first_read_events", firstReads.length);
         if (healed > 0) {
           info(`Consensus reconciliation healed ${healed} tails`);
           span.setTag("consensus_healed", healed);

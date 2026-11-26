@@ -100,6 +100,7 @@ import {
   answersOtherLeg,
   carrierReader,
   decideCarrier,
+  firstReadSentence,
   flightDateWindow,
   fr24DegradedNote,
   isPlausibleFlightNumber,
@@ -854,6 +855,7 @@ export async function renderCheckFlightVerdict(
         );
       }
       const { siteLimit } = listedWording(cfg);
+      const firstRead = firstReadSentence(verdict, cfg);
       const unverifiedAgainst = `not yet verified against ${cfg.verifySite}`;
       const confirmOnSite = `Check ${cfg.verifySite} or the flight status 24h out to confirm.`;
       const source = cfg.communitySource
@@ -875,7 +877,7 @@ export async function renderCheckFlightVerdict(
             };
       return textResult(
         withLegNote(
-          `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a tail ${source.where}:\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\n${source.caveat}`,
+          `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a tail ${source.where}:\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\n${firstRead ? `${firstRead} ` : ""}${source.caveat}`,
           verdict
         )
       );
@@ -911,6 +913,7 @@ export async function renderCheckFlightVerdict(
     // toolCheckFlight), so MCP and the extension API converge per host.
     case "fr24": {
       const { siteLimit } = listedWording(cfg);
+      const firstRead = firstReadSentence(verdict, cfg);
       const lead =
         verdictConfidence(verdict) === "verified"
           ? `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is assigned to a verified Starlink aircraft (via live tail lookup):`
@@ -919,7 +922,7 @@ export async function renderCheckFlightVerdict(
             : `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a Starlink-listed aircraft not yet verified against ${cfg.verifySite} (via live tail lookup):`;
       return textResult(
         withLegNote(
-          `${lead}\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
+          `${lead}\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\n${firstRead ? `${firstRead} ` : ""}Starlink WiFi is free on all equipped ${cfg.shortName} flights.`,
           verdict
         )
       );

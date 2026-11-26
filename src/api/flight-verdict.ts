@@ -310,6 +310,8 @@ export interface FallbackSegment {
   verified_at?: number | null;
   operated_by?: string | null;
   fleet_type?: string | null;
+  /** A first-read count that waits for its next read (database/first-read.ts). */
+  first_read_at?: number | null;
 }
 
 /**
@@ -350,7 +352,12 @@ export function resolveTailVerdict(
     if (uf?.starlink_status === "negative") {
       return negativeTailVerdict(reader, tail, uf, nowSec, "disputed", base);
     }
-    return { hasStarlink: true, confidence: "spreadsheet", ...base };
+    return {
+      hasStarlink: true,
+      confidence: "spreadsheet",
+      first_read_at: uf?.first_read_counted_at ?? null,
+      ...base,
+    };
   }
 
   const uf = reader.getFleetEntryByTail(tail);
@@ -380,6 +387,7 @@ interface TailVerdict {
   fleet_type?: string | null;
   verified_wifi?: string | null;
   verified_at?: number | null;
+  first_read_at?: number | null;
 }
 
 /** Shared united_fleet-negative verdict: re-queue stale settles for discovery. */
@@ -458,6 +466,7 @@ export async function lookupFlightTailVerdict(
       verified_at: v.verified_at,
       operated_by: v.operated_by,
       fleet_type: v.fleet_type,
+      ...(v.first_read_at ? { first_read_at: v.first_read_at } : {}),
     });
   }
 

@@ -120,3 +120,9 @@ export function tailAircraftTypeSql(tailExpr: string, airlineExpr: string): stri
      ORDER BY _tl.id LIMIT 1)
   )`;
 }
+
+/** The standing first-read stamp of a listing's tail; NULL when none stands. */
+export function firstReadStampSql(sp: string): string {
+  return `(SELECT _fr.first_read_counted_at FROM united_fleet _fr
+           WHERE _fr.tail_number = ${sp}.TailNumber AND _fr.airline = ${sp}.airline)`;
+}

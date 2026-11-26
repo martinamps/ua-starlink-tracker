@@ -15,6 +15,7 @@ import { fittingPhrase, pipelinePhrase } from "../components/fleet/pipeline";
 import { firstFlightLabel, operatorLabel } from "../components/newly-equipped-page";
 import { capitalize, fmt, shortDate, zonedDeparture } from "../components/ui/format";
 import type { Tone } from "../components/ui/tone-classes";
+import { firstReadNote } from "../database/first-read";
 import type { ScopedReader } from "../database/reader";
 import { unixNow } from "../database/sql/windows";
 import type { TailAnswerKind, TailFlight, TailRecord } from "../database/tails";
@@ -215,7 +216,9 @@ function answerFor(
     case "listed":
       return {
         answer: `${tail} is listed with Starlink.`,
-        note: `Our own check of ${site} has not confirmed it yet. It is in our count.`,
+        note: r.fleet?.first_read_counted_at
+          ? `${firstReadNote(r.fleet.first_read_counted_at, site)} It is in our count.`
+          : `Our own check of ${site} has not confirmed it yet. It is in our count.`,
       };
     case "reported": {
       const reason = r.reported?.reason ?? "other_provider";

@@ -112,6 +112,7 @@ import {
   answersOtherLeg,
   carrierReader,
   decideCarrier,
+  firstReadField,
   fr24DegradedNote,
   isPlausibleFlightNumber,
   legField,
@@ -196,6 +197,7 @@ import IsStarlinkFreePage, {
   freeAccess,
 } from "../components/is-starlink-free-page";
 import type { Link as PageLink } from "../components/layout";
+import { firstReadNote, firstReadTakenBackNote } from "../database/first-read";
 import type { AirlineChartCount } from "../database/roster";
 import { reportedClause } from "../utils/reported-reason";
 
@@ -1201,6 +1203,7 @@ function checkFlightBody(
         ...answer,
         confidence: summary.confidence,
         ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
+        ...firstReadField(summary, cfg),
         ...legField(verdict),
         flights: scheduledFlights(verdict).map((flight) =>
           checkFlightWireFlight({
@@ -1239,6 +1242,7 @@ function checkFlightBody(
         confidence: summary.confidence,
         method: "fr24_tail_lookup",
         ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
+        ...firstReadField(summary, cfg),
         ...legField(verdict),
         flights: verdict.starlink.map((s) =>
           checkFlightWireFlight({
@@ -1406,6 +1410,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           `${legPrefix(verdict)}${a.tail} (${a.aircraft}) — ${a.origin} → ${a.destination}`,
           verdict
         ),
+        ...firstReadField(summary, cfg),
         ...legField(verdict),
         flights: scheduledFlights(verdict).map((m) => ({
           tail_number: m.tail_number,
@@ -2668,7 +2673,7 @@ const feedXml: Handler = (ctx) => {
     <updated>${i.updated}</updated>
     <category term="confirmed"/>
     <summary>${escapeXml(
-      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) was first observed with Starlink on ${i.DateFound.slice(0, 10)} — the date this tracker found it equipped, not necessarily the install date.${firstFlightLine}`
+      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) was first observed with Starlink on ${i.DateFound.slice(0, 10)} — the date this tracker found it equipped, not necessarily the install date.${firstFlightLine}${i.first_read_at ? ` ${firstReadNote(i.first_read_at, AIRLINES[i.airline]?.verifySite)}` : ""}`
     )}</summary>
   </entry>`,
     };
@@ -2693,7 +2698,7 @@ const feedXml: Handler = (ctx) => {
     <updated>${i.updated}</updated>
     <category term="reported"/>
     <summary>${escapeXml(
-      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) is listed with Starlink on the community-maintained fleet sheet, where this tracker first saw it on ${i.DateFound.slice(0, 10)} — the date this tracker first read the listing, not necessarily the day it was added. ${capitalize(reportedClause(i, "this tracker's"))}, so the aircraft is not confirmed and is not in the tracker's Starlink count.`
+      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) is listed with Starlink on the community-maintained fleet sheet, where this tracker first saw it on ${i.DateFound.slice(0, 10)} — the date this tracker first read the listing, not necessarily the day it was added. ${capitalize(reportedClause(i, "this tracker's"))}, so the aircraft is not confirmed and is not in the tracker's Starlink count.${i.first_read_taken_back_at ? ` ${firstReadTakenBackNote(i.first_read_taken_back_at, i.first_read_taken_back_reason, AIRLINES[i.airline]?.verifySite)}` : ""}`
     )}</summary>
   </entry>`,
     };
