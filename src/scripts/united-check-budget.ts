@@ -28,7 +28,8 @@
  * A claim is followed by endUnitedCheck once its check has ended and written
  * its log row. A claim whose check never ended (the process was stopped while
  * the page loaded) has no log row, and the boot read needs to know that: see
- * logSurplus.
+ * logSurplus. Each boot moves what the process before it left unended to a
+ * kept list and starts its own list empty, so every stop is read by itself.
  */
 
 import type { Database } from "bun:sqlite";
@@ -59,9 +60,18 @@ const LEDGER_KEY = "united_check_budget";
 /** Start times of claims whose check has not ended, kept beside the ledger. */
 const UNDER_WAY_KEY = "united_check_under_way";
 /**
+ * Start times of claims that a process now gone left unended, for as long as
+ * they are inside the window: the claims the boot read lets stand for no log
+ * row. One list for the whole day held only its newest three, so a fourth
+ * check cut short in a day was counted as logged again, and a rolling day
+ * could hold 365 to 367.
+ */
+const NO_ROW_KEY = "united_check_no_row";
+/**
  * The most checks one stop can cut short: the verifier's, discovery's and a
- * hand-forced run's. The boot read believes no more unended claims than this,
- * so a caller that never calls endUnitedCheck costs three slots, not a day's.
+ * hand-forced run's. A boot believes no more unended claims than this of the
+ * process before it, so a caller that never calls endUnitedCheck costs three
+ * slots a boot, not a day's.
  */
 const MAX_UNDER_WAY = 3;
 
@@ -139,6 +149,45 @@ function logSurplus(
 }
 
 /**
+ * The claims the boot read lets stand for no log row: those kept from earlier
+ * boots, and the newest few the process before this one left under way. They
+ * are written to the kept list and the under-way list is emptied, so the next
+ * stop's claims are not crowded out by this one's. Only claims the ledger
+ * still holds are kept: anything else in either list stands for nothing.
+ *
+ * It can only add to the count. A claim kept here whose check did write its
+ * row (the stop fell between the row and its end) counts that check twice
+ * for a day. If the write fails, the read still goes by the same claims and
+ * the next boot finds both lists as they were.
+ */
+function takeOverUnended(db: Database, ledger: readonly number[], now: number): number[] {
+  // Two claims can share a millisecond, so a time is kept as often as the
+  // ledger holds it and no more often.
+  const inLedger = new Map<number, number>();
+  for (const s of ledger) {
+    if (s > now - WINDOW_MS) inLedger.set(s, (inLedger.get(s) ?? 0) + 1);
+  }
+  const kept = parseLedger(getMeta(db, NO_ROW_KEY, "UA")) ?? [];
+  const left = (parseLedger(getMeta(db, UNDER_WAY_KEY, "UA")) ?? [])
+    .sort((a, b) => a - b)
+    .slice(-MAX_UNDER_WAY);
+  const noRow: number[] = [];
+  for (const s of [...kept, ...left]) {
+    const room = inLedger.get(s) ?? 0;
+    if (room === 0) continue;
+    inLedger.set(s, room - 1);
+    noRow.push(s);
+  }
+  try {
+    db.transaction(() => {
+      setMeta(db, NO_ROW_KEY, JSON.stringify(noRow), "UA");
+      setMeta(db, UNDER_WAY_KEY, "[]", "UA");
+    })();
+  } catch {}
+  return noRow;
+}
+
+/**
  * Start times (ms) inside the window. With no ledger yet (the first run after
  * this shipped) or an unreadable one, the verification log stands in: it has a
  * row per check, and a few more for swap captures, so it can only overcount.
@@ -152,9 +201,7 @@ function loadStarts(db: Database, now: number): number[] {
   // With no ledger the log is already the count: nothing is left unledgered.
   if (!unledgered.has(db)) {
     // Whatever is still under way on boot was left by a process that is gone.
-    const left = parseLedger(getMeta(db, UNDER_WAY_KEY, "UA")) ?? [];
-    const unended = left.sort((a, b) => a - b).slice(-MAX_UNDER_WAY);
-    unledgered.set(db, ledger ? logSurplus(db, ledger, unended, now) : []);
+    unledgered.set(db, ledger ? logSurplus(db, ledger, takeOverUnended(db, ledger, now), now) : []);
   }
   // A start stamped ahead of the clock (the clock was set back) still counts,
   // until the clock has passed it by a full window.
@@ -221,6 +268,9 @@ export function claimUnitedCheck(db: Database, cls: UnitedCheckClass, now = Date
  * It takes this process's oldest open claim: two checks that end out of order
  * swap times a tick apart, and the number left open is still right. Never
  * throws: a missed call only makes the next boot count a slot more.
+ *
+ * The claim is taken off the kept list too: another process that booted on
+ * this file while the check ran (a command-line run) has moved it there.
  */
 export function endUnitedCheck(db: Database): void {
   const at = underWay.get(db)?.shift();
@@ -231,6 +281,12 @@ export function endUnitedCheck(db: Database): void {
       const i = open.indexOf(at);
       if (i >= 0) open.splice(i, 1);
       setMeta(db, UNDER_WAY_KEY, JSON.stringify(open), "UA");
+      const noRow = parseLedger(getMeta(db, NO_ROW_KEY, "UA"));
+      const kept = noRow?.indexOf(at) ?? -1;
+      if (noRow && kept >= 0) {
+        noRow.splice(kept, 1);
+        setMeta(db, NO_ROW_KEY, JSON.stringify(noRow), "UA");
+      }
     })();
   } catch {}
 }

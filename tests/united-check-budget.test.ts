@@ -15,7 +15,7 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -416,13 +416,15 @@ describe("the ledger", () => {
         const used = withBoot(path, (handle) => unitedBudgetState(handle, now).used);
         expect(used).toBeGreaterThanOrEqual(40);
         expect(used).toBeLessThanOrEqual(43);
-        // A list nobody can read is no list: the count is the ledger's and the log's.
-        for (const raw of ["not json", '{"a":1}', '["x"]', "[null]"]) {
+        // That boot kept its three and emptied the list. A list nobody can
+        // read is no list, and times that are in no ledger stand for nothing:
+        // later boots read what the first one read, and not a slot more.
+        for (const raw of ["not json", '{"a":1}', '["x"]', "[null]", "[1,2,3]"]) {
           withBoot(path, (handle) => setMeta(handle, "united_check_under_way", raw, "UA"));
-          expect(withBoot(path, (handle) => unitedBudgetState(handle, now).used)).toBe(40);
+          expect(withBoot(path, (handle) => unitedBudgetState(handle, now).used)).toBe(used);
         }
-        // Times that are in no ledger stand for nothing.
-        withBoot(path, (handle) => setMeta(handle, "united_check_under_way", "[1,2,3]", "UA"));
+        // With nothing kept and nothing listed, the count is the ledger's and the log's.
+        withBoot(path, (handle) => setMeta(handle, "united_check_no_row", "[]", "UA"));
         expect(withBoot(path, (handle) => unitedBudgetState(handle, now).used)).toBe(40);
       } finally {
         rmSync(dir, { recursive: true, force: true });
@@ -532,6 +534,406 @@ describe("the ledger", () => {
       expect(JSON.parse(getMeta(db, "united_check_budget", "UA") as string)).toEqual([T0_MS]);
       // The log's surplus frees a day after the check, like any other start.
       expect(unitedBudgetState(db, T0_MS + 23 * HOUR * 1000 + 1000).used).toBe(1);
+    });
+
+    // ── more than three checks cut short in a day ─────────────────────────
+    //
+    // One list for the whole day, of which a boot believed the newest three:
+    // the fourth check cut short in a day was counted as logged again, hid
+    // one of the older version's log rows, and a rolling day held 365 to 367.
+    // Each boot now takes over what the process before it left, three at
+    // most, into a kept list, and starts its own list empty.
+
+    const metaList = (handle: Database, key: string): number[] =>
+      JSON.parse(getMeta(handle, key, "UA") ?? "[]");
+
+    /** The most real checks in any rolling 24 hours that ends at one of `ours`. */
+    function busiestEndingAt(all: readonly number[], ours: ReadonlySet<number>): number {
+      const sorted = [...all].sort((a, b) => a - b);
+      let most = 0;
+      let from = 0;
+      for (let to = 0; to < sorted.length; to++) {
+        while (sorted[from] <= sorted[to] - DAY) from++;
+        if (ours.has(sorted[to])) most = Math.max(most, to - from + 1);
+      }
+      return most;
+    }
+
+    /**
+     * `stops` times in a day and a half this version is stopped with
+     * `inFlight` checks under way, and each time the older version, which has
+     * no ledger, runs ten minutes inside the same hour at a check a minute.
+     * Then this version takes every slot it is given for two days.
+     */
+    function stopsInADay(stops: number, inFlight: number, everyHours: number) {
+      const dir = mkdtempSync(join(tmpdir(), "united-stops-"));
+      const path = join(dir, "db.sqlite");
+      const made: number[] = [];
+      const ours = new Set<number>();
+      const returns: { counted: number; really: number; kept: number; listed: number }[] = [];
+      let n = 0;
+      const steady = (handle: Database, from: number, to: number, every: number) => {
+        for (let t = from; t < to; t += every) {
+          if (!claimUnitedCheck(handle, "settle", t * 1000)) continue;
+          made.push(t);
+          ours.add(t);
+          logCheck(handle, t + 10, n++);
+          endUnitedCheck(handle);
+        }
+      };
+      try {
+        let from = T0;
+        let stopAt = T0 + 40 * 60;
+        for (let i = 0; i < stops; i++) {
+          withBoot(path, (handle) => {
+            steady(handle, from, stopAt - 30, 360);
+            for (let k = 0; k < inFlight; k++) {
+              const t = stopAt - 20 + k;
+              if (claimUnitedCheck(handle, "settle", t * 1000)) {
+                made.push(t);
+                ours.add(t);
+              }
+            }
+          });
+          withBoot(path, (handle) => {
+            for (let t = stopAt; t < stopAt + 600; t += 60) {
+              made.push(t);
+              logCheck(handle, t + 10, n++);
+            }
+          });
+          const back = stopAt + 600;
+          returns.push(
+            withBoot(path, (handle) => ({
+              counted: unitedBudgetState(handle, back * 1000).used,
+              really: made.filter((t) => t > back - DAY && t <= back).length,
+              kept: metaList(handle, "united_check_no_row").length,
+              listed: metaList(handle, "united_check_under_way").length,
+            }))
+          );
+          from = back;
+          stopAt = back + everyHours * HOUR;
+        }
+        withBoot(path, (handle) => steady(handle, from, from + 2 * DAY, 30));
+        return { returns, busiest: busiestEndingAt(made, ours) };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    test.each([
+      [1, 2, 3],
+      [3, 1, 3],
+      [2, 2, 3],
+      [4, 1, 3],
+      [3, 2, 3],
+      [7, 2, 3],
+      [8, 3, 3],
+      [20, 2, 1],
+      [30, 3, 1],
+    ])(
+      "%i stops in a day with %i checks under way at each: every return counts them all, and the day holds 364",
+      (stops, inFlight, everyHours) => {
+        const { returns, busiest } = stopsInADay(stops, inFlight, everyHours);
+        for (const r of returns) {
+          // Never short. A row that falls across an hour's edge from its
+          // claim can count one over, on the safe side.
+          expect(r.counted).toBeGreaterThanOrEqual(r.really);
+          expect(r.counted - r.really).toBeLessThanOrEqual(stops > 8 ? 2 : 0);
+        }
+        expect(busiest).toBeLessThanOrEqual(UNITED_DAILY_CHECK_BUDGET);
+        for (const r of returns) expect(r.listed).toBe(0);
+        // Kept for a day, then dropped: the list does not grow without end.
+        expect(Math.max(...returns.map((r) => r.kept))).toBeLessThanOrEqual(
+          Math.min(stops, Math.ceil(24 / everyHours) + 1) * inFlight
+        );
+      },
+      60_000
+    );
+
+    /**
+     * Any order of boots. This version and the older, ledger-less one take
+     * turns of three minutes to three hours on one file. Two jobs each hold a
+     * check under way; its row is written when it ends, 5 to 60 seconds after
+     * its claim. A stop cuts this version's checks short, or (three times in
+     * ten) falls between a check's row and its end. Now and then the command
+     * line forces a check in a process of its own, which never ends its claim.
+     * The older version's checks are let finish: a check it had under way at a
+     * stop is in no ledger and no log, and no version can count it.
+     */
+    function anyOrderOfBoots(seed: number, days: number) {
+      let state = seed;
+      const rand = () => {
+        state = (state * 1664525 + 1013904223) >>> 0;
+        return state / 2 ** 32;
+      };
+      const dir = mkdtempSync(join(tmpdir(), "united-boots-"));
+      const path = join(dir, "db.sqlite");
+      const copy = join(dir, "copy.sqlite");
+      const made: number[] = [];
+      const ours = new Set<number>();
+      // Claims of this version whose check was cut short or never ended.
+      const unended: number[] = [];
+      const boots: { counted: number; really: number; asOneList: number }[] = [];
+      let n = 0;
+      let mostLeft = 0;
+      try {
+        withBoot(path, () => {});
+        let t = T0;
+        let newVersion = true;
+        const end = T0 + days * DAY;
+        while (t < end) {
+          const turn = 180 + Math.floor(rand() * (rand() < 0.6 ? 1350 : 3 * HOUR));
+          const stop = Math.min(end, t + turn);
+          const from = t;
+          const isNew = newVersion;
+          withBoot(path, (handle) => {
+            if (isNew) {
+              mostLeft = Math.max(mostLeft, metaList(handle, "united_check_under_way").length);
+              // The same file as 897f00d kept it: one list of every unended
+              // claim of the day, of which the boot believes the newest three.
+              handle.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+              copyFileSync(path, copy);
+              const asOneList = withBoot(copy, (other) => {
+                setMeta(other, "united_check_no_row", "[]", "UA");
+                const day = unended.filter((s) => s > from * 1000 - DAY * 1000);
+                setMeta(other, "united_check_under_way", JSON.stringify(day), "UA");
+                return unitedBudgetState(other, from * 1000).used;
+              });
+              boots.push({
+                counted: unitedBudgetState(handle, from * 1000).used,
+                really: made.filter((m) => m > from - DAY && m <= from).length,
+                asOneList,
+              });
+            }
+            const flying: { claim: number; done: number }[] = [];
+            const olderEvery = Math.floor(HOUR / (10 + Math.floor(rand() * 30)));
+            let nextOlder = from;
+            for (let s = from; s < stop; s += 20) {
+              for (let i = flying.length - 1; i >= 0; i--) {
+                if (flying[i].done > s) continue;
+                logCheck(handle, flying[i].done, n++);
+                if (isNew) endUnitedCheck(handle);
+                flying.splice(i, 1);
+              }
+              if (!isNew) {
+                if (s >= nextOlder && flying.length < 2) {
+                  made.push(s);
+                  flying.push({ claim: s, done: s + 5 + Math.floor(rand() * 55) });
+                  nextOlder = s + olderEvery;
+                }
+                continue;
+              }
+              if (rand() < 1 / 400) {
+                // The command line's forced check: its own process and boot.
+                const at = s * 1000 + 7;
+                withBoot(path, (cli) => claimUnitedCheck(cli, "manual", at));
+                made.push(s);
+                unended.push(at);
+              }
+              for (let job = flying.length; job < 2; job++) {
+                const cls = rand() < 0.6 ? "settle" : "reconfirm";
+                if (rand() < 0.6 && claimUnitedCheck(handle, cls, s * 1000 + job)) {
+                  made.push(s);
+                  ours.add(s);
+                  flying.push({ claim: s * 1000 + job, done: s + 5 + Math.floor(rand() * 55) });
+                }
+              }
+            }
+            for (const check of flying) {
+              if (!isNew || rand() < 0.3) logCheck(handle, stop, n++);
+              if (isNew) unended.push(check.claim);
+            }
+          });
+          t = stop;
+          newVersion = rand() < 0.5;
+        }
+        return { boots, busiest: busiestEndingAt(made, ours), mostLeft };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    test.each([20261126, 7, 104736, 99991])(
+      "any order of boots (seed %i): no rolling 24 hours passes the ceiling, and no boot counts short",
+      (seed) => {
+        const { boots, busiest, mostLeft } = anyOrderOfBoots(seed, 4);
+        expect(boots.length).toBeGreaterThan(20);
+        expect(busiest).toBeLessThanOrEqual(UNITED_DAILY_CHECK_BUDGET);
+        // The budget was in use: a run that never neared it would prove nothing.
+        expect(busiest).toBeGreaterThan(UNITED_DAILY_CHECK_BUDGET - 4);
+        // What the code can leave at a stop: two jobs' checks and a forced one.
+        expect(mostLeft).toBeLessThanOrEqual(3);
+        for (const boot of boots) {
+          expect(boot.counted).toBeGreaterThanOrEqual(boot.really);
+          // Never under what one day-long list, read as 897f00d read it, gives.
+          expect(boot.counted).toBeGreaterThanOrEqual(boot.asOneList);
+        }
+        expect(boots.some((boot) => boot.counted > boot.asOneList)).toBe(true);
+      },
+      120_000
+    );
+
+    test("a boot takes over what was left under way, three at most, and empties the list", () => {
+      const dir = mkdtempSync(join(tmpdir(), "united-kept-"));
+      const path = join(dir, "db.sqlite");
+      const at = (i: number) => T0_MS + i * 60_000;
+      try {
+        withBoot(path, (handle) => {
+          for (let i = 0; i < 5; i++) expect(claimUnitedCheck(handle, "settle", at(i))).toBe(true);
+          expect(metaList(handle, "united_check_under_way")).toHaveLength(5);
+        });
+        withBoot(path, (handle) => {
+          expect(unitedBudgetState(handle, at(6)).used).toBe(5);
+          expect(metaList(handle, "united_check_no_row")).toEqual([at(2), at(3), at(4)]);
+          expect(metaList(handle, "united_check_under_way")).toEqual([]);
+          // This process's own claim is listed again, and ended as before.
+          expect(claimUnitedCheck(handle, "settle", at(7))).toBe(true);
+          expect(metaList(handle, "united_check_under_way")).toEqual([at(7)]);
+          endUnitedCheck(handle);
+          expect(metaList(handle, "united_check_under_way")).toEqual([]);
+          expect(claimUnitedCheck(handle, "settle", at(8))).toBe(true);
+        });
+        // The next stop gets its own three: the earlier ones are not crowded out.
+        withBoot(path, (handle) => {
+          unitedBudgetState(handle, at(9));
+          expect(metaList(handle, "united_check_no_row")).toEqual([at(2), at(3), at(4), at(8)]);
+          // Read again by the same process: nothing moves.
+          unitedBudgetState(handle, at(9));
+          expect(metaList(handle, "united_check_no_row")).toHaveLength(4);
+        });
+        // A day on, what was kept has left the ledger and the kept list with it.
+        withBoot(path, (handle) => {
+          expect(unitedBudgetState(handle, at(8) + DAY * 1000 + 1).used).toBe(0);
+          expect(metaList(handle, "united_check_no_row")).toEqual([]);
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("two claims in the same millisecond, both cut short, are both kept", () => {
+      const dir = mkdtempSync(join(tmpdir(), "united-kept-"));
+      const path = join(dir, "db.sqlite");
+      try {
+        withBoot(path, (handle) => {
+          expect(claimUnitedCheck(handle, "settle", T0_MS)).toBe(true);
+          expect(claimUnitedCheck(handle, "manual", T0_MS)).toBe(true);
+          // The older version's two checks, logged in the same hour.
+          logCheck(handle, T0 + 100, 1);
+          logCheck(handle, T0 + 200, 2);
+        });
+        withBoot(path, (handle) => {
+          expect(unitedBudgetState(handle, T0_MS + 600_000).used).toBe(4);
+          expect(metaList(handle, "united_check_no_row")).toEqual([T0_MS, T0_MS]);
+        });
+        expect(withBoot(path, (handle) => unitedBudgetState(handle, T0_MS + 600_000).used)).toBe(4);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("a check that ends after another process booted on the file is not kept as cut short", () => {
+      const dir = mkdtempSync(join(tmpdir(), "united-kept-"));
+      const path = join(dir, "db.sqlite");
+      try {
+        withBoot(path, (server) => {
+          expect(claimUnitedCheck(server, "settle", T0_MS)).toBe(true);
+          // A command-line run boots while the server's check is under way.
+          withBoot(path, (cli) => {
+            unitedBudgetState(cli, T0_MS + 1000);
+            expect(metaList(cli, "united_check_no_row")).toEqual([T0_MS]);
+            expect(claimUnitedCheck(cli, "manual", T0_MS + 2000)).toBe(true);
+          });
+          logCheck(server, T0 + 30, 1);
+          endUnitedCheck(server);
+          expect(metaList(server, "united_check_no_row")).toEqual([]);
+          expect(metaList(server, "united_check_under_way")).toEqual([T0_MS + 2000]);
+        });
+        // One check with its row and the forced one: two, not three.
+        expect(withBoot(path, (handle) => unitedBudgetState(handle, T0_MS + 60_000).used)).toBe(2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("a hostile kept list closes the budget or leaves it right, and never opens it", () => {
+      const dir = mkdtempSync(join(tmpdir(), "united-kept-"));
+      const path = join(dir, "db.sqlite");
+      const now = T0_MS + DAY * 1000;
+      try {
+        // A full day at the ceiling, every check logged and ended.
+        const starts = withBoot(path, (handle) => {
+          const granted: number[] = [];
+          for (let t = T0 + 60; t * 1000 < now; t += 200) {
+            if (!claimUnitedCheck(handle, "settle", t * 1000)) continue;
+            granted.push(t * 1000);
+            logCheck(handle, t + 5, granted.length);
+            endUnitedCheck(handle);
+          }
+          return granted;
+        });
+        const real = starts.filter((s) => s > now - DAY * 1000).length;
+        expect(real).toBe(UNITED_DAILY_CHECK_BUDGET);
+        const lists: Array<[string, string, number]> = [
+          ["not JSON", "{{{", 0],
+          ["a string", '"all"', 0],
+          ["an object", '{"0":1}', 0],
+          ["text and null entries", '["a",null,1]', 0],
+          ["nested arrays", JSON.stringify([[starts[0]]]), 0],
+          ["times in no ledger", JSON.stringify([1, 2, now + 30 * DAY * 1000, -1, 0.5]), 0],
+          ["100,000 entries that match nothing", JSON.stringify(Array(100000).fill(7)), 0],
+          [
+            "the newest three, twice",
+            JSON.stringify([...starts.slice(-3), ...starts.slice(-3)]),
+            3,
+          ],
+          ["every start of the day", JSON.stringify(starts), real],
+        ];
+        for (const key of ["united_check_no_row", "united_check_under_way"]) {
+          for (const [label, raw, kept] of lists) {
+            withBoot(path, (handle) => {
+              setMeta(handle, "united_check_no_row", "[]", "UA");
+              setMeta(handle, "united_check_under_way", "[]", "UA");
+              setMeta(handle, key, raw, "UA");
+            });
+            const most = key === "united_check_under_way" ? Math.min(kept, 3) : kept;
+            withBoot(path, (handle) => {
+              const used = unitedBudgetState(handle, now).used;
+              expect([label, used >= real, used <= real + most]).toEqual([label, true, true]);
+              for (let i = 0; i < 20; i++) {
+                expect(claimUnitedCheck(handle, "settle", now + i)).toBe(false);
+              }
+              expect(metaList(handle, "united_check_under_way")).toEqual([]);
+            });
+          }
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("a boot that cannot write still reads the same count, and throws nothing", () => {
+      const dir = mkdtempSync(join(tmpdir(), "united-kept-"));
+      const path = join(dir, "db.sqlite");
+      try {
+        withBoot(path, (handle) => {
+          for (let i = 0; i < 4; i++) {
+            expect(claimUnitedCheck(handle, "settle", T0_MS + i * 1000)).toBe(true);
+          }
+          // The older version's rows, in the same hour.
+          for (let i = 0; i < 6; i++) logCheck(handle, T0 + 100 + i, i);
+          handle.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        });
+        const readOnly = new Database(path, { readonly: true });
+        const seen = unitedBudgetState(readOnly, T0_MS + 600_000).used;
+        expect(metaList(readOnly, "united_check_under_way")).toHaveLength(4);
+        readOnly.close();
+        // Four claims, three believed to have no row: 4 + (6 rows - 1 ledgered).
+        expect(seen).toBe(9);
+        expect(withBoot(path, (handle) => unitedBudgetState(handle, T0_MS + 600_000).used)).toBe(9);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 
