@@ -136,7 +136,7 @@ import {
   withLegNote,
 } from "../api/check-flight-core";
 import { type LookupAsker, asLookupAsker } from "../api/lookup-budget";
-import { handleMcpRequest } from "../api/mcp-server";
+import { handleMcpRequest, unseenAirports } from "../api/mcp-server";
 import { QATAR_PUBLISHED_DAYS_FORWARD, qatarEquipmentName } from "../api/qatar-status";
 import {
   QATAR_HISTORY_WINDOW_DAYS,
@@ -275,7 +275,7 @@ import type {
   RouteSchedule,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
-import { airportCity, airportCityWithCode, routePairLabel } from "../utils/airport-names";
+import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-names";
 import {
   airportLocalDate,
   airportTimezone,
@@ -1545,12 +1545,33 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   if (origin.trim().toUpperCase() === destination.trim().toUpperCase()) {
     return jsonError(400, "Origin and destination must differ");
   }
+  // An airport nobody holds gets no itinerary: the planner would otherwise
+  // route "any flight" from NYC or ROMA to a real hub. Same rule as the MCP
+  // planner: unknown is outside the coordinate table and absent from this
+  // airline's flights. K/P ICAO spellings are read as their IATA code.
+  const from = normalizeAirportCode(origin);
+  const to = normalizeAirportCode(destination);
+  const unknown = [
+    ...(from ? [] : [origin]),
+    ...(to ? [] : [destination]),
+    ...unseenAirports(cfg, reader, from ?? undefined, to ?? undefined),
+  ].map((raw) => raw.trim().toUpperCase());
+  if (!from || !to || unknown.length > 0) {
+    // Only letters shaped like a code are said back.
+    const named = unknown.filter((code) => /^[A-Z]{3,4}$/.test(code));
+    const message =
+      named.length === unknown.length
+        ? `No airport on record with the code ${named.join(" or ")}. Enter a city or a 3-letter airport code.`
+        : "Enter a 3-letter airport code for both airports.";
+    return json({ origin, destination, itineraries: [], baseline: null, message });
+  }
+  if (from === to) return jsonError(400, "Origin and destination must differ");
   // The itinerary planner runs on the flight-history model. Model-less
   // tenants get the registry route answer as prose (additive `message`
   // field; itineraries stays [] so the page's empty-state contract holds).
   // The message carries registry text only — the page injects it as HTML.
   if (!cfg.flightHistoryModel) {
-    const r = carrierRouteAnswer(cfg, reader, origin, destination);
+    const r = carrierRouteAnswer(cfg, reader, from, to);
     const message = r
       ? joinSentences(`~${Math.round(r.probability * 100)}% Starlink — ${r.reason}`)
       : joinSentences(
@@ -1563,14 +1584,14 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   const dateParam = url.searchParams.get("date");
   const targetDateUnix =
     dateParam && routeBoardDateOk(dateParam) ? flightDateWindow(dateParam)?.mid : undefined;
-  const itineraries = planItinerary(reader, origin, destination, {
+  const itineraries = planItinerary(reader, from, to, {
     maxItineraries: 12,
     maxStops,
     targetDateUnix,
   });
   // Additive: the nonstop every connection is measured against (null when the
   // pair's duration is unknowable, i.e. an airport outside the coordinate table).
-  const baseline = routeBaseline(reader, origin, destination);
+  const baseline = routeBaseline(reader, from, to);
   return json({ origin, destination, itineraries, baseline });
 };
 
@@ -3896,6 +3917,7 @@ function routeFlightNumbers(ctx: RequestContext, board: RouteFlightBoard): strin
  * The pair is named by city and code where that fits whole under `max`. A
  * long pair gives up its codes first (the title and the heading carry them),
  * so the next-flight sentence stays; then that sentence; then the cities.
+ * Without codes, an airport of a city that has several is named.
  */
 export function routeMetaDescription(
   cfg: AirlineConfig,
@@ -3905,9 +3927,10 @@ export function routeMetaDescription(
 ): string {
   const named = routePairLabel(board.origin, board.destination);
   const codes = `${board.origin} to ${board.destination}`;
-  const from = airportCity(board.origin);
-  const to = airportCity(board.destination);
-  // Two airports of one city would read "Washington to Washington".
+  // With no code on the line, a city with several airports says which one:
+  // "Washington Dulles", never "Washington to Washington".
+  const from = airportSpokenPlace(board.origin);
+  const to = airportSpokenPlace(board.destination);
   const cities = from && to && from !== to ? `${from} to ${to}` : null;
   return (
     [

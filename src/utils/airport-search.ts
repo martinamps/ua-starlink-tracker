@@ -1,11 +1,13 @@
 /**
  * "chicago" -> O'Hare and Midway: the names table searched by what a visitor
- * types. The table (airport-names.ts) is the only source of names; this adds
- * none, so a city it lacks is not found and a visitor falls back to the code.
+ * types. The table (airport-names.ts) is the only source of airports; the
+ * short alias list (airport-aliases.ts) adds other names for places it holds,
+ * never an airport. A city neither has is not found, and the box says so.
  *
  * Pure and DOM-free: the browser's picker runs it (src/client/airport-picker)
  * and the tests run the same code.
  */
+import { PLACE_ALIASES } from "./airport-aliases";
 import { AIRPORT_NAMES, airportPlaceName } from "./airport-names";
 
 export interface AirportMatch {
@@ -15,8 +17,13 @@ export interface AirportMatch {
 }
 
 interface Row extends AirportMatch {
-  /** The folded name, for a whole-phrase prefix ("new y" -> "new york"). */
-  phrase: string;
+  /**
+   * The folded name in each spelling a visitor may type, for a whole-phrase
+   * prefix ("new y" -> "new york"; "saint l" and "st l" -> "st louis").
+   */
+  phrases: string[];
+  /** Each phrase with its spaces closed up: "newyork", "laguardia". */
+  squashed: string[];
   words: string[];
 }
 
@@ -38,17 +45,69 @@ export function foldPlace(text: string): string {
     .trim();
 }
 
+const LONG_FORM: Record<string, string> = { st: "saint", ft: "fort" };
+const SHORT_FORM: Record<string, string> = { saint: "st", fort: "ft" };
+const respell = (phrase: string, forms: Record<string, string>) =>
+  phrase
+    .split(" ")
+    .map((w) => forms[w] ?? w)
+    .join(" ");
+
+/** "st louis" is also "saint louis", "fort worth" also "ft worth": the table holds one spelling each. */
+function spellings(phrase: string): string[] {
+  return [...new Set([phrase, respell(phrase, LONG_FORM), respell(phrase, SHORT_FORM)])];
+}
+
 let rows: Row[] | null = null;
 function table(): Row[] {
   if (rows) return rows;
-  rows = Object.keys(AIRPORT_NAMES).map((code) => {
+  const codes = Object.keys(AIRPORT_NAMES);
+  const sharing = new Map<string, string[]>();
+  for (const code of codes) {
     const name = airportPlaceName(code) as string;
-    const phrase = foldPlace(name);
+    sharing.set(name, [...(sharing.get(name) ?? []), code]);
+  }
+  rows = codes.map((code) => {
+    const name = airportPlaceName(code) as string;
+    const phrases = spellings(foldPlace(name));
     // "O'Hare" answers to "ohare" and to "hare".
-    const apart = foldPlace(name.replace(/'/g, " "));
-    return { code, name, phrase, words: [...new Set(`${phrase} ${apart}`.split(" "))] };
+    const apart = spellings(foldPlace(name.replace(/'/g, " ")));
+    // One field under two codes (West Palm Beach's DJT and PBI) would be two
+    // rows that read alike: each names the other.
+    const twins = (sharing.get(name) ?? []).filter((c) => c !== code);
+    return {
+      code,
+      name: twins.length > 0 ? `${name} (also ${twins.join(", ")})` : name,
+      phrases,
+      squashed: phrases.map((p) => p.replace(/ /g, "")),
+      words: [...new Set([...phrases, ...apart].join(" ").split(" "))],
+    };
   });
   return rows;
+}
+
+/**
+ * The airports an alias names for this text. `whole` when the text is the
+ * alias itself, spaces and dots aside ("dc", "D.C.", "new york", "newyork");
+ * `started` when it begins one, from three letters on, so "new" already
+ * lists Newark but "d" does not list Dulles.
+ */
+function aliased(q: string): { whole: Set<string>; started: Set<string> } {
+  const whole = new Set<string>();
+  const started = new Set<string>();
+  const closed = q.replace(/ /g, "");
+  for (const { names, airports } of PLACE_ALIASES) {
+    for (const name of names) {
+      const into =
+        name.replace(/ /g, "") === closed
+          ? whole
+          : q.length >= 3 && name.startsWith(q)
+            ? started
+            : null;
+      if (into) for (const code of airports) into.add(code);
+    }
+  }
+  return { whole, started };
 }
 
 /** A three-letter code the table holds, or a K/P ICAO spelling of one. */
@@ -59,12 +118,20 @@ function tableCode(text: string): string | null {
   return null;
 }
 
+/** Text this short is not closed up: "san d" must not find Sandusky. */
+const SQUASH_MIN = 6;
+
 /**
- * Airports matching what was typed, best first: the code typed exactly, names
- * that start with the text, names with a later word that does ("hare",
- * "dulles"), then codes that start with it. Within a rank, the airports in
- * `prefer` come first in its order (the ones this airline flies most, so
- * "chicago" leads with O'Hare on United's site), then by name.
+ * Airports matching what was typed, best first: the code typed exactly, a
+ * place's other name typed whole ("dc", "new york", a city code), names that
+ * start with the text, names with a later word that does ("hare", "dulles")
+ * or that match with the spaces closed up ("la guardia", "newyork"), then
+ * codes that start with it. When the text is a place's other name, only that
+ * place and names that start the same way are offered: "new york" is the
+ * city's airports, not every airport in the state.
+ * Within a rank, the airports in `prefer` come first in its order (the ones
+ * this airline flies most, so "chicago" leads with O'Hare and "new york"
+ * with Newark on United's site), then by name.
  * `total` counts every match, so a caller can say how many it left out.
  */
 export function searchAirports(
@@ -77,13 +144,24 @@ export function searchAirports(
   const tokens = q.split(" ");
   const exact = tableCode(query);
   const codePrefix = tokens.length === 1 && q.length <= 3 ? q.toUpperCase() : null;
+  const squash = q.replace(/ /g, "");
+  const closedUp = squash.length >= SQUASH_MIN ? squash : null;
+  const { whole, started } = aliased(q);
   const ranked: Array<{ rank: number; row: Row }> = [];
   for (const row of table()) {
     let rank = -1;
     if (row.code === exact) rank = 0;
-    else if (row.phrase.startsWith(q)) rank = 1;
-    else if (tokens.every((t) => row.words.some((w) => w.startsWith(t)))) rank = 2;
-    else if (codePrefix && row.code.startsWith(codePrefix)) rank = 3;
+    else if (whole.has(row.code)) rank = 1;
+    else if (started.has(row.code) || row.phrases.some((p) => p.startsWith(q))) rank = 2;
+    else if (whole.size > 0) rank = -1;
+    else if (tokens.every((t) => row.words.some((w) => w.startsWith(t)))) rank = 3;
+    else if (
+      closedUp &&
+      (row.squashed.some((s) => s.startsWith(closedUp)) ||
+        row.words.some((w) => w.startsWith(closedUp)))
+    )
+      rank = 3;
+    else if (codePrefix && row.code.startsWith(codePrefix)) rank = 4;
     if (rank >= 0) ranked.push({ rank, row });
   }
   const place = (code: string) => {
@@ -111,11 +189,13 @@ export type AirportResolution =
 
 /**
  * What a box's text means when the form is sent. A code is read first and
- * exactly as before this existed: three letters the table holds, or a K/P
+ * exactly as before names existed: three letters the table holds, or a K/P
  * ICAO spelling, go through untouched (the ICAO form as typed, since the API
  * reads it). Other text is a name: one match is that airport, several are a
- * choice. Three or four letters that match nothing still go through as a
- * code, so the API answers for them as it always has.
+ * choice, and a place's other name that covers several airports is always a
+ * choice. Three letters that match nothing still go through as a code, since
+ * the data may hold an airport this table lacks; the plan address refuses
+ * one it does not know. Four letters that match nothing are no code at all.
  */
 export function resolveAirport(text: string, prefer: readonly string[] = []): AirportResolution {
   const typed = text.trim();
@@ -125,6 +205,6 @@ export function resolveAirport(text: string, prefer: readonly string[] = []): Ai
   const { matches, total } = searchAirports(typed, 8, prefer);
   if (total === 1) return { kind: "code", code: matches[0].code, name: matches[0].name };
   if (total > 1) return { kind: "choose", matches, total };
-  if (/^[A-Z]{3,4}$/.test(upper)) return { kind: "code", code: upper, name: null };
+  if (/^[A-Z]{3}$/.test(upper)) return { kind: "code", code: upper, name: null };
   return { kind: "none" };
 }

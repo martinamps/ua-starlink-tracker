@@ -9,6 +9,7 @@ import type { RouteFlightBoard } from "../api/route-flights";
 import { probLabel, probTier } from "../components/ui/format";
 import type { AirportBox, attachAirportBox } from "./airport-picker";
 import { esc } from "./esc";
+import { HINT_ERROR, HINT_PLAIN } from "./hint-classes";
 import { renderRouteFlights } from "./route-flights";
 
 interface Leg {
@@ -221,27 +222,48 @@ function wireAirportNames(
         }
         done();
       };
-      // Offline, or blocked: the boxes still take codes.
-      script.onerror = () => done();
+      // Offline, or blocked: the boxes still take codes, and the next name
+      // sent asks for the list again rather than failing until a reload.
+      script.onerror = () => {
+        script.remove();
+        loading = null;
+        done();
+      };
       document.head.append(script);
     });
     return loading;
   };
   form.addEventListener("focusin", load, { once: true });
   form.addEventListener("pointerdown", load, { once: true });
+  // The line under a box while the picker is not there to write it.
+  const say = (box: HTMLInputElement, text: string, error = false) => {
+    const { hint } = parts(box);
+    if (hint) {
+      hint.textContent = text;
+      hint.className = error ? HINT_ERROR : HINT_PLAIN;
+    }
+    if (error) box.setAttribute("aria-invalid", "true");
+    else box.removeAttribute("aria-invalid");
+  };
   return async (box) => {
     const typed = box.value.trim();
     // A code never waits on the table.
     if (!attached.has(box) && CODE_SHAPED.test(typed)) {
       sentAsTyped.set(box, box.value);
+      // A "did not load" line from an earlier try no longer applies.
+      say(box, "");
       return typed.toUpperCase();
+    }
+    if (!attached.has(box)) {
+      say(box, "Looking up airports…");
+      announce("Looking up airports.");
     }
     await load();
     const picker = attached.get(box);
     if (picker) return picker.resolve();
-    if (CODE_SHAPED.test(typed)) return typed.toUpperCase();
-    const { hint } = parts(box);
-    if (hint) hint.textContent = "The airport list did not load. Enter a 3-letter airport code.";
+    const failed = "The airport list did not load. Enter a 3-letter airport code, or try again.";
+    say(box, failed, true);
+    announce(failed);
     box.focus();
     return null;
   };
@@ -258,12 +280,12 @@ export function wireRoutePlanner(): void {
   const codeOf = wireAirportNames(form, [originInput, destInput]);
   const params = new URLSearchParams(window.location.search);
   if (params.get("origin") && params.get("destination")) {
-    originInput.value = (params.get("origin") ?? "").slice(0, NAME_MAX);
+    originInput.value = (params.get("origin") ?? "").toUpperCase().slice(0, NAME_MAX);
     destInput.value = (params.get("destination") ?? "").slice(0, NAME_MAX);
     if (dateInput) dateInput.value = params.get("date") ?? "";
   } else if (params.get("origin")) {
     // An airport page's "plan a trip from here": the origin arrives filled in.
-    originInput.value = (params.get("origin") ?? "").toUpperCase().slice(0, 4);
+    originInput.value = (params.get("origin") ?? "").toUpperCase().slice(0, NAME_MAX);
     destInput.focus();
   }
   // A newer search aborts the one in flight, so a slow answer can't land last.

@@ -46,10 +46,14 @@ function AirportField({
         />
         {/* Above the list, so "choose one" is not covered by the choices. */}
         <p id={`${id}-hint`} className="mt-1 text-xs text-muted empty:hidden" />
+        {/* Out of the Tab order: a list long enough to scroll is a Tab stop of
+            its own in Chromium and Firefox, and Tab from the box would land on
+            it as it hides, dropping the focus and the next keys. */}
         <div
           id={`${id}-list`}
           data-label={`${label}: matching airports`}
           className={AIRPORT_LIST}
+          tabIndex={-1}
           hidden
         />
       </div>

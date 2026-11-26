@@ -134,9 +134,8 @@ describe("what a box's text means when the form is sent", () => {
     }
   });
 
-  test("letters shaped like a code that nothing matches still go through", () => {
+  test("three letters that nothing matches still go through; the plan address refuses them", () => {
     expect(resolveAirport("qqx")).toEqual({ kind: "code", code: "QQX", name: null });
-    expect(resolveAirport("zzzz")).toEqual({ kind: "code", code: "ZZZZ", name: null });
   });
 
   test("a name with one airport is that airport", () => {

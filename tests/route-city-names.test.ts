@@ -20,6 +20,7 @@ import {
   airportCity,
   airportCityWithCode,
   airportPlaceName,
+  airportSpokenPlace,
   airportWithCode,
   routePairLabel,
   routePlaceNames,
@@ -221,7 +222,7 @@ describe("the route page", () => {
         const text = routeMetaDescription(AIRLINES.UA, b, ["UA100"], DESCRIPTION_MAX);
         expect(text.length, text).toBeLessThanOrEqual(DESCRIPTION_MAX);
         expect(text.endsWith("."), text).toBe(true);
-        const cities = `${airportCity(o)} to ${airportCity(dest)} nonstops`;
+        const cities = `${airportSpokenPlace(o)} to ${airportSpokenPlace(dest)} nonstops`;
         if (text.includes(routePairLabel(o, dest))) {
           if (text.includes("The next is")) whole++;
           else withoutNext++;
@@ -230,7 +231,7 @@ describe("the route page", () => {
           // The codes go only to make room for the next flight.
           expect(text).toContain("The next is UA100 on ");
           expect(text).not.toContain(`(${o})`);
-          expect(airportCity(o)).not.toBe(airportCity(dest));
+          expect(airportSpokenPlace(o)).not.toBe(airportSpokenPlace(dest));
         } else {
           codesOnly++;
           expect(text).toContain(`${o} to ${dest}`);
@@ -255,6 +256,39 @@ describe("the route page", () => {
     expect(text).toContain("San Francisco to Santa Barbara nonstops");
     expect(text).toContain("The next is UA100 on ");
     expect(text).not.toMatch(/\((SFO|SBA)\)/);
+  });
+
+  test("without codes, an airport of a city that has several is named", () => {
+    expect(airportSpokenPlace("IAD")).toBe("Washington Dulles");
+    expect(airportSpokenPlace("DCA")).toBe("Washington Reagan National");
+    // Elsewhere the code is the airport's name; here nothing else says it.
+    expect(airportSpokenPlace("JFK")).toBe("New York JFK");
+    expect(airportSpokenPlace("ord")).toBe("Chicago O'Hare");
+    // One airport in the table: the city alone, as before.
+    expect(airportSpokenPlace("DEN")).toBe("Denver");
+    expect(airportSpokenPlace("IAH")).toBe("Houston");
+    expect(airportSpokenPlace(UNKNOWN)).toBeNull();
+    const perCity = new Map<string, number>();
+    for (const [city] of Object.values(AIRPORT_NAMES)) {
+      perCity.set(city, (perCity.get(city) ?? 0) + 1);
+    }
+    for (const [code, [city, airport]] of Object.entries(AIRPORT_NAMES)) {
+      const spoken = airportSpokenPlace(code) as string;
+      expect(spoken.startsWith(city), code).toBe(true);
+      if ((perCity.get(city) ?? 0) > 1 && airport) expect(spoken, code).toContain(airport);
+      else expect(spoken, code).toBe(city);
+    }
+    // Every Dulles description that drops its codes says "Dulles".
+    let withoutCodes = 0;
+    for (const dest of Object.keys(AIRPORT_NAMES)) {
+      if (dest === "IAD") continue;
+      const b = { ...board("ORD", "DEN"), origin: "IAD", destination: dest };
+      const text = routeMetaDescription(AIRLINES.UA, b, ["UA100"], DESCRIPTION_MAX);
+      if (text.includes("(IAD)") || text.includes(`IAD to ${dest}`)) continue;
+      withoutCodes++;
+      expect(text, dest).toContain(`Washington Dulles to ${airportSpokenPlace(dest)} nonstops`);
+    }
+    expect(withoutCodes).toBeGreaterThan(0);
   });
 
   test("two airports of one city are never named without their codes", () => {

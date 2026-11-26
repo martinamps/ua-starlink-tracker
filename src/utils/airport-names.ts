@@ -633,6 +633,27 @@ export function airportCity(iata: string): string | null {
   return AIRPORT_NAMES[iata.toUpperCase()]?.[0] ?? null;
 }
 
+let airportsPerCity: Map<string, number> | null = null;
+
+/**
+ * The place for a sentence that prints no code: "Denver", but "Washington
+ * Dulles" and "New York JFK" where the table holds several airports of the
+ * city, since nothing else on the line says which. Null for a code the table
+ * lacks.
+ */
+export function airportSpokenPlace(iata: string): string | null {
+  const entry = AIRPORT_NAMES[iata.toUpperCase()];
+  if (!entry) return null;
+  if (!airportsPerCity) {
+    airportsPerCity = new Map();
+    for (const [city] of Object.values(AIRPORT_NAMES)) {
+      airportsPerCity.set(city, (airportsPerCity.get(city) ?? 0) + 1);
+    }
+  }
+  const [city, airport] = entry;
+  return airport && (airportsPerCity.get(city) ?? 0) > 1 ? `${city} ${airport}` : city;
+}
+
 /**
  * The place beside its code: "Chicago O'Hare (ORD)", "Denver (DEN)". An
  * airport people call by its code is not said twice: "New York (JFK)". A code

@@ -15,6 +15,7 @@ import {
   resolveAirport,
   searchAirports,
 } from "../utils/airport-search";
+import { HINT_ERROR, HINT_PLAIN } from "./hint-classes";
 
 /** What the planner asks of a box when the form is sent. */
 export interface AirportBox {
@@ -45,8 +46,6 @@ const OPTION_NAME = "min-w-0 break-words";
 const OPTION_CODE = "shrink-0 font-mono text-xs text-secondary";
 // On the highlight the quieter grey falls under 4.5:1.
 const OPTION_CODE_ACTIVE = "shrink-0 font-mono text-xs text-primary";
-export const HINT_PLAIN = "mt-1 text-xs text-muted empty:hidden";
-export const HINT_ERROR = "mt-1 text-xs text-danger empty:hidden";
 
 export function attachAirportBox({
   input,
@@ -120,7 +119,11 @@ export function attachAirportBox({
 
   const search = () => {
     const text = input.value.trim();
-    if (!text) return close();
+    if (!text) {
+      // An emptied box leaves no count behind for a screen reader to find.
+      announce("");
+      return close();
+    }
     const { matches: found, total } = searchAirports(text, OPTIONS_SHOWN, prefer);
     show(found, total);
     if (total === 0 && text.length > 4) announce("No airport matches.");
