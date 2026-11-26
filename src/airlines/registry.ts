@@ -893,9 +893,12 @@ const AIRLINE_DEFS = {
       // in a bullet on what the A330 refit "will deliver", so it is not said
       // of today here.
       claim: "free Starlink Wi-Fi is available across all its transatlantic routes",
-      // Its release of March 29, 2026: "beginning with aircraft flying to
-      // North America, followed by those serving European destinations".
-      beyond: "It has not said that of its European flights",
+      // Its release of November 23, 2026: "Already available on select
+      // European services, Starlink is expected to extend across 29
+      // short-haul aircraft in early 2027". It names no routes, so a European
+      // flight still gets no yes or no.
+      beyond:
+        "Of European flights, it said on Nov 23, 2026 that Starlink is already on select services and is expected across 29 short-haul aircraft in early 2027, not that every flight has it",
       // Ireland only: our own narrowing, never the airline's words, and the
       // answer says so. Aer Lingus sells UK flights too, but its own
       // transatlantic flights from Manchester were reported to end in March
@@ -917,9 +920,9 @@ const AIRLINE_DEFS = {
     },
     rollout: {
       status: "in_progress",
-      statusLabel: "On all transatlantic routes",
+      statusLabel: "All transatlantic routes; short-haul begun",
       phaseNote:
-        "Aer Lingus said on November 18, 2026 that Starlink is available across all its transatlantic routes; it has not said that of its European flights.",
+        "Aer Lingus said on November 18, 2026 that Starlink is available across all its transatlantic routes. On November 23, 2026 it said Starlink is already on select European services and is expected across 29 short-haul aircraft in early 2027; it has not said that every European flight has it.",
       // No roster at all, so no count is ever shown beside a denominator.
       rosterIsProgramScope: true,
     },
