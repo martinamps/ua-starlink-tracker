@@ -419,7 +419,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "53 aircraft connected as of September 2026, now installing about 14 a month, toward all 232 777s and A380s by mid-2027. Installs began in November 2025. Free in every cabin, no login.",
+      "74 aircraft connected as of November 19, 2026, with 10 to 12 more a month, toward all 232 777s and A380s. Installs began in November 2025. Free in every cabin, no login.",
     facts: [
       {
         fact: "Emirates began Starlink installs on its Boeing 777s in November 2025 and will equip its entire in-service fleet of 232 777s and A380s by mid-2027, at roughly 14 aircraft per month, with installation on the A380 fleet commencing in February 2026. Access is free in all cabins with no payment or Skywards login required.",
@@ -447,6 +447,23 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "Focus (Hi Dubai)",
           url: "https://focus.hidubai.com/emirates-expands-starlink-connectivity-and-network-capacity-ahead-of-winter-season/",
+        },
+        superseded: true,
+      },
+      {
+        fact: "Emirates has introduced Starlink on 65 aircraft and plans to add the service to between 10 and 12 aircraft a month, Deputy President and Chief Commercial Officer Adnan Kazim told CNBC Arabia.",
+        asOf: "2026-10-26",
+        source: {
+          label: "Gulf News",
+          url: "https://gulfnews.com/business/aviation/emirates-equips-65-aircraft-with-starlink-plans-to-add-1012-more-each-month-1.500724643",
+        },
+      },
+      {
+        fact: "Starlink Wi-Fi is now on 74 Emirates aircraft and is complimentary for customers in all cabins, on both seatback screens and personal devices.",
+        asOf: "2026-11-19",
+        source: {
+          label: "Emirates media centre",
+          url: "https://www.emirates.com/media-centre/emirates-tops-times-inaugural-worlds-best-airlines-2027-rankings/",
         },
       },
     ],
@@ -958,14 +975,13 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Southwest",
     iata: "WN",
     status: "installing",
-    statusLabel: "First aircraft flying",
-    // One aircraft out of ~800: an unqualified "Yes" would be the wrong answer
-    // for all but a rounding error of Southwest passengers.
-    // Dated rather than counted: "So Far" goes stale at the next install, and
-    // no primary source has published a count since the first flight.
-    headline: "Does Southwest Have Starlink? Rolling Out — First Aircraft Flew June 22",
+    statusLabel: "Installing",
+    // 47 of ~800 aircraft at the last count: an unqualified "Yes" would be the
+    // wrong answer for most Southwest passengers. The headline carries the
+    // dated plan rather than the count, which goes stale at the next install.
+    headline: "Does Southwest Have Starlink? Rolling Out — Whole Fleet by Fall 2027",
     summary:
-      "One confirmed Starlink aircraft (N8543Z, first flight June 22, 2026). Southwest targets 300+ of its 800-plus aircraft by the end of 2026, not including its Viasat-equipped jets. Free for Rapid Rewards members via T-Mobile.",
+      "47 aircraft had Starlink on October 15, 2026, with more than 200 expected by the end of 2026 and every aircraft, including the older 737-700s, by fall 2027. Free for Rapid Rewards members via T-Mobile.",
     facts: [
       {
         // The type is not in this source — Upgraded Points names the tail and
@@ -978,6 +994,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           label: "Upgraded Points",
           url: "https://upgradedpoints.com/news/southwest-airlines-first-starlink-equipped-flight/",
         },
+        superseded: true,
       },
       {
         fact: "Southwest's first Starlink service was flown by a Boeing 737. Wi-Fi is free for Rapid Rewards members under Southwest's T-Mobile partnership ($8 per device per flight otherwise). Aircraft not yet retrofitted keep Southwest's older Wi-Fi providers, Viasat and Anuvu.",
@@ -996,6 +1013,15 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "Via Satellite",
           url: "https://www.satellitetoday.com/mobility/2026/02/12/southwest-airlines-plans-to-put-starlink-on-more-than-300-aircraft/",
+        },
+        superseded: true,
+      },
+      {
+        fact: "Southwest Airlines expects to install Starlink on every aircraft by fall 2027, including its older Boeing 737-700s, replacing its Anuvu and Viasat Wi-Fi. COO Andrew Watterson said 47 aircraft had Starlink, with 70 expected by the end of October 2026 and more than 200 by the end of 2026.",
+        asOf: "2026-10-15",
+        source: {
+          label: "CAPA, reporting Aviation Week",
+          url: "https://centreforaviation.com/news/southwest-airlines-to-complete-starlink-wifi-installation-by-autumn-2027-1376299",
         },
       },
     ],
