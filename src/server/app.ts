@@ -275,6 +275,7 @@ import type {
   RouteSchedule,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
+import { airportCityWithCode, routePairLabel } from "../utils/airport-names";
 import {
   airportLocalDate,
   airportTimezone,
@@ -3890,13 +3891,34 @@ function routeFlightNumbers(ctx: RequestContext, board: RouteFlightBoard): strin
   return [...new Set([...listed, ...board.flights.map((f) => f.flight_number)])];
 }
 
-/** The search snippet: the board's own facts, never a count it doesn't show. */
-function routeMetaDescription(
+/**
+ * The search snippet: the board's own facts, never a count it doesn't show.
+ * The pair is named by city where that fits whole under `max`; a long pair
+ * gives up the next-flight sentence first (the page gives it), then the cities.
+ */
+export function routeMetaDescription(
   cfg: AirlineConfig,
   board: RouteFlightBoard,
-  flightNumbers: string[]
+  flightNumbers: string[],
+  max = META_DESCRIPTION_MAX
 ): string {
-  const pair = `${board.origin} to ${board.destination}`;
+  const named = routePairLabel(board.origin, board.destination);
+  const codes = `${board.origin} to ${board.destination}`;
+  return (
+    [
+      routeDescription(cfg, board, flightNumbers, named, true),
+      routeDescription(cfg, board, flightNumbers, named, false),
+    ].find((t) => t.length <= max) ?? routeDescription(cfg, board, flightNumbers, codes, true)
+  );
+}
+
+function routeDescription(
+  cfg: AirlineConfig,
+  board: RouteFlightBoard,
+  flightNumbers: string[],
+  pair: string,
+  nextFlight: boolean
+): string {
   const n = board.flights.length;
   if (n === 0) {
     if (flightNumbers.length === 0)
@@ -3926,7 +3948,28 @@ function routeMetaDescription(
   }
   const at = zonedDeparture(assigned[0].t, airportTimezone(board.origin));
   const k = assigned.length;
-  return `${fmt(k)} of ${fmt(n)} ${cfg.shortName} ${pair} nonstops ${k === 1 ? "has" : "have"} a Starlink plane assigned in the next ${DEPARTURE_WINDOW_HOURS} hours. The next is ${assigned[0].fn} on ${at.date} at ${at.time}.`;
+  const count = `${fmt(k)} of ${fmt(n)} ${cfg.shortName} ${pair} nonstops ${k === 1 ? "has" : "have"} a Starlink plane assigned in the next ${DEPARTURE_WINDOW_HOURS} hours.`;
+  return nextFlight ? `${count} The next is ${assigned[0].fn} on ${at.date} at ${at.time}.` : count;
+}
+
+/**
+ * The route page's <title>: the pair by city and code, as people search it
+ * ("United Chicago to Denver Starlink"). The question the H1 asks does not
+ * fit with two cities in it, so the title states the same thing shorter, and
+ * a pair too long for any wording keeps the old question with its codes.
+ */
+export function routeTitle(airline: string, origin: string, destination: string): string {
+  const named = routePairLabel(origin, destination);
+  const codes = `${origin} to ${destination}`;
+  const question = `Which ${airline} ${codes} Flights Have Starlink?`;
+  if (named === codes) return question;
+  return (
+    [
+      `${airline} ${named} Flights With Starlink`,
+      `${airline} ${named} Starlink Flights`,
+      `${named} Starlink Flights`,
+    ].find((t) => t.length <= TITLE_MAX) ?? question
+  );
 }
 
 function routePageMeta(
@@ -3937,19 +3980,19 @@ function routePageMeta(
 ): PageMeta {
   const { origin, destination } = board;
   const pair = `${origin} to ${destination}`;
-  // The question the H1 asks, with the carrier, which searchers type.
-  const question = `Which ${cfg.shortName} ${pair} Flights Have Starlink?`;
+  const named = routePairLabel(origin, destination);
   const description = routeMetaDescription(cfg, board, flightNumbers);
   return {
-    siteTitle: question,
+    siteTitle: routeTitle(cfg.shortName, origin, destination),
     siteDescription: description,
     keywords: `${origin} ${destination} starlink, ${pair} wifi, ${cfg.shortName.toLowerCase()} ${origin} ${destination} starlink`,
-    ogTitle: question,
+    // The question the H1 asks, with the carrier; a share card has room for it.
+    ogTitle: `Which ${cfg.shortName} ${named} Flights Have Starlink?`,
     ogDescription: description,
     pageJsonLd: jsonLdBlock({
       "@context": "https://schema.org",
       "@type": "ItemList",
-      name: `${cfg.name} flights on ${origin} → ${destination}`,
+      name: `${cfg.name} flights on ${airportCityWithCode(origin)} → ${airportCityWithCode(destination)}`,
       numberOfItems: flightNumbers.length,
       itemListElement: flightNumbers.map((fn, i) => ({
         "@type": "ListItem",

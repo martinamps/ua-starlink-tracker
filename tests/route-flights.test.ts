@@ -13,7 +13,8 @@ import { departureLocalDate } from "../src/database/assignment-log";
 import { getSitemapRoutes } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { DAY_SEC, isoDateDaysAgo, unixNow } from "../src/database/sql/windows";
-import { createApp } from "../src/server/app";
+import { createApp, routeMetaDescription, routeTitle } from "../src/server/app";
+import { routePairLabel } from "../src/utils/airport-names";
 import {
   addFleet,
   addFlight,
@@ -197,10 +198,10 @@ describe("route page", () => {
     const res = await page(`/route-planner/${origin}/${destination}`);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain(
-      `<title>Which ${AIRLINES.UA.shortName} ${origin} to ${destination} Flights Have Starlink?`
+    expect(body).toContain(`<title>${routeTitle(AIRLINES.UA.shortName, origin, destination)}<`);
+    expect(body.replace(/\u00a0/g, " ")).toContain(
+      `Which ${routePairLabel(origin, destination)} flights have Starlink?`
     );
-    expect(body).toContain(`Which ${origin} to ${destination} flights have Starlink?`);
     expect(body).toContain('id="all-flights"');
     expect(body).toContain("Nonstop flights");
     expect(body).not.toContain("Flight numbers on this route");
@@ -567,9 +568,11 @@ describe("board behavior (synthetic)", () => {
     expect(assigned.map((f) => f.flight_number)).toEqual(["UA100"]);
     expect(desc).toMatch(
       new RegExp(
-        `^1 of ${board().flights.length} United SFO to ORD nonstops has a Starlink plane assigned in the next 48 hours\\. The next is UA100 on `
+        `^1 of ${board().flights.length} United San Francisco \\(SFO\\) to Chicago \\(ORD\\) nonstops has a Starlink plane assigned in the next 48 hours\\.( The next is UA100 on .*)?$`
       )
     );
+    // The next flight is in the sentence wherever the whole of it fits.
+    expect(routeMetaDescription(AIRLINES.UA, board(), [], 400)).toMatch(/ The next is UA100 on /);
   });
 
   test("each host sees only its own airline's flights", async () => {

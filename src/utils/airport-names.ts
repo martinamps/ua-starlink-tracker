@@ -645,3 +645,30 @@ export function airportWithCode(iata: string): string {
   const [city, airport] = entry;
   return `${airport && airport !== code ? `${city} ${airport}` : city} (${code})`;
 }
+
+/**
+ * The city beside its code, without the airport's own name: "Chicago (ORD)",
+ * "Houston (IAH)". For a line that names two airports, where "Houston Bush
+ * Intercontinental (IAH)" twice over would not fit; the code still tells
+ * O'Hare from Midway. A code the table lacks comes back alone.
+ */
+export function airportCityWithCode(iata: string): string {
+  const code = iata.toUpperCase();
+  const city = airportCity(code);
+  return city ? `${city} (${code})` : code;
+}
+
+/** "Chicago (ORD) to Denver (DEN)": a route as a reader would say it. */
+export function routePairLabel(origin: string, destination: string): string {
+  return `${airportCityWithCode(origin)} to ${airportCityWithCode(destination)}`;
+}
+
+/**
+ * "Chicago O'Hare to Denver", to print beside a pair of codes. Null unless
+ * both ends have a name: half a pair beside two codes reads as a mistake.
+ */
+export function routePlaceNames(origin: string, destination: string): string | null {
+  const from = airportPlaceName(origin);
+  const to = airportPlaceName(destination);
+  return from && to ? `${from} to ${to}` : null;
+}
