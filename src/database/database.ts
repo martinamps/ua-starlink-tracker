@@ -87,6 +87,7 @@ import { airportCountry } from "../utils/airport-geo";
 import { DB_PATH } from "../utils/constants";
 import { excludeMassWriteDays } from "../utils/install-rate";
 import { debug, info, error as logError, warn } from "../utils/logger";
+import { isAirportCode } from "../utils/outside-text";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
 import {
@@ -1960,15 +1961,39 @@ export function getFleetRoster(db: Database, airline?: AirlineFilter): FleetRost
 // floor at the insert so the invariant lives in the table, not on every read.
 const MIN_VALID_DEPARTURE_TS = 946684800; // 2000-01-01
 
-export function updateFlights(
-  db: Database,
-  tailNumber: string,
-  flights: Pick<
-    Flight,
-    "flight_number" | "departure_airport" | "arrival_airport" | "departure_time" | "arrival_time"
-  >[]
-) {
+type FlightWrite = Pick<
+  Flight,
+  "flight_number" | "departure_airport" | "arrival_airport" | "departure_time" | "arrival_time"
+>;
+
+/**
+ * The airports are the aircraft lookup's text, and route pages, /api/routes,
+ * check-flight, MCP, the feeds and .ics all print what is stored here, so the
+ * check sits at the write: trimmed, and a leg without two airport codes is
+ * skipped, never stored with an airport blanked. The lookup's parse already
+ * drops a leg with no airport, so no reader handles an empty one: it would
+ * print "SFO → ", fold into another leg's departure slot and log a departure
+ * at no airport.
+ */
+function withAirportCodes(flights: readonly FlightWrite[]): FlightWrite[] {
+  const out: FlightWrite[] = [];
+  for (const f of flights) {
+    const departure_airport = f.departure_airport?.trim();
+    const arrival_airport = f.arrival_airport?.trim();
+    if (!isAirportCode(departure_airport) || !isAirportCode(arrival_airport)) continue;
+    out.push({ ...f, departure_airport, arrival_airport });
+  }
+  return out;
+}
+
+export function updateFlights(db: Database, tailNumber: string, given: FlightWrite[]) {
   const now = unixNow();
+  const flights = withAirportCodes(given);
+  if (flights.length < given.length) {
+    info(
+      `updateFlights ${tailNumber}: dropped ${given.length - flights.length} rows without airport codes`
+    );
+  }
   const dated = flights.filter((f) => f.departure_time >= MIN_VALID_DEPARTURE_TS);
   if (dated.length < flights.length) {
     info(`updateFlights ${tailNumber}: dropped ${flights.length - dated.length} pre-2000 rows`);
