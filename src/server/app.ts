@@ -339,6 +339,8 @@ import { recordWatchCtaShown, sameDayAlternativesField, watchFeed } from "./watc
 import {
   type AirportBoard,
   airportMetaDescription,
+  airportQuestion,
+  airportTitle,
   buildAirportBoard,
   indexableAirports,
 } from "../api/airport-board";
@@ -4668,16 +4670,14 @@ function busiestIndexableAirport(reader: ScopedReader): string | undefined {
 }
 
 function airportPageMeta(ctx: RequestContext, cfg: AirlineConfig, board: AirportBoard): PageMeta {
-  const { airport } = board;
-  // The question the H1 asks, with the carrier, as on the route pages.
-  const question = `Which ${cfg.shortName} Flights From ${airport} Have Starlink?`;
-  const description = airportMetaDescription(board);
+  const { airport, place } = board;
+  const description = airportMetaDescription(board, META_DESCRIPTION_MAX);
   const routes = board.destinations.filter((d) => d.linkable);
   return {
-    siteTitle: question,
+    siteTitle: airportTitle(board),
     siteDescription: description,
     keywords: `${airport} starlink flights, ${cfg.shortName.toLowerCase()} ${airport} starlink, ${airport} flights with starlink wifi`,
-    ogTitle: question,
+    ogTitle: airportQuestion(board),
     ogDescription: description,
     // Structured data only where the page indexes, as on the type pages.
     ...(board.indexable && routes.length > 0
@@ -4685,7 +4685,7 @@ function airportPageMeta(ctx: RequestContext, cfg: AirlineConfig, board: Airport
           pageJsonLd: jsonLdBlock({
             "@context": "https://schema.org",
             "@type": "ItemList",
-            name: `${cfg.name} routes from ${airport} flown by Starlink planes`,
+            name: `${cfg.name} routes from ${place} flown by Starlink planes`,
             numberOfItems: routes.length,
             itemListElement: routes.map((d, i) => ({
               "@type": "ListItem",

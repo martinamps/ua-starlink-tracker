@@ -160,7 +160,7 @@ describe("parseAirportPath", () => {
 describe("/routes/{airport}", () => {
   test("lists the window's Starlink departures, and only those", async () => {
     const body = await page("/routes/DEN");
-    expect(body).toContain("Which flights from DEN have Starlink?");
+    expect(body).toContain("Which flights from Denver (DEN) have Starlink?");
     expect(body).toContain(`<link rel="canonical" href="https://${UA}/routes/DEN"`);
     // The operating spelling UAL200 is the marketed UA200.
     for (const fn of ["UA100", "UA200", "UA101"]) {
@@ -192,7 +192,7 @@ describe("/routes/{airport}", () => {
       starlink: 3 * (AIRPORT_HISTORY_DAYS - 1),
     });
     expect(airportDek(board)).toBe(
-      "3 United departures from DEN in the next 48 hours are on Starlink planes, to 2 destinations."
+      "3 United departures from Denver (DEN) in the next 48 hours are on Starlink planes, to 2 destinations."
     );
   });
 
@@ -271,7 +271,7 @@ describe("index rule", () => {
     const body = await page("/routes/ORD");
     expect(robots(body)).toBe("noindex, follow");
     expect(body).toContain(
-      "No Starlink plane is assigned to a United departure from ORD in the next 48 hours, and none flew from here in the last 6 days."
+      "No Starlink plane is assigned to a United departure from Chicago O&#x27;Hare (ORD) in the next 48 hours, and none flew from here in the last 6 days."
     );
   });
 });

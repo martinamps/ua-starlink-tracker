@@ -4,11 +4,26 @@ import {
   type AirportRankRow,
   type AirportRanking,
 } from "../api/airport-ranking";
+import { airportPlaceName } from "../utils/airport-names";
 import { Panel, SectionTitle, Td, Th } from "./layout";
 import { fmt, monthDay, utcDateTime, weekdayDate } from "./ui/format";
 import { Meter } from "./ui/meter";
 
 const CODE_LINK = "font-mono text-primary hover:text-accent transition-colors";
+
+/** The city beside the code, cut short rather than squeezing the bar. */
+function PlaceName({ airport }: { airport: string }) {
+  const name = airportPlaceName(airport);
+  if (!name) return null;
+  return (
+    <span
+      title={name}
+      className="ml-2 inline-block max-w-32 truncate align-bottom text-xs text-secondary sm:max-w-40"
+    >
+      {name}
+    </span>
+  );
+}
 
 function RankTable({
   rows,
@@ -40,6 +55,7 @@ function RankTable({
               <a href={`/routes/${r.airport}`} className={CODE_LINK}>
                 {r.airport}
               </a>
+              <PlaceName airport={r.airport} />
               {r.date !== mainDate && (
                 <div className="whitespace-nowrap text-xs text-muted">{monthDay(r.date)}</div>
               )}
