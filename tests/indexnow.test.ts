@@ -7,14 +7,24 @@
 import type { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
+import {
+  AIRLINE_FACTS,
+  type AirlineFactsEntry,
+  ROLLOUT_TIMELINES,
+  type RolloutTimeline,
+} from "../src/airlines/rollout-facts";
 import { COUNTERS, metrics } from "../src/observability/metrics";
 import {
   DAILY_URL_CAP,
+  FACT_PAGES_PER_PASS,
+  FACT_TAIL_RESERVE,
   type IndexNow,
   WAITING_MAX_AGE_SEC,
   WAITING_MAX_TAILS,
   createIndexNow,
   ensureIndexNowKey,
+  factChangePages,
+  factPrints,
   indexNowOn,
   pingIndexNow,
   readIndexNowKey,
@@ -926,5 +936,228 @@ describe("hostile and odd input", () => {
     });
     expect(await broken.submit("UA", ["/"])).toBe("noop");
     expect(received).toEqual([]);
+  });
+});
+
+describe("a changed rollout fact", () => {
+  // The facts and timelines the submitter sees: copies of the deployed ones,
+  // which a test edits the way a deploy would.
+  let facts: AirlineFactsEntry[];
+  let timelines: Partial<Record<string, RolloutTimeline>>;
+  let factsNow: IndexNow;
+
+  const entry = (slug: string) => facts.find((e) => e.slug === slug) as AirlineFactsEntry;
+  const addDated = (slug: string, extra: Partial<AirlineFactsEntry["facts"][number]> = {}) =>
+    entry(slug).facts.push({
+      fact: `A new dated fact for ${slug}.`,
+      asOf: "2026-11-26",
+      source: { label: "Test", url: `https://example.com/${slug}` },
+      ...extra,
+    } as AirlineFactsEntry["facts"][number]);
+
+  beforeEach(() => {
+    facts = structuredClone(AIRLINE_FACTS);
+    timelines = structuredClone(ROLLOUT_TIMELINES);
+    factsNow = build({ facts: () => facts, timelines: () => timelines });
+  });
+
+  test("the first look records the facts and submits nothing", async () => {
+    await factsNow.announceFactChanges();
+    minutes(10);
+    await factsNow.announceFactChanges();
+    expect(received).toEqual([]);
+    expect(counted).toEqual([]);
+  });
+
+  test("an added dated fact announces the hub timeline and that airline's page, once", async () => {
+    await factsNow.announceFactChanges();
+    addDated("emirates");
+    await factsNow.announceFactChanges();
+
+    expect(received.length).toBe(1);
+    expect(pathsFor(HUB)).toEqual(["/timeline", "/airlines/emirates"]);
+    expect(counted).toEqual([
+      { vendor: "indexnow", type: "fact", airline: "all", status: "success" },
+    ]);
+
+    minutes(30);
+    await factsNow.announceFactChanges();
+    await factsNow.announceFactChanges();
+    expect(received.length).toBe(1);
+  });
+
+  test("an undated fact changes the airline page, not the timeline", async () => {
+    await factsNow.announceFactChanges();
+    entry("lufthansa").facts.push({
+      fact: "A checked fact.",
+      accessed: "2026-11-26",
+      source: { label: "Test", url: "https://example.com/lh" },
+    });
+    await factsNow.announceFactChanges();
+    expect(pathsFor(HUB)).toEqual(["/airlines/lufthansa"]);
+  });
+
+  test("re-reading an undated source (only accessed moves) is not news", async () => {
+    const checked = facts.flatMap((e) => e.facts).find((f) => f.accessed);
+    expect(checked).toBeDefined();
+    await factsNow.announceFactChanges();
+    (checked as { accessed: string }).accessed = "2099-01-01";
+    await factsNow.announceFactChanges();
+    expect(received).toEqual([]);
+  });
+
+  test("a replaced fact announces the type pages it left and the one that replaced it", async () => {
+    // Enough 737-900s that the type page serves.
+    for (let i = 0; i < 6; i++) listUnited(`N4${i}0UA`);
+    await factsNow.announceFactChanges();
+    const united = entry("united");
+    const current = united.facts.find((f) => !f.superseded && f.aircraftPages?.includes("*"));
+    expect(current).toBeDefined();
+    (current as { superseded?: true }).superseded = true;
+    addDated("united", { aircraftPages: ["737-900"] });
+    await factsNow.announceFactChanges();
+
+    const own = pathsFor(UA);
+    expect(own).toContain("/fleet/737-900");
+    for (const p of own) expect(p.startsWith("/fleet/"), p).toBe(true);
+    // United's hub page is kept out of the index (its own site is live), so
+    // only the timeline goes out there.
+    expect(pathsFor(HUB)).toEqual(["/timeline"]);
+    for (const t of counted) expect(t.type).toBe("fact");
+    expect(counted.find((t) => t.airline === "united")?.status).toBe("success");
+  });
+
+  test("a new milestone on an airline's own timeline announces that site's /timeline", async () => {
+    await factsNow.announceFactChanges();
+    timelines.UA?.milestones.push({
+      date: "2026-11-26",
+      title: "A test milestone",
+      fact: "Something happened.",
+      source: { label: "Test", url: "https://example.com/m", published: "2026-11-26" },
+    });
+    await factsNow.announceFactChanges();
+    expect(pathsFor(UA)).toEqual(["/timeline"]);
+    expect(forHost(HUB)).toEqual([]);
+  });
+
+  test("which pages a change touches: hub, type pages, and every type page for '*'", () => {
+    const before = factPrints(facts, timelines);
+    addDated("united", { aircraftPages: ["*"] });
+    addDated("iag");
+    const pages = factChangePages(before, factPrints(facts, timelines));
+    const hub = pages.get("ALL") ?? [];
+    expect(hub[0]).toBe("/timeline");
+    expect([...hub].sort()).toEqual(["/airlines/iag", "/airlines/united", "/timeline"]);
+    const own = pages.get("UA") ?? [];
+    expect(own.length).toBeGreaterThan(5);
+    for (const p of own) expect(p).toMatch(/^\/fleet\/[a-z0-9-]+$/);
+    expect(factChangePages(before, before).size).toBe(0);
+  });
+
+  test("a removed airline is a change to the hub timeline", async () => {
+    await factsNow.announceFactChanges();
+    facts = facts.filter((e) => e.slug !== "emirates");
+    await factsNow.announceFactChanges();
+    // Its own page would 404 after such a deploy, and the self-check drops
+    // it; here the app still serves the deployed facts, so only the timeline
+    // is pinned.
+    expect(pathsFor(HUB)[0]).toBe("/timeline");
+  });
+
+  test("a deploy that touches many airlines goes out a few pages a pass, each once", async () => {
+    await factsNow.announceFactChanges();
+    const untracked = facts.filter((e) => !e.trackedCode).slice(0, 15);
+    for (const e of untracked) addDated(e.slug);
+    for (let i = 0; i < 4; i++) {
+      await factsNow.announceFactChanges();
+      minutes(10);
+    }
+    for (const s of received) expect(s.urlList.length).toBeLessThanOrEqual(FACT_PAGES_PER_PASS);
+    const hub = pathsFor(HUB);
+    expect(new Set(hub).size).toBe(hub.length);
+    expect(hub[0]).toBe("/timeline");
+    for (const e of untracked) expect(hub).toContain(`/airlines/${e.slug}`);
+  });
+
+  test("fact sends leave the tails their share of the daily cap", async () => {
+    await factsNow.announceFactChanges();
+    for (const e of facts.filter((e) => !e.trackedCode)) addDated(e.slug);
+    for (let i = 0; i < 12; i++) {
+      await factsNow.announceFactChanges();
+      minutes(10);
+    }
+    const sent = forHost(HUB).reduce((n, s) => n + s.urlList.length, 0);
+    expect(sent).toBeLessThanOrEqual(DAILY_URL_CAP - FACT_TAIL_RESERVE);
+    expect(counted.some((t) => t.status === "shed")).toBe(true);
+
+    // A new tail still gets the hub's room the same day.
+    await indexNow.announceNewTails();
+    listUnited("N502GJ");
+    await indexNow.announceNewTails();
+    expect(counted.filter((t) => t.type === "ping").map((t) => t.status)).toEqual([
+      "success",
+      "success",
+    ]);
+
+    // The rest waits, and goes out once the day has passed.
+    minutes(25 * 60);
+    await factsNow.announceFactChanges();
+    expect(forHost(HUB).reduce((n, s) => n + s.urlList.length, 0)).toBeGreaterThan(sent);
+  });
+
+  test("a failed send is retried, and once accepted never again", async () => {
+    await factsNow.announceFactChanges();
+    addDated("emirates");
+    answer = { status: 500 };
+    await factsNow.announceFactChanges();
+    expect(received.length).toBe(1);
+    answer = { status: 200 };
+    minutes(5);
+    await factsNow.announceFactChanges();
+    expect(received.length).toBe(1);
+    minutes(10);
+    // A restart in between: a new submitter on the same database.
+    const restarted = build({ facts: () => facts, timelines: () => timelines });
+    await restarted.announceFactChanges();
+    expect(received.length).toBe(2);
+    expect(received[1].urlList.map((u) => u.slice(`https://${HUB}`.length))).toEqual([
+      "/timeline",
+      "/airlines/emirates",
+    ]);
+    minutes(30);
+    await restarted.announceFactChanges();
+    expect(received.length).toBe(2);
+  });
+
+  test("a waiting change falls off after the longest wait", async () => {
+    await factsNow.announceFactChanges();
+    addDated("emirates");
+    answer = { status: 403 };
+    await factsNow.announceFactChanges();
+    minutes(8 * 24 * 60);
+    answer = { status: 200 };
+    await factsNow.announceFactChanges();
+    expect(received.length).toBe(1);
+  });
+
+  test("broken records in the database are survived: it records again, sends nothing", async () => {
+    await factsNow.announceFactChanges();
+    db.query("UPDATE meta SET value = '{not json' WHERE key LIKE 'ALL:indexnowFacts%'").run();
+    addDated("emirates");
+    await factsNow.announceFactChanges();
+    expect(received).toEqual([]);
+    addDated("lufthansa");
+    await factsNow.announceFactChanges();
+    expect(pathsFor(HUB)).toEqual(["/timeline", "/airlines/lufthansa"]);
+  });
+
+  test("the deployed facts are what an unconfigured submitter reads", async () => {
+    await indexNow.announceFactChanges();
+    await indexNow.announceFactChanges();
+    expect(received).toEqual([]);
+    const stored = db.query("SELECT value FROM meta WHERE key = 'ALL:indexnowFacts'").get() as {
+      value: string;
+    } | null;
+    expect(Object.keys(JSON.parse(stored?.value ?? "{}"))).toContain("facts:UA:united");
   });
 });

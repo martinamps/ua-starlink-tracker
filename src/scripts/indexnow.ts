@@ -12,14 +12,22 @@
  * send. Until then it waits in the database (so a restart keeps it) and goes
  * out, whole and once, at the first later pass the site has room for.
  *
+ * A rollout fact (src/airlines/rollout-facts.ts) that was added, edited or
+ * replaced is news too, for the hub's /timeline and the pages that show it.
+ * Facts live in code, so they change at a deploy: each pass compares them
+ * with what was last recorded and queues the pages of what differs. The
+ * first pass only records, so a deploy of this feature announces nothing.
+ *
  * Off unless NODE_ENV=production with jobs enabled; INDEXNOW_DISABLED=1 (or
  * "true") turns it off there too, key file included.
  */
 
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { normalizeAircraftType } from "../airlines/aircraft-families";
-import { aircraftPageForFamily } from "../airlines/aircraft-pages";
+import { aircraftPageForFamily, aircraftPagesFor } from "../airlines/aircraft-pages";
 import {
+  AIRLINES,
   type AirlineCode,
   type AirlineConfig,
   type SiteConfig,
@@ -28,8 +36,19 @@ import {
   isHubContent,
   siteForAirline,
 } from "../airlines/registry";
+import {
+  AIRLINE_FACTS,
+  type AirlineFactsEntry,
+  ROLLOUT_TIMELINES,
+  type RolloutTimeline,
+} from "../airlines/rollout-facts";
 import { getEquippedTails, getMeta, getRecentInstalls, setMeta } from "../database/database";
-import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
+import {
+  COUNTERS,
+  metrics,
+  normalizeAirlineTag,
+  normalizeScopeTag,
+} from "../observability/metrics";
 import { info, error as logError, warn } from "../utils/logger";
 
 export const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
@@ -61,6 +80,17 @@ export const WAITING_MAX_AGE_SEC = 7 * DAY_SEC;
  * not queued (the summary pages the others send carry them too). */
 export const WAITING_MAX_TAILS = 50;
 
+/** Fact pages one site sends in one pass. A deploy that touches many
+ * airlines' facts goes out over a few passes instead of one burst. */
+export const FACT_PAGES_PER_PASS = 10;
+/** Room under the daily cap a fact send leaves for new tails: they are the
+ * news only this job carries, while a fact page also reaches the sitemap's
+ * lastmod. */
+export const FACT_TAIL_RESERVE = 20;
+/** Fact pages one site may have waiting; past it the rest are left to the
+ * sitemap. */
+export const FACT_WAITING_MAX_PAGES = 60;
+
 /** The protocol's key alphabet and length. */
 const KEY_SHAPE = /^[A-Za-z0-9-]{8,128}$/;
 
@@ -74,6 +104,10 @@ const sentMeta = (site: SiteConfig) => `indexnowSent:${site.key}`;
 const ANNOUNCED_META = "indexnowAnnounced";
 /** Per airline: noticed tails whose send a site has not accepted yet. */
 const WAITING_META = "indexnowWaiting";
+/** The rollout facts as last recorded (FactPrints). */
+const FACTS_META = "indexnowFacts";
+/** Per site scope: fact pages whose send has not been accepted yet. */
+const FACTS_WAITING_META = "indexnowFactsWaiting";
 
 type Env = Record<string, string | undefined>;
 
@@ -150,12 +184,121 @@ interface Ledger {
   failures?: number;
 }
 
+interface SendOptions {
+  /** All of what is due or none of it: an announcement that only half fits
+   * under the cap waits for room instead of being sent in pieces. */
+  whole?: boolean;
+  /** Room under the daily cap this send must leave untouched. */
+  reserve?: number;
+  /** The metric's `type` tag: "ping" for tails and callers, "fact" for a
+   * rollout fact that was added or replaced. */
+  kind?: "ping" | "fact";
+}
+
 interface WaitingTail {
   tail: string;
   /** Unix seconds when the job first noticed it. */
   at: number;
   /** Keys of the sites that have not accepted its send yet. */
   sites: string[];
+}
+
+/** What one fact (or timeline line) tells about the pages it shows on. */
+interface FactMark {
+  /** It carries asOf, so the hub's /timeline lists it. */
+  dated: boolean;
+  /** The airline's type pages it shows on (aircraftPages; "*" = all). Empty
+   * once superseded: type pages drop a replaced fact. */
+  types: string[];
+}
+
+/** Group → fact hash → mark. A group is `facts:<trackedCode>:<slug>` for an
+ * AIRLINE_FACTS entry (code empty when untracked) or `timeline:<code>` for an
+ * airline's own /timeline. */
+export type FactPrints = Record<string, Record<string, FactMark>>;
+
+const hashOf = (value: unknown) =>
+  createHash("sha1").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+
+/** The facts as they stand, one hash per fact. `accessed` is left out: a
+ * re-read of an undated page changes nothing a reader sees. */
+export function factPrints(
+  entries: readonly AirlineFactsEntry[],
+  timelines: Partial<Record<string, RolloutTimeline>>
+): FactPrints {
+  const prints: FactPrints = {};
+  for (const entry of entries) {
+    const group: Record<string, FactMark> = {};
+    for (const fact of entry.facts) {
+      const { accessed: _accessed, ...shown } = fact;
+      group[hashOf(shown)] = {
+        dated: Boolean(fact.asOf),
+        types: fact.superseded ? [] : [...(fact.aircraftPages ?? [])],
+      };
+    }
+    prints[`facts:${entry.trackedCode ?? ""}:${entry.slug}`] = group;
+  }
+  for (const [code, timeline] of Object.entries(timelines)) {
+    if (!timeline) continue;
+    const group: Record<string, FactMark> = {};
+    for (const line of [...timeline.milestones, ...timeline.targets]) {
+      group[hashOf(line)] = { dated: true, types: [] };
+    }
+    prints[`timeline:${code}`] = group;
+  }
+  return prints;
+}
+
+/** The pages that changed between two sets of prints, by site scope ("ALL"
+ * for the hub, else the airline's code), most read first. */
+export function factChangePages(before: FactPrints, after: FactPrints): Map<string, string[]> {
+  const pages = new Map<string, Set<string>>();
+  const add = (scope: string, path: string) => {
+    if (!pages.has(scope)) pages.set(scope, new Set());
+    pages.get(scope)?.add(path);
+  };
+  for (const group of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
+    const was = before[group] ?? {};
+    const is = after[group] ?? {};
+    const changed = [
+      ...Object.entries(was).filter(([h]) => !(h in is)),
+      ...Object.entries(is).filter(([h]) => !(h in was)),
+    ].map(([, mark]) => mark);
+    if (changed.length === 0) continue;
+    const [kind, code, slug] = group.split(":");
+    if (kind === "timeline" && code) {
+      add(code, "/timeline");
+      continue;
+    }
+    if (kind !== "facts" || !slug) continue;
+    const cfg = code ? AIRLINES[code] : undefined;
+    if (code && !cfg) continue;
+    // The hub lists an untracked airline always, a tracked one only when it
+    // is hub content.
+    if (!cfg || isHubContent(cfg)) {
+      if (changed.some((m) => m.dated)) add(META_SCOPE, "/timeline");
+      add(META_SCOPE, `/airlines/${slug}`);
+    }
+    if (cfg) {
+      for (const type of new Set(changed.flatMap((m) => m.types))) {
+        const slugs = type === "*" ? aircraftPagesFor(cfg.code).map((d) => d.slug) : [type];
+        for (const s of slugs) add(cfg.code, `/fleet/${s}`);
+      }
+    }
+  }
+  // /timeline first on the hub: it is the one page every dated change touches.
+  return new Map(
+    [...pages].map(([scope, set]) => [
+      scope,
+      [...set].sort((a, b) => Number(b === "/timeline") - Number(a === "/timeline")),
+    ])
+  );
+}
+
+interface FactWaiting {
+  /** Unix seconds when the oldest of these pages first waited. */
+  at: number;
+  paths: string[];
 }
 
 export interface IndexNowDeps {
@@ -168,6 +311,9 @@ export interface IndexNowDeps {
   fetch?: typeof fetch;
   now?: () => number;
   timeoutMs?: number;
+  /** The rollout facts and timelines, as deployed. Tests pass their own. */
+  facts?: () => readonly AirlineFactsEntry[];
+  timelines?: () => Partial<Record<string, RolloutTimeline>>;
 }
 
 export interface IndexNow {
@@ -177,6 +323,10 @@ export interface IndexNow {
    * last call, and for every earlier one a site has not accepted yet. Never
    * rejects. */
   announceNewTails(): Promise<void>;
+  /** Submit the pages of every rollout fact added, edited or replaced since
+   * the last call, and of earlier ones not accepted yet. The first call only
+   * records the facts. Never rejects. */
+  announceFactChanges(): Promise<void>;
 }
 
 export function createIndexNow(deps: IndexNowDeps): IndexNow {
@@ -271,11 +421,14 @@ export function createIndexNow(deps: IndexNowDeps): IndexNow {
     site: SiteConfig,
     airline: AirlineCode,
     paths: string[],
-    /** All of what is due or none of it: an announcement that only half fits
-     * under the cap waits for room instead of being sent in pieces. */
-    whole = false
+    opts: SendOptions = {}
   ): Promise<SubmitStatus> {
-    const tags = { vendor: "indexnow", type: "ping", airline: normalizeAirlineTag(airline) };
+    const { whole = false, reserve = 0, kind = "ping" } = opts;
+    const tags = {
+      vendor: "indexnow",
+      type: kind,
+      airline: airline === META_SCOPE ? normalizeScopeTag(airline) : normalizeAirlineTag(airline),
+    };
     const count = (status: Exclude<SubmitStatus, "noop">) =>
       metrics.increment(COUNTERS.VENDOR_REQUEST, { ...tags, status });
     try {
@@ -300,7 +453,7 @@ export function createIndexNow(deps: IndexNowDeps): IndexNow {
       const lastSent = new Map(ledger.sent);
       const due = served.filter((a) => now - (lastSent.get(a) ?? 0) >= RESUBMIT_GAP_SEC);
       if (due.length === 0) return "noop";
-      const room = DAILY_URL_CAP - ledger.sent.length;
+      const room = DAILY_URL_CAP - reserve - ledger.sent.length;
       if (ledger.pausedUntil || room <= 0 || (whole && due.length > room)) {
         count("shed");
         return "shed";
@@ -509,7 +662,7 @@ export function createIndexNow(deps: IndexNowDeps): IndexNow {
               ...shown.map((w) => `/fleet/${w.tail}`),
             ];
           }
-          const status = await submitToSite(site, cfg.code, paths, true);
+          const status = await submitToSite(site, cfg.code, paths, { whole: true });
           // "noop" is nothing left to tell: every page was accepted inside the
           // last ten minutes, or none of them is served and indexable.
           if (status !== "success" && status !== "noop") continue;
@@ -527,7 +680,109 @@ export function createIndexNow(deps: IndexNowDeps): IndexNow {
     }
   }
 
-  return { submit, announceNewTails };
+  function readFactPrints(): FactPrints | null {
+    try {
+      const raw = JSON.parse(getMeta(db, FACTS_META, META_SCOPE) ?? "null") as unknown;
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+      const prints: FactPrints = {};
+      for (const [group, marks] of Object.entries(raw as Record<string, unknown>)) {
+        if (!marks || typeof marks !== "object" || Array.isArray(marks)) return null;
+        prints[group] = {};
+        for (const [hash, mark] of Object.entries(marks as Record<string, Partial<FactMark>>)) {
+          prints[group][hash] = {
+            dated: mark?.dated === true,
+            types: Array.isArray(mark?.types)
+              ? mark.types.filter((t): t is string => typeof t === "string")
+              : [],
+          };
+        }
+      }
+      return prints;
+    } catch {
+      return null;
+    }
+  }
+
+  function readFactWaiting(): Record<string, FactWaiting> {
+    try {
+      const raw = JSON.parse(getMeta(db, FACTS_WAITING_META, META_SCOPE) ?? "{}") as unknown;
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+      const waiting: Record<string, FactWaiting> = {};
+      for (const [scope, w] of Object.entries(raw as Record<string, Partial<FactWaiting>>)) {
+        if (typeof w?.at !== "number" || !Array.isArray(w.paths)) continue;
+        const paths = w.paths.filter((p): p is string => typeof p === "string");
+        if (paths.length > 0) waiting[scope] = { at: w.at, paths };
+      }
+      return waiting;
+    } catch {
+      return {};
+    }
+  }
+
+  const writeFactWaiting = (waiting: Record<string, FactWaiting>) =>
+    setMeta(db, FACTS_WAITING_META, JSON.stringify(waiting), META_SCOPE);
+
+  async function announceFactChanges(): Promise<void> {
+    try {
+      const now = nowSec();
+      const after = factPrints(
+        deps.facts?.() ?? AIRLINE_FACTS,
+        deps.timelines?.() ?? ROLLOUT_TIMELINES
+      );
+      const before = readFactPrints();
+      const stored = readFactWaiting();
+      const waiting: Record<string, FactWaiting> = {};
+      for (const [scope, w] of Object.entries(stored)) {
+        if (now - w.at < WAITING_MAX_AGE_SEC) waiting[scope] = w;
+        else info(`IndexNow: ${w.paths.length} fact page(s) for ${scope} no longer wait`);
+      }
+      // No record yet (this feature's first deploy, or a broken row): record
+      // and send nothing, since what was already there is the sitemap's.
+      const changes = before ? factChangePages(before, after) : new Map<string, string[]>();
+      for (const [scope, paths] of changes) {
+        info(`IndexNow: rollout facts changed, ${scope} page(s): ${paths.join(", ")}`);
+        const merged = [...new Set([...(waiting[scope]?.paths ?? []), ...paths])];
+        const kept = merged.slice(0, FACT_WAITING_MAX_PAGES);
+        if (kept.length < merged.length) {
+          info(
+            `IndexNow: ${merged.length - kept.length} ${scope} fact page(s) not queued (past ${FACT_WAITING_MAX_PAGES} waiting)`
+          );
+        }
+        waiting[scope] = { at: waiting[scope]?.at ?? now, paths: kept };
+      }
+      db.transaction(() => {
+        if (JSON.stringify(before) !== JSON.stringify(after)) {
+          setMeta(db, FACTS_META, JSON.stringify(after), META_SCOPE);
+        }
+        if (JSON.stringify(waiting) !== JSON.stringify(stored)) writeFactWaiting(waiting);
+      })();
+
+      for (const [scope, w] of Object.entries(waiting)) {
+        const site = siteForAirline(scope, true);
+        const batch = w.paths.slice(0, FACT_PAGES_PER_PASS);
+        const status = site
+          ? await submitToSite(site, scope, batch, {
+              whole: true,
+              reserve: FACT_TAIL_RESERVE,
+              kind: "fact",
+            })
+          : "noop";
+        // "noop": no live site, nothing it serves, or all sent in the last ten
+        // minutes. Each way there is nothing left to tell.
+        if (status !== "success" && status !== "noop") continue;
+        const sent = new Set(batch);
+        const current = readFactWaiting();
+        const left = (current[scope]?.paths ?? []).filter((p) => !sent.has(p));
+        if (left.length > 0) current[scope] = { at: current[scope]?.at ?? now, paths: left };
+        else delete current[scope];
+        writeFactWaiting(current);
+      }
+    } catch (err) {
+      logError("IndexNow: rollout fact check failed", err);
+    }
+  }
+
+  return { submit, announceNewTails, announceFactChanges };
 }
 
 let active: IndexNow | null = null;
