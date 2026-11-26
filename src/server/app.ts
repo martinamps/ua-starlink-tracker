@@ -207,7 +207,7 @@ import NewlyEquippedPage, {
   firstFlightLabel,
   operatorLabel,
 } from "../components/newly-equipped-page";
-import NotFoundPage from "../components/not-found-page";
+import NotFoundPage, { type NotFoundKind, notFoundCopy } from "../components/not-found-page";
 import {
   type RouteOutlookView,
   type TypeOutlookRef,
@@ -326,6 +326,14 @@ import {
   isPassengerVerifyAudience,
   passengerVerifyEnabled,
 } from "./passenger-detect";
+import {
+  checkPageFor,
+  flightElsewhere,
+  looksLikeAFlight,
+  trackedAirlinesLink,
+  typedFlight,
+  typedTail,
+} from "./typed-dead-ends";
 import { recordWatchCtaShown, sameDayAlternativesField, watchFeed } from "./watch";
 
 import {
@@ -482,11 +490,11 @@ function notFoundTemplate(template: string): string {
 /** The site's own shell around a "not found" header. Built only from the
  * tenant's static config — no reader, no client IP — because the response is
  * cached at the edge (SECURITY_HEADERS.notFound). */
-async function notFound(site: SiteConfig): Promise<Response> {
-  const markup = ReactDOMServer.renderToString(React.createElement(NotFoundPage, { site }));
+async function notFound(site: SiteConfig, kind: NotFoundKind = "page"): Promise<Response> {
+  const markup = ReactDOMServer.renderToString(React.createElement(NotFoundPage, { site, kind }));
   const body = renderHtml(notFoundTemplate(await getHtmlTemplate()), {
     ...brandMetadata(site.brand),
-    siteTitle: `Page not found | ${site.brand.title}`,
+    siteTitle: `${notFoundCopy(site, kind).title} | ${site.brand.title}`,
     stylesheetTag: currentStylesheetTag(),
     html: markup,
   });
@@ -3236,7 +3244,7 @@ function subPageMeta(
 type CheckFlightPath =
   | { kind: "bare" }
   | { kind: "flight"; raw: string; fn: string; date: string | null }
-  | { kind: "invalid"; raw: string | null };
+  | { kind: "invalid"; raw: string | null; date: string | null };
 
 /** Parse `/check-flight/{flightNumber}[/{date}]`. `raw` is the segment as
  * requested, `fn` its canonical spelling (uppercase, zero-padding stripped) —
@@ -3251,11 +3259,11 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   try {
     raw = decodeURIComponent(first ?? "").trim();
   } catch {
-    return { kind: "invalid", raw: null }; // malformed % escape
+    return { kind: "invalid", raw: null, date: null }; // malformed % escape
   }
-  const fn = stripFlightNumberZeros(icaoCallsignToIata(canonicalFlightInput(raw)));
-  if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw };
   const date = second && isRealIsoDate(second) ? second : null;
+  const fn = stripFlightNumberZeros(icaoCallsignToIata(canonicalFlightInput(raw)));
+  if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw, date };
   return { kind: "flight", raw, fn, date };
 }
 
@@ -3599,10 +3607,14 @@ function invalidFlightMeta(ctx: RequestContext, reason: InvalidFlightQuery["reas
   const carrier = short ? `${short} ` : "";
   const a = article(carrier || "flight");
   const lead =
-    reason === "other-carrier" ? `Not ${a} ${carrier}Flight Number` : "Not a Flight Number";
+    reason === "other-carrier"
+      ? `Not ${a} ${carrier}Flight Number`
+      : reason === "tail"
+        ? `Not ${a} ${carrier}Aircraft We Track`
+        : "Not a Flight Number";
   return {
     siteTitle: `${lead} — Check ${a} ${carrier}Flight for Starlink`,
-    siteDescription: `${reason === "other-carrier" ? `That isn't ${a} ${carrier}flight number.` : "That isn't a flight number."} Enter a flight number and date to check whether your aircraft has free Starlink Wi-Fi.`,
+    siteDescription: `${reason === "other-carrier" ? `That isn't ${a} ${carrier}flight number.` : reason === "tail" ? `That tail number isn't one of the ${carrier}aircraft we track.` : "That isn't a flight number."} Enter a flight number and date to check whether your aircraft has free Starlink Wi-Fi.`,
     keywords: `check ${carrier.toLowerCase()}flight starlink, does my flight have starlink`,
     ogTitle: lead,
     ogDescription: `Enter ${a} ${carrier}flight number and date to check for Starlink Wi-Fi.`,
@@ -3663,6 +3675,75 @@ async function datedAnswer(
   }
 }
 
+/**
+ * Where this host answers for a tail: its own page, else its row on /fleet.
+ * The hub hands a tail to its airline's site when that site has tail pages.
+ * Null when no airline here has the tail.
+ */
+function tailAnswerUrl(ctx: RequestContext, typed: string): string | null {
+  const here = `https://${ctx.site.canonicalHost}`;
+  const onFleet = (tail: string) =>
+    ctx.site.features.fleetPage ? `${here}/fleet#t-${tail}` : null;
+  const pinned = tenantConfig(ctx.tenant);
+  if (pinned) {
+    const tail = ctx.reader.resolveTail(typed);
+    if (!tail) return null;
+    return ctx.site.features.tailPages ? `${here}/fleet/${tail}` : onFleet(tail);
+  }
+  for (const cfg of publicAirlines()) {
+    const tail = ctx.getReader(cfg.code).resolveTail(typed);
+    if (!tail) continue;
+    const own = siteForAirline(cfg.code, true);
+    return own?.features.tailPages ? `https://${own.canonicalHost}/fleet/${tail}` : onFleet(tail);
+  }
+  return null;
+}
+
+/**
+ * A /check-flight segment that is no flight of this airline, read for what
+ * the traveller meant. The airline's own name for its code is a misspelling
+ * of the coded address (301); a tail we track goes to where the tail is
+ * answered (302: the roster decides, and can change). Everything else stays a
+ * 404 and only gains a reason and a way on. Null when nothing is recognised.
+ */
+function typedOnCheckFlight(
+  ctx: RequestContext,
+  pinned: AirlineConfig,
+  raw: string,
+  date: string | null
+): Response | Pick<InvalidFlightQuery, "reason" | "elsewhere"> | null {
+  const flight = typedFlight(raw);
+  if (flight?.cfg.code === pinned.code) {
+    if (!flight.spelled) return null;
+    const path = `/check-flight/${flight.flightNumber}${date ? `/${date}` : ""}`;
+    return redirect(`https://${ctx.site.canonicalHost}${path}${ctx.url.search}`, 301);
+  }
+  if (flight) return { reason: "other-carrier", elsewhere: flightElsewhere(flight, date) };
+  const tail = typedTail(raw);
+  if (tail) {
+    const url = tailAnswerUrl(ctx, tail);
+    return url ? redirect(url) : { reason: "tail" };
+  }
+  return looksLikeAFlight(raw) ? { reason: "other-carrier" } : null;
+}
+
+/**
+ * /check-flight/{anything} on a host with no flight pages (the hub). A flight
+ * of an airline whose own site checks flights goes there, a tracked tail to
+ * where it is answered; the rest is the 404 that says where the check is.
+ */
+const flightCheckElsewhere: Handler = (ctx) => {
+  const parsed = parseCheckFlightPath(ctx.url.pathname);
+  if (parsed.kind === "bare" || parsed.raw === null) return notFound(ctx.site);
+  const flight = typedFlight(parsed.raw);
+  const page = flight && checkPageFor(flight, parsed.date);
+  if (page) return redirect(page);
+  const tail = flight ? null : typedTail(parsed.raw);
+  const tailUrl = tail && tailAnswerUrl(ctx, tail);
+  if (tailUrl) return redirect(tailUrl);
+  return notFound(ctx.site, tail ? "aircraft" : "flight");
+};
+
 const checkFlightPage: Handler = async (ctx) => {
   // Per-flight permalinks: /check-flight/UA881[/{date}] renders flight-specific
   // content + meta + Flight JSON-LD; the date-less URL is canonical so date
@@ -3683,12 +3764,23 @@ const checkFlightPage: Handler = async (ctx) => {
       { invalid, noindex: true },
       404
     );
+  const pinned = tenantConfig(ctx.tenant);
+  const ownFlight = parsed.kind === "flight" && !!permalinkCarrier(pinned, parsed.fn);
+  const typed =
+    pinned && parsed.kind !== "bare" && parsed.raw !== null && !ownFlight
+      ? typedOnCheckFlight(ctx, pinned, parsed.raw, parsed.date)
+      : null;
+  if (typed instanceof Response) return typed;
   if (parsed.kind === "invalid") {
     const query = echoQuery(parsed.raw);
     return invalidPage({
       query,
       reason: "not-a-flight-number",
-      airportHint: query !== null && AIRPORT_CODE_RE.test(query.toUpperCase()),
+      airportHint: !typed && query !== null && AIRPORT_CODE_RE.test(query.toUpperCase()),
+      ...typed,
+      ...(typed?.reason === "other-carrier" && !typed.elsewhere
+        ? { elsewhere: trackedAirlinesLink() }
+        : {}),
     });
   }
   if (parsed.kind === "flight") {
@@ -3703,11 +3795,20 @@ const checkFlightPage: Handler = async (ctx) => {
         301
       );
     }
-    const cfg = permalinkCarrier(tenantConfig(ctx.tenant), fn);
+    const cfg = permalinkCarrier(pinned, fn);
     // Shape-valid but carrying another carrier's prefix on this host. The
-    // notice never names that carrier — a tenant host must not confirm what
-    // else exists (same rule the /api foreign-prefix gate follows).
-    if (!cfg) return invalidPage({ query: fn, reason: "other-carrier", airportHint: false });
+    // notice names that carrier only when it has a live tracker of ours, which
+    // the footer of every page already links; any other is never named (same
+    // rule the /api foreign-prefix gate follows).
+    if (!cfg) {
+      return invalidPage({
+        query: fn,
+        reason: "other-carrier",
+        airportHint: false,
+        elsewhere: trackedAirlinesLink(),
+        ...typed,
+      });
+    }
     const reader = ctx.tenant === "ALL" ? ctx.getReader(cfg.code) : ctx.reader;
     const variants = buildFlightLookupVariants(cfg, fn);
     // Existence gate (same data test as the sitemap): no rows behind the
@@ -4337,7 +4438,25 @@ function tailPage(ctx: RequestContext): Promise<Response> | Response | null {
   return renderSubPage(ctx, TailPage, canonicalPath, tailPageMeta(ctx, model), { model, wayOn });
 }
 
-const fleetSubPage: Handler = (ctx) => tailPage(ctx) ?? aircraftTypePage(ctx);
+/**
+ * /fleet/{tail} where tailPage did not answer: a host without tail pages
+ * sends a tail it tracks to the tail's row on /fleet (the hub, to the
+ * airline's own tail page), and a registration nobody here tracks gets the
+ * 404 that says so. Null for anything that is not a registration.
+ */
+function typedTailOnFleet(ctx: RequestContext): Promise<Response> | Response | null {
+  const segment = ctx.url.pathname.slice("/fleet/".length).replace(/\/+$/, "");
+  const cfg = tenantConfig(ctx.tenant);
+  if (!ctx.site.features.fleetPage || (cfg && resolveAircraftSlug(cfg.code, segment))) return null;
+  const tail = typedTail(segment);
+  if (!tail) return null;
+  const url = tailAnswerUrl(ctx, tail);
+  const here = `https://${ctx.site.canonicalHost}${ctx.url.pathname}`;
+  return url && url !== here ? redirect(url) : notFound(ctx.site, "aircraft");
+}
+
+const fleetSubPage: Handler = (ctx) =>
+  tailPage(ctx) ?? typedTailOnFleet(ctx) ?? aircraftTypePage(ctx);
 
 function aircraftPageEntries(
   ctx: RequestContext
@@ -5797,7 +5916,13 @@ export function createApp(
 
   const prefixRoutes: Array<[string, Route]> = [
     ["/cal/", read(watchFeed)],
-    ["/check-flight/", read(checkFlightPage, "checkFlightPage")],
+    // No feature gate: a host without flight pages still says where the check is.
+    [
+      "/check-flight/",
+      read((ctx) =>
+        ctx.site.features.checkFlightPage ? checkFlightPage(ctx) : flightCheckElsewhere(ctx)
+      ),
+    ],
     ["/route-planner/", read(routePlannerPage, "routePlannerPage")],
     ["/routes/", read(airportPage, "airportPages")],
     ["/airlines/", read(airlineDetailPage, "airlinesPages")],
