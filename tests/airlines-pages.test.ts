@@ -133,13 +133,46 @@ describe("hub /airlines index", () => {
         const cells = row.match(/<td[\s\S]*?<\/td>/g) ?? [];
         // The same pill twice: under the name below sm, in its own column from sm up.
         const underName = cells[0].match(
-          /<span class="[^"]*sm:hidden[^"]*">(<span[\s\S]*?<\/span>)<\/span>/
+          /<span class="[^"]*sm:hidden[^"]*">(<span[^>]*><\/span>)<\/span>/
         );
         expect(underName).not.toBeNull();
         expect(cells[1]).toContain("hidden sm:table-cell");
-        expect(cells[1]).toContain(underName?.[1] ?? "no pill");
+        const inColumn = cells[1].match(/<span class="([^"]*)" style="([^"]*)">([^<]+)<\/span>/);
+        expect(inColumn).not.toBeNull();
+        const [, cls, style, words] = inColumn ?? [];
+        // Same colours and shape; the words come from the attribute.
+        expect(underName?.[1]).toBe(
+          `<span class="${cls} before:content-[attr(data-label)]" style="${style}" data-label="${words}"></span>`
+        );
       }
     }
+  });
+
+  // Finding 2f of the second look: with the stage printed once per layout, a
+  // reader without the stylesheet read "Installing Installing".
+  test("a row's markup says its stage once, and the stylesheet draws the phone copy", async () => {
+    const body = await (await get("/airlines", hub.canonicalHost)).text();
+    const tables = body.match(/<table[\s\S]*?<\/table>/g) ?? [];
+    expect(tables.length).toBeGreaterThanOrEqual(2);
+    const textOf = (html: string) =>
+      html
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    let rowsRead = 0;
+    for (const table of tables) {
+      for (const row of table.match(/<tr>[\s\S]*?<\/tr>/g)?.slice(1) ?? []) {
+        const stage = row.match(/data-label="([^"]+)"/)?.[1] ?? "";
+        expect(stage.length).toBeGreaterThan(0);
+        // The name and status cells: a summary further along may use the word too.
+        const cells = (row.match(/<td[\s\S]*?<\/td>/g) ?? []).slice(0, 2).join(" ");
+        expect(textOf(cells).split(stage)).toHaveLength(2);
+        rowsRead++;
+      }
+    }
+    expect(rowsRead).toBeGreaterThan(2);
+    const css = await Bun.file(`${import.meta.dir}/../static/tailwind.css`).text();
+    expect(css).toMatch(/content:\s*attr\(data-label\)/);
   });
 
   test("a figure's source line never breaks inside its date, and keeps its words", async () => {

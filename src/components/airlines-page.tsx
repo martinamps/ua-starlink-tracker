@@ -36,7 +36,14 @@ import {
 } from "../airlines/rollout-facts";
 import { siteShowsAircraftNotWifi } from "../api/check-flight-core";
 import type { PerAirlineStat } from "../types";
-import { ROLLOUT_TONE, StagePill, factsStage, shareIsPublishable, trackedStage } from "./atoms";
+import {
+  ROLLOUT_TONE,
+  StagePill,
+  StagePillAgain,
+  factsStage,
+  shareIsPublishable,
+  trackedStage,
+} from "./atoms";
 import {
   ButtonLink,
   Chip,
@@ -271,11 +278,13 @@ function Dated({ text }: { text: string }) {
 }
 
 /** Below sm the stage sits under the airline's name. As a third column it left
- * the figures 79px on a 360px phone, and cut them off. */
+ * the figures 79px on a 360px phone, and cut them off. Its words are in the
+ * status column's markup already, so this copy has the stylesheet draw them:
+ * read without one, a row said "Installing Installing". */
 function StageUnderName({ info }: { info: Parameters<typeof StagePill>[0]["info"] }) {
   return (
     <span className="mt-1.5 block sm:hidden">
-      <StagePill info={info} />
+      <StagePillAgain info={info} />
     </span>
   );
 }
