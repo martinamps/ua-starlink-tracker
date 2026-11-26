@@ -14,6 +14,16 @@ export const CHOOSER_MAX = 12;
 // Touch points arrive in whole pixels while dots sit on fractions of one.
 const ROUNDING_PX = 0.5;
 
+/**
+ * Whether the script, not the browser, decides what a click on the map opens.
+ * On narrow screens it always does. On wider ones only for a finger or a pen:
+ * a phone turned sideways is wider than `sm`, and its dots still sit closer
+ * than a fingertip. A mouse there is precise, and the server's links stand.
+ */
+export function tapIsOurs(wide: boolean, pointer: string | null): boolean {
+  return !wide || pointer === "touch" || pointer === "pen";
+}
+
 export interface MapDot {
   code: string;
   x: number;

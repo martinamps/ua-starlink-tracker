@@ -1,5 +1,5 @@
 /**
- * Taps on the /routes map at phone widths. The server's links alone can't be
+ * Taps on the /routes map by finger, and any click at phone widths. The server's links alone can't be
  * trusted there: most dots are 2 to 4 px wide, and the browser moves a tap to
  * whichever link it finds near the finger, so a tap on Dulles opened Newark.
  * This reads where the finger really landed (the pointer event, which the
@@ -7,12 +7,19 @@
  * opens; several are offered by code in a small chooser; none does nothing.
  * It never opens an airport the finger wasn't on.
  *
- * Wider screens keep the server's links untouched, and so does a link
- * activated with no pointer (keyboard, most screen readers).
+ * A mouse on a wider screen keeps the server's links untouched, and so does a
+ * link activated with no pointer (keyboard, most screen readers). A finger is
+ * caught at every width: a phone held sideways is wider than `sm`.
  */
-import { CHOOSER_MAX, FINGER_RADIUS_PX, type MapDot, airportsUnderTap } from "./routes-map-pick";
+import {
+  CHOOSER_MAX,
+  FINGER_RADIUS_PX,
+  type MapDot,
+  airportsUnderTap,
+  tapIsOurs,
+} from "./routes-map-pick";
 
-/** Tailwind's `sm`: from here up the map is the server's own links. */
+/** Tailwind's `sm`: from here up a mouse click is the server's own links'. */
 const WIDE = "(min-width: 40rem)";
 /** A click this soon after a pointerup on the map is that tap's click. */
 const TAP_FRESH_MS = 1000;
@@ -44,6 +51,7 @@ function wire(
   ring: HTMLElement
 ): void {
   const allAirports = document.querySelector<HTMLDetailsElement>(".js-map-list");
+  const all = chooser.querySelector<HTMLElement>(".js-map-chooser-all");
   const wide = matchMedia(WIDE);
   const links = [...svg.querySelectorAll<SVGAElement>('a[href^="/routes/"]')];
   const codeOf = (link: Element) => (link.getAttribute("href") ?? "").slice("/routes/".length);
@@ -101,7 +109,11 @@ function wire(
     list.replaceChildren(...shown.map(chip));
     const left = near.length - shown.length;
     more.hidden = left === 0;
-    more.textContent = left > 0 ? `${left} more under your finger are in the full list.` : "";
+    // A mouse-first screen with a touch panel hides the list: offer none.
+    const listShown = !!allAirports?.getClientRects().length;
+    more.textContent =
+      left > 0 ? `${left} more under your finger${listShown ? " are in the full list" : ""}.` : "";
+    if (all) all.hidden = !listShown;
     marked = near.map((d) => d.link);
     for (const link of marked) link.setAttribute("data-near", "");
 
@@ -112,6 +124,13 @@ function wire(
 
     chooser.open = true;
     const frame = (chooser.offsetParent ?? map).getBoundingClientRect();
+    // Narrower than its frame (wider screens): centred on the tap, kept inside.
+    const width = chooser.offsetWidth;
+    const room = frame.width - width - 2 * GAP_PX;
+    chooser.style.left =
+      room > 0
+        ? `${GAP_PX + Math.min(Math.max(x - frame.left - width / 2 - GAP_PX, 0), room)}px`
+        : "";
     const height = chooser.offsetHeight;
     const below = y + FINGER_RADIUS_PX + GAP_PX;
     const above = y - FINGER_RADIUS_PX - GAP_PX - height;
@@ -125,12 +144,12 @@ function wire(
     chooser.scrollIntoView({ block: "nearest" });
   }
 
-  let tap: { x: number; y: number; at: number } | null = null;
+  let tap: { x: number; y: number; at: number; pointer: string } | null = null;
   document.addEventListener(
     "pointerup",
     (e) => {
       const onMap = e.target instanceof Node && map.contains(e.target);
-      tap = onMap ? { x: e.clientX, y: e.clientY, at: e.timeStamp } : null;
+      tap = onMap ? { x: e.clientX, y: e.clientY, at: e.timeStamp, pointer: e.pointerType } : null;
     },
     true
   );
@@ -143,7 +162,7 @@ function wire(
     (e) => {
       const fromTap = tap && e.timeStamp - tap.at < TAP_FRESH_MS ? tap : null;
       tap = null;
-      if (wide.matches) return;
+      if (!tapIsOurs(wide.matches, fromTap?.pointer ?? null)) return;
       const target = e.target instanceof Element ? e.target : null;
       // The click of a tap that began on the map is the map's, wherever the
       // browser then sent it. With no pointer it is the focused link's own.
@@ -177,7 +196,7 @@ function wire(
     if (e.relatedTarget instanceof Node && !chooser.contains(e.relatedTarget)) close();
   });
   chooser.querySelector(".js-map-chooser-close")?.addEventListener("click", () => close(true));
-  chooser.querySelector(".js-map-chooser-all")?.addEventListener("click", () => {
+  all?.addEventListener("click", () => {
     close();
     if (!allAirports) return;
     allAirports.open = true;
