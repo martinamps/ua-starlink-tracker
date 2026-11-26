@@ -469,7 +469,7 @@ describe("Qatar's own figure on the hub home page", () => {
   test("the /airlines table and MCP name the paper beside the figure too", async () => {
     const { text } = await bodyOf("/airlines");
     expect(text.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, " ")).toMatch(
-      /as of Nov 16, 2026\s+as reported by The Peninsula/
+      /as of\s+Nov 16, 2026\s+as reported by The Peninsula/
     );
     const res = await app.dispatch(
       mcpReq(HUB, "tools/call", { name: "get_fleet_stats", arguments: {} }, { query: "?scope=QR" })
@@ -522,9 +522,12 @@ describe("hub /airlines", () => {
       const at = text.indexOf(`>${cfg.name}</a>`);
       expect(at).toBeGreaterThan(-1);
       const row = text.slice(at, text.indexOf("</tr>", at)).replace(/<!-- -->/g, "");
-      if (airlineOwnCount(cfg.code)) expect(row).toMatch(/[\d,]+<span[^>]*>as of \w+ \d/);
+      if (airlineOwnCount(cfg.code))
+        expect(row).toMatch(/[\d,]+<span[^>]*>as of (?:<span[^>]*>)?\w+ \d/);
       else if (airlineOwnTypeSum(cfg.code)) {
-        expect(row).toMatch(/[\d,]+<span[^>]*>[\d,]+ [^<]*, per [^<]+ as of \w+ \d/);
+        expect(row).toMatch(
+          /[\d,]+<span[^>]*>[\d,]+ [^<]*, per [^<]+ as of (?:<span[^>]*>)?\w+ \d/
+        );
         expect(text).toContain("our sum of the per-type counts");
       } else expect(row).toContain("By type");
     }
