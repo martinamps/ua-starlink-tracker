@@ -664,7 +664,8 @@ export function recordPrediction(
 export interface ResolveDeps {
   now?: number;
   /** The booking's aircraft type, for carriers whose answer is per programme
-   * type (community-source); used only when no tail is known. */
+   * type (community-source), used only when no tail is known, and for an
+   * airline whose own statement names one type, where it is all there is. */
   aircraftType?: string | null;
   /** Override the FR24 reverse lookup; pass null to disable it (hub check-any-flight). */
   lookupTail?: typeof lookupFlightTailVerdict | null;
@@ -1234,6 +1235,7 @@ function statementVerdict(
     normalized,
     answer: carrierPrediction(cfg, reader, normalized, {
       route: deps.leg,
+      aircraftType: deps.aircraftType,
       date,
       nowMs: now * 1000,
     }),

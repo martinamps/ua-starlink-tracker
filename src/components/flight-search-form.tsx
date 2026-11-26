@@ -8,8 +8,9 @@
  *    JS it GETs /check-flight?flight_number=…&date=…, which redirects.
  *  - "check-any" (hub): ask /api/check-any-flight and print the answer under
  *    the form. `answer="community"` says only a firm yes out loud. An airline
- *    answered by route (no schedule held) asks for the two airports: the
- *    route fields under the answer stay hidden and disabled until it does.
+ *    answered by route (no schedule held) asks for the two airports, and one
+ *    answered by aircraft type for the type on the booking: those fields
+ *    under the answer stay hidden and disabled until it does.
  *  - "report" (onboard banner): no date, no navigation; the banner module
  *    owns the submit.
  */
@@ -178,6 +179,34 @@ export function FlightSearchForm({
             ))}
             <button type="submit" form={id} className={`${buttonClass()} min-h-11`}>
               Check this route
+            </button>
+          </div>
+        </div>
+      )}
+      {mode === "check-any" && answer === "tracked" && (
+        <div id={`${id}-type`} className="mt-3 hidden">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="sm:w-72">
+              <label htmlFor={`${id}-aircraft-type`} className={LABEL}>
+                Aircraft type on your booking
+              </label>
+              <input
+                type="text"
+                id={`${id}-aircraft-type`}
+                name="aircraft_type"
+                form={id}
+                disabled
+                maxLength={40}
+                placeholder="Airbus A350-1000"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="search"
+                className={FIELD_CLASS}
+              />
+            </div>
+            <button type="submit" form={id} className={`${buttonClass()} min-h-11`}>
+              Check this aircraft type
             </button>
           </div>
         </div>

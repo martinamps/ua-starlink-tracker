@@ -1406,6 +1406,7 @@ export function carrierPrediction(
         { name: cfg.name, iata: cfg.iata, statementRule: cfg.statementRule },
         {
           ...ctx.route,
+          aircraftType: ctx.aircraftType,
           date: ctx.date,
           today: new Date(ctx.nowMs ?? Date.now()).toISOString().slice(0, 10),
         }

@@ -7,6 +7,7 @@ import type { VerificationSource } from "../database/database";
 import type { RolloutStatus, StarlinkStatus } from "../types";
 import { airportCountry } from "../utils/airport-geo";
 import { isFreighterFamily, normalizeAircraftType } from "./aircraft-families";
+import { type StatedTypeMatch, sasA320neo, virginAtlanticA350 } from "./stated-type";
 
 // Registration patterns are stored as unanchored bodies; the anchored
 // validation pattern and the global scan pattern (for pulling registrations
@@ -23,6 +24,9 @@ const FAA_TAIL = tailPatterns("N[1-9][0-9A-HJ-NP-Z]{0,4}");
 const QATAR_TAIL = tailPatterns("A7-[A-Z]{3}");
 const FRANCE_TAIL = tailPatterns("F-[GH][A-Z]{3}");
 const IRELAND_TAIL = tailPatterns("EI-[A-Z]{3}");
+const UK_TAIL = tailPatterns("G-[A-Z]{4}");
+// Sweden, Norway and Denmark.
+const SCANDINAVIA_TAIL = tailPatterns("(?:SE|LN|OY)-[A-Z]{3}");
 
 export type AirlineCode = string;
 
@@ -155,22 +159,21 @@ export interface SiteConfig {
  * the airline, with the date, for the flights the statement covers and no
  * others (src/airlines/statement-rule.ts words it).
  */
-export interface StatementRule {
+interface StatementRuleBase {
   /** The airline's sentence, word for word, as read on `source.url`. */
   quote: string;
-  /** The day the airline said it. */
+  /** The day the airline said it; for a page that carries no date of its own
+   * (`asOfKind: "checked"`), the day it was last read. */
   asOf: string;
+  /** "checked": the page is undated, so `asOf` is our reading day and every
+   * answer says "checked", never "said on". */
+  asOfKind?: "checked";
   source: { label: string; url: string };
   /** The same claim, completing "{Airline} said on {date} that …". It may say
    * no more than `quote` and the page around it do. */
   claim: string;
   /** What the statement leaves out, as a sentence of its own. */
   beyond: string;
-  /** The flights the statement speaks for. A flight number can't be placed on
-   * a route without a schedule, so the caller gives both airports. */
-  covers: (origin: string, destination: string) => boolean;
-  /** Names `covers`, completing "we apply that only to …". */
-  coversLabel: string;
   /** The last flight date answered from the statement, and the last day it
    * answers at all: past it the statement has to be read again, so an answer
    * can't outlive what the airline said. */
@@ -178,6 +181,36 @@ export interface StatementRule {
   /** Why that day, completing "…, {reason}". */
   validThroughReason: string;
 }
+
+/** A statement about routes. A flight number can't be placed on a route
+ * without a schedule, so the caller gives both airports. */
+export interface RouteStatementRule extends StatementRuleBase {
+  by: "route";
+  /** The flights the statement speaks for. */
+  covers: (origin: string, destination: string) => boolean;
+  /** Names `covers`, completing "we apply that only to …". */
+  coversLabel: string;
+}
+
+/**
+ * A statement about one aircraft type. Nothing held says which aircraft flies
+ * a flight, so the caller states the type their booking shows, and the answer
+ * rests on that alone: it holds only if an aircraft of that type, flown by
+ * the airline itself, is on the flight, and every answer says so. A partner
+ * airline's aircraft under this airline's number is never covered, whatever
+ * its type.
+ */
+export interface TypeStatementRule extends StatementRuleBase {
+  by: "type";
+  /** The type as the airline names it, with its article: "an A350". */
+  typeName: string;
+  /** Reads a stated type strictly (src/airlines/stated-type.ts). */
+  matchType: (stated: string) => StatedTypeMatch;
+  /** Said of a stated type `matchType` calls "unclear", as a sentence. */
+  unclearNote?: string;
+}
+
+export type StatementRule = RouteStatementRule | TypeStatementRule;
 
 export type LastUpdatedOwner =
   | "fleet-meta"
@@ -846,6 +879,7 @@ const AIRLINE_DEFS = {
     flightHistoryModel: false,
     verifySite: "aerlingus.com",
     statementRule: {
+      by: "route",
       quote: "The service is already available across all Aer Lingus transatlantic routes.",
       asOf: "2026-11-18",
       source: {
@@ -897,6 +931,133 @@ const AIRLINE_DEFS = {
       ogDescription:
         "Aer Lingus says free Starlink Wi-Fi is available across all its transatlantic routes.",
       keywords: "aer lingus starlink, aer lingus wifi",
+      accentColor: "#0ea5e9",
+      accentColorDim: "#0284c7",
+      socialImagePath: "/static/social-image-hub.webp",
+      analyticsDomain: "airlinestarlinktracker.com",
+    },
+  },
+  VS: {
+    code: "VS",
+    name: "Virgin Atlantic",
+    shortName: "Virgin Atlantic",
+    enabled: true,
+    // Hub flight lookup only, and only from Virgin Atlantic's own page: no
+    // aircraft is counted, so it joins no homepage, fleet or content surface.
+    publicInHub: false,
+    hubFlightLookup: true,
+    iata: "VS",
+    icao: "VIR",
+    operators: [{ icao: "VIR", iata: "VS" }],
+    subfleets: [{ key: "mainline", label: "Virgin Atlantic", match: () => true }],
+    metricTag: "virginatlantic",
+    ...UK_TAIL,
+    minFleetSanity: 0,
+    verifierBackend: null,
+    flightHistoryModel: false,
+    verifySite: "virginatlantic.com",
+    statementRule: {
+      by: "type",
+      // Read on November 26, 2026; the page carries no date of its own.
+      quote:
+        "Starlink is now available across our A350 fleet, with more aircraft getting the Starlink treatment over time until rollout completes in 2027.",
+      asOf: "2026-11-26",
+      asOfKind: "checked",
+      source: {
+        label: "Virgin Atlantic's Starlink page",
+        url: "https://www.virginatlantic.com/en-US/experience/inflight-entertainment/connectivity/starlink",
+      },
+      claim: "Starlink is now available across its A350 fleet",
+      // Same page: "While it lands across more of our planes, availability
+      // may vary depending on your aircraft and route."
+      beyond:
+        "Of its other aircraft the page says that more get Starlink over time until rollout completes in 2027, and that availability may vary depending on your aircraft and route",
+      typeName: "an A350",
+      matchType: virginAtlanticA350,
+      // Our own choice, as for Aer Lingus: the page is undated and promises
+      // change ("more aircraft … over time"), so it is read again before the
+      // summer schedule (from March 28, 2027).
+      validThrough: "2027-03-27",
+      validThroughReason: "the end of the winter schedule we read it in",
+    },
+    rollout: {
+      status: "in_progress",
+      statusLabel: "On its A350 fleet",
+      phaseNote:
+        "Virgin Atlantic's own page, checked November 26, 2026, says Starlink is available across its A350 fleet, with more aircraft to follow until rollout completes in 2027.",
+      rosterIsProgramScope: true,
+    },
+    brand: {
+      title: "Virgin Atlantic Starlink",
+      siteTitle: "Does Virgin Atlantic Have Starlink?",
+      description: "Virgin Atlantic says Starlink is available across its A350 fleet.",
+      ogTitle: "Virgin Atlantic Starlink",
+      ogDescription: "Virgin Atlantic says Starlink is available across its A350 fleet.",
+      keywords: "virgin atlantic starlink, virgin atlantic wifi",
+      accentColor: "#0ea5e9",
+      accentColorDim: "#0284c7",
+      socialImagePath: "/static/social-image-hub.webp",
+      analyticsDomain: "airlinestarlinktracker.com",
+    },
+  },
+  SK: {
+    code: "SK",
+    name: "SAS",
+    shortName: "SAS",
+    enabled: true,
+    // Hub flight lookup only, and only from SAS's own release: no aircraft is
+    // counted, so it joins no homepage, fleet or content surface.
+    publicInHub: false,
+    hubFlightLookup: true,
+    iata: "SK",
+    icao: "SAS",
+    operators: [{ icao: "SAS", iata: "SK" }],
+    subfleets: [{ key: "mainline", label: "SAS", match: () => true }],
+    metricTag: "sas",
+    ...SCANDINAVIA_TAIL,
+    minFleetSanity: 0,
+    verifierBackend: null,
+    flightHistoryModel: false,
+    verifySite: "flysas.com",
+    statementRule: {
+      by: "type",
+      quote:
+        "With all 81 A320neo aircraft now equipped, high-speed WiFi from Starlink is available on a significant share of SAS’ European flights.",
+      asOf: "2026-09-01",
+      source: {
+        label: "SAS Group press release",
+        url: "https://www.sasgroup.net/newsroom/press-releases/2026/sas-completes-starlink-installation-across-entire-airbus-a320neo-fleet-in-just-six-months/",
+      },
+      claim: "all 81 of its A320neo aircraft are equipped with Starlink",
+      // Same release: "makes it the first aircraft type in the SAS fleet to
+      // be fully equipped", and "installation preparations progressing for
+      // the remaining aircraft types and further installations planned before
+      // the end of the year". It names no regional or partner-flown aircraft.
+      beyond:
+        "It called the A320neo the first aircraft type in its fleet to be fully equipped, and said that for the remaining types installation preparations were progressing, with further installations planned before the end of the year",
+      typeName: "an A320neo",
+      matchType: sasA320neo,
+      unclearNote:
+        "A booking that says only A320 can mean an A320neo or an older A320, and SAS's statement is about the A320neo alone: check whether yours says A320neo",
+      // Our own choice: the release counts the A320neos of September 1, 2026,
+      // and an aircraft that joins later was not among them.
+      validThrough: "2027-03-27",
+      validThroughReason: "the end of the winter schedule we last read it in",
+    },
+    rollout: {
+      status: "in_progress",
+      statusLabel: "On its A320neo fleet",
+      phaseNote:
+        "SAS said on September 1, 2026 that all 81 of its A320neo aircraft are equipped with Starlink, with its remaining aircraft types to follow.",
+      rosterIsProgramScope: true,
+    },
+    brand: {
+      title: "SAS Starlink",
+      siteTitle: "Does SAS Have Starlink?",
+      description: "SAS says all 81 of its A320neo aircraft are equipped with Starlink.",
+      ogTitle: "SAS Starlink",
+      ogDescription: "SAS says all 81 of its A320neo aircraft are equipped with Starlink.",
+      keywords: "sas starlink, sas wifi",
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
       socialImagePath: "/static/social-image-hub.webp",

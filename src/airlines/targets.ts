@@ -147,6 +147,8 @@ const ROLLOUT_TARGETS: Record<KnownAirlineCode, RolloutTargetDef[]> = {
   // Answered by statement alone: no aircraft is counted, so no target can be
   // measured.
   EI: [],
+  VS: [],
+  SK: [],
 };
 
 /**

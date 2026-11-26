@@ -284,6 +284,35 @@ against the tracker's own answers only.
       are also sold under `EI` numbers. Note what the card for an
       American-operated `EI` number shows: the statement does not cover it
 
+## Virgin Atlantic and SAS (hub endpoint, the stated aircraft type, new in 2.5.0)
+
+Not yet run in a real browser: 2.5.0 was built on 2026-11-26 and tested
+against the tracker's own answers and made-up card text only. How Google
+Flights prints the aircraft type on a card was not seen, so the first three
+checks decide whether this feature works at all.
+
+- [ ] LHR → JFK on Virgin Atlantic, card closed: no badge
+- [ ] Open the card's details. Note exactly how the aircraft type is printed
+      (expected "Airbus A350" or "Airbus A350-1000") and whether "Operated by"
+      appears for a flight Virgin Atlantic flies itself
+- [ ] With the details open on a Virgin Atlantic A350 flight: a gray
+      "Starlink (likely)" badge. Its tooltip begins "Likely Starlink, only if
+      this flight stays on the Airbus A350", quotes Virgin Atlantic's
+      sentence, says "checked 2026-11-26" (never "said on"), and ends with
+      the caution about a partner airline's aircraft and aircraft changes
+- [ ] A Virgin Atlantic 787 or A330 flight, details open: no badge, and with
+      "Starlink only" on the card is not dimmed
+- [ ] A `VS` number operated by Delta, Air France or KLM (LHR → ATL, or any
+      card that says "Operated by"), details open, even on an A350: no badge
+- [ ] CPH → LHR or ARN → OSL on SAS, details open on an "Airbus A320neo":
+      gray "Starlink (likely)"; on an "Airbus A320": no badge
+- [ ] An SAS flight operated by a partner (a CRJ, Embraer or ATR, "Operated
+      by"): no badge
+- [ ] A two-flight card on Virgin Atlantic or SAS: no badge
+- [ ] DevTools: the request to `/api/check-any-flight` carries
+      `aircraft_type` only for `VS` and `SK` numbers, and a United, Alaska,
+      Qatar or Aer Lingus request is unchanged
+
 ## Qatar (hub endpoint, equipment type)
 
 Qatar's flight numbers come and go with its schedule, so pick them on the day:

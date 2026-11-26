@@ -92,6 +92,11 @@
     }`;
   }
 
+  /** The one aircraft type the card's visible text states, or null. */
+  function statedTypeOn(card, segmentCount) {
+    return lib.statedAircraftType(card.innerText || "", segmentCount);
+  }
+
   function attrFlightNumber(card, codes) {
     const elements = card.querySelectorAll("*");
     const scanLimit = Math.min(elements.length, MAX_ATTR_SCAN_ELEMENTS);
@@ -331,8 +336,15 @@
     // Each TIM leg is its own lookup, two legs sharing a number included:
     // they can fly different aircraft.
     const legs = segments.map((seg) => lib.legOf(seg));
+    // The aircraft type the card itself shows, read only for an airline that
+    // is answered by stated type, and only on a one-flight card.
+    const wantsType = segments.some((seg) => lib.wantsAircraftType(seg.flightNumber));
+    const statedType = wantsType ? statedTypeOn(card, segments.length) : null;
+    const types = segments.map((seg) =>
+      lib.wantsAircraftType(seg.flightNumber) ? statedType : null
+    );
     const keys = segments.map((seg, i) =>
-      lib.claimKey(seg.flightNumber, seg.date || pageDate, legs[i])
+      lib.claimKey(seg.flightNumber, seg.date || pageDate, legs[i], types[i])
     );
 
     // Respect the per-pass network budget BEFORE marking processed, so
@@ -345,7 +357,9 @@
     }
 
     const outcomes = await Promise.all(
-      segments.map((seg, i) => lookup.get(seg.flightNumber, seg.date || pageDate, legs[i]))
+      segments.map((seg, i) =>
+        lookup.get(seg.flightNumber, seg.date || pageDate, legs[i], types[i])
+      )
     );
     // The page moved on while this card waited; its answer belongs to a search
     // that is no longer on screen, and settledCards is a new map.
@@ -372,7 +386,15 @@
     // else clears settledCards short of an SPA navigation.
     const settled = outcomes.every((outcome) => !outcome.retryable);
     if (settled) {
-      settledCards.set(card, { signature, badged, badge, tier: lib.filterTier(combined) });
+      settledCards.set(card, {
+        signature,
+        badged,
+        badge,
+        tier: lib.filterTier(combined),
+        // A card answered by stated type is looked up again when the type it
+        // shows changes: opening its details is what first shows one.
+        ...(wantsType ? { wantsType, segmentCount: segments.length, statedType } : {}),
+      });
     }
     return settled;
   }
@@ -391,7 +413,11 @@
         continue;
       }
       const hasBadge = card.querySelector(".starlink-wifi-badge") !== null;
-      const action = lib.settledCardAction(entry, cardSignature(card), hasBadge);
+      const retyped =
+        entry.wantsType && statedTypeOn(card, entry.segmentCount) !== entry.statedType;
+      const action = retyped
+        ? "process"
+        : lib.settledCardAction(entry, cardSignature(card), hasBadge);
       if (action === "restore") {
         addBadge(card, entry.badge.claim, entry.badge.key, entry.badge.title);
       } else if (action === "process") {

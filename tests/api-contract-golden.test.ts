@@ -247,6 +247,14 @@ const CASES: Case[] = [
   // Aer Lingus, by its statement: the ask for a route, and a covered route.
   api(HUB, "/api/check-any-flight", "EI105", EI_DAY),
   api(HUB, "/api/check-any-flight", "EI105", EI_DAY, "&origin=DUB&destination=JFK"),
+  // Virgin Atlantic and SAS, by their statements on one aircraft type: the
+  // ask for the type, the stated type that is covered, and one that is not.
+  api(HUB, "/api/check-any-flight", "VS3", EI_DAY),
+  api(HUB, "/api/check-any-flight", "VS3", EI_DAY, "&aircraft_type=Airbus%20A350-1000"),
+  api(HUB, "/api/check-any-flight", "VS3", EI_DAY, "&aircraft_type=Boeing%20787-9"),
+  api(HUB, "/api/check-any-flight", "SK903", EI_DAY),
+  api(HUB, "/api/check-any-flight", "SK903", EI_DAY, "&aircraft_type=Airbus%20A320neo"),
+  api(HUB, "/api/check-any-flight", "SK903", EI_DAY, "&aircraft_type=Airbus%20A320"),
   ...(
     [
       ["AS100", D1],

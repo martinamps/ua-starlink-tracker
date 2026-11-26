@@ -15,6 +15,16 @@ const StarlinkTrackerLib = (() => {
     AS: Object.freeze({ iata: "AS", airlineName: "Alaska", marker: "Alaska" }),
     QR: Object.freeze({ iata: "QR", airlineName: "Qatar", marker: "Qatar" }),
     EI: Object.freeze({ iata: "EI", airlineName: "Aer Lingus", marker: "Aer Lingus" }),
+    // Answered only for an aircraft type the card itself states (statesType):
+    // the tracker holds no schedule for these, and the airline's statement is
+    // about one type.
+    VS: Object.freeze({
+      iata: "VS",
+      airlineName: "Virgin Atlantic",
+      marker: "Virgin Atlantic",
+      statesType: true,
+    }),
+    SK: Object.freeze({ iata: "SK", airlineName: "SAS", marker: "SAS", statesType: true }),
   });
 
   const CARRIER_CODES = Object.freeze(Object.keys(TRACKED_CARRIERS));
@@ -52,7 +62,7 @@ const StarlinkTrackerLib = (() => {
    * of a multi-leg flight number; it is re-validated here because it arrives
    * over extension messaging. Without one the URL is exactly the pre-2.1 URL.
    */
-  function endpointFor(flightNumber, date, version, leg) {
+  function endpointFor(flightNumber, date, version, leg, aircraftType) {
     const carrier = detectCarrier(flightNumber);
     if (!carrier || !isValidDate(date)) return null;
     const fn = flightNumber.toUpperCase();
@@ -62,6 +72,10 @@ const StarlinkTrackerLib = (() => {
       query += `&origin=${scoped.origin}`;
       if (scoped.destination) query += `&destination=${scoped.destination}`;
     }
+    // Only for an airline answered by stated type, and re-validated: it
+    // arrives over extension messaging. Without one the URL is the 2.4 URL.
+    const type = TRACKED_CARRIERS[carrier].statesType ? typeOf(aircraftType) : null;
+    if (type) query += `&aircraft_type=${encodeURIComponent(type)}`;
     if (typeof version === "string" && version.length > 0) {
       query += `&client=ext-${encodeURIComponent(version)}`;
     }
@@ -164,6 +178,39 @@ const StarlinkTrackerLib = (() => {
     if (!origin) return undefined;
     if (!AIRPORT_RE.test(seg.destination ?? "")) return { origin };
     return seg.destination === origin ? undefined : { origin, destination: seg.destination };
+  }
+
+  // An aircraft type as a results card prints it, whole: the lookahead refuses
+  // a match that stops short of the type's end ("Airbus A350 900"), since a
+  // clipped type could read as another one.
+  const AIRCRAFT_TYPE_RE =
+    /\b(?:Airbus A\d{3}(?:-\d{3,4})?(?:neo|XLR|LR)?|Boeing 7\d7(?:-\d{1,3}(?:ER|LR)?)?(?: MAX(?: \d{1,2})?)?|Embraer E?\d{3}(?:-E2)?|Bombardier CRJ ?\d{3,4}|Canadair RJ ?\d{3,4}|ATR ?\d{2}(?:-\d{3})?)(?![ -]?[A-Za-z0-9])/g;
+  const TYPE_TEXT_RE = /^[A-Za-z0-9 -]{1,40}$/;
+
+  function typeOf(value) {
+    return typeof value === "string" && TYPE_TEXT_RE.test(value) ? value : null;
+  }
+
+  /** Does this flight number belong to an airline answered by stated type? */
+  function wantsAircraftType(flightNumber) {
+    const carrier = detectCarrier(flightNumber);
+    return Boolean(carrier && TRACKED_CARRIERS[carrier].statesType);
+  }
+
+  /**
+   * The one aircraft type a card's visible text states, or null. Null unless
+   * the card shows a single flight (`segmentCount` 1): with two legs nothing
+   * says which leg a type belongs to. Null when the text says "Operated by":
+   * the airline's statement is about its own aircraft, and a partner's
+   * aircraft of the same type is not covered. Null when two different types
+   * appear. Every doubt ends in no type, so in no badge.
+   */
+  function statedAircraftType(text, segmentCount) {
+    if (typeof text !== "string" || segmentCount !== 1) return null;
+    if (/operated by/i.test(text)) return null;
+    const found = new Set(text.match(AIRCRAFT_TYPE_RE) ?? []);
+    if (found.size !== 1) return null;
+    return typeOf([...found][0]);
   }
 
   /**
@@ -286,9 +333,10 @@ const StarlinkTrackerLib = (() => {
       claim.aircraftType = typeof type === "string" ? type.slice(0, 60) : null;
     }
 
-    // An airline answered from its own dated statement, by route (Aer Lingus).
-    // Only a route the statement covers is a claim; "needs_route", a route it
-    // doesn't cover and a date outside it stay unknown, never a no.
+    // An airline answered from its own dated statement: by route (Aer
+    // Lingus), or for the aircraft type the card states (Virgin Atlantic,
+    // SAS). Only "likely" is a claim; every other answer ("needs_route",
+    // "needs_type", another type, a date outside it) stays unknown, never a no.
     const statement = payload.airline_statement;
     if (statement && typeof statement === "object") {
       if (statement.answer === "likely" && typeof statement.quote === "string") {
@@ -296,6 +344,9 @@ const StarlinkTrackerLib = (() => {
         claim.statement = {
           quote: statement.quote.slice(0, 200),
           asOf: DATE_RE.test(statement.as_of ?? "") ? statement.as_of : null,
+          // An undated page: the date is the day it was read, not said.
+          checked: statement.as_of_kind === "checked",
+          statedType: statement.by === "aircraft_type" ? typeOf(statement.aircraft_type) : null,
         };
       }
       return claim;
@@ -528,9 +579,20 @@ const StarlinkTrackerLib = (() => {
       // The airline's own sentence, quoted: the tracker holds no aircraft or
       // schedule for this airline, so it adds nothing of its own.
       const who = claim.airline || "The airline";
-      const when = claim.statement?.asOf ? ` on ${claim.statement.asOf}` : "";
+      const asOf = claim.statement?.asOf;
+      const said = claim.statement?.checked
+        ? `${who}'s own page${asOf ? `, checked ${asOf},` : ""} says`
+        : `${who} said${asOf ? ` on ${asOf}` : ""},`;
+      const quoted = `${said} "${claim.statement?.quote ?? ""}"`;
+      const type = claim.statement?.statedType;
+      if (type) {
+        return (
+          `Likely Starlink, only if this flight stays on the ${type} this card shows: ${quoted} ` +
+          `The tracker goes by the type on the card alone and holds no ${who} schedule. That holds for an aircraft ${who} itself flies, not a partner airline's, and an aircraft change can alter it.`
+        );
+      }
       return (
-        `Likely Starlink: ${who} said${when}, "${claim.statement?.quote ?? ""}" ` +
+        `Likely Starlink: ${quoted} ` +
         `That holds for flights ${who} itself operates, not a partner airline's, and a last-minute aircraft change can alter it.`
       );
     }
@@ -629,10 +691,12 @@ const StarlinkTrackerLib = (() => {
 
   // ── lookup and pass scheduling ─────────────────────────────────────────────
 
-  /** One cache entry per leg; an unscoped lookup keeps the pre-2.1 key. */
-  function claimKey(flightNumber, date, leg) {
-    if (!leg) return `${flightNumber}-${date}`;
-    return `${flightNumber}-${date}-${leg.origin}-${leg.destination || ""}`;
+  /** One cache entry per leg, and per stated aircraft type; an unscoped
+   * lookup keeps the pre-2.1 key. */
+  function claimKey(flightNumber, date, leg, aircraftType) {
+    const type = aircraftType ? `-type:${aircraftType}` : "";
+    if (!leg) return `${flightNumber}-${date}${type}`;
+    return `${flightNumber}-${date}-${leg.origin}-${leg.destination || ""}${type}`;
   }
 
   /**
@@ -660,8 +724,8 @@ const StarlinkTrackerLib = (() => {
       return cached(key) !== null || pending.has(key);
     }
 
-    function get(flightNumber, date, leg) {
-      const key = claimKey(flightNumber, date, leg);
+    function get(flightNumber, date, leg, aircraftType) {
+      const key = claimKey(flightNumber, date, leg, aircraftType);
       const hit = cached(key);
       if (hit) return Promise.resolve(hit);
       const inflight = pending.get(key);
@@ -676,6 +740,7 @@ const StarlinkTrackerLib = (() => {
             destination: leg.destination,
           }
         : { action: "checkFlight", flightNumber, date };
+      if (aircraftType) message.aircraftType = aircraftType;
       const lookup = Promise.resolve()
         .then(() => send(message))
         .then(claimFromResponse, () => ({ claim: unknownClaim(), retryable: true }))
@@ -782,6 +847,8 @@ const StarlinkTrackerLib = (() => {
     parseTimSegments,
     timCardSegments,
     legOf,
+    wantsAircraftType,
+    statedAircraftType,
     carriersNamedIn,
     parseAttrFlightNumber,
     extractFlightNumbersFromText,

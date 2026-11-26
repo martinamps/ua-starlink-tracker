@@ -34,14 +34,18 @@ interface AirlineInfo {
   how_to_check?: { text: string; source: { label: string; url: string } };
 }
 
-/** The server's lead for a route its airline's statement covers
- * (statement-rule.ts); the label says it, so the sentence after it doesn't. */
-const LIKELY_LEAD = "Likely yes. ";
+/** The server's leads that a label already says (statement-rule.ts): for a
+ * route or type its airline's statement covers, and for a type rule with no
+ * type stated. The sentence printed after the label drops them. */
+const SAID_BY_LABEL = ["Likely yes. ", "It depends on the aircraft. "];
 
 const STATEMENT_LABELS: Record<string, [string, string]> = {
   likely: ["Likely yes", "text-accent"],
   needs_route: ["Route needed", "text-muted"],
   not_covered: ["No answer for this route", "text-muted"],
+  needs_type: ["Depends on the aircraft", "text-muted"],
+  unclear_type: ["No answer for this aircraft type", "text-muted"],
+  other_type: ["No answer for this aircraft type", "text-muted"],
   outside_dates: ["No answer for this date", "text-muted"],
 };
 
@@ -49,7 +53,12 @@ interface CheckAnyBody {
   error?: string;
   airline_info?: AirlineInfo;
   /** An airline answered from its own dated statement, by route. */
-  airline_statement?: { answer: string; source: { label: string; url: string } };
+  airline_statement?: {
+    answer: string;
+    source: { label: string; url: string };
+    /** "aircraft_type" when the statement is about one type, not routes. */
+    by?: string;
+  };
   hasStarlink?: boolean | null;
   probability?: number;
   confidence?: string;
@@ -93,7 +102,8 @@ export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
   const stated = d.airline_statement ? STATEMENT_LABELS[d.airline_statement.answer] : undefined;
   if (d.airline_statement && stated) {
     const reason = d.reason ?? "";
-    const rest = reason.startsWith(LIKELY_LEAD) ? reason.slice(LIKELY_LEAD.length) : reason;
+    const lead = SAID_BY_LABEL.find((l) => reason.startsWith(l)) ?? "";
+    const rest = reason.slice(lead.length);
     return `<span class="${stated[1]}">${stated[0]}</span> · ${esc(d.airline || "")} · ${esc(rest)} (${sourceLink(d.airline_statement.source)})`;
   }
   const p = typeof d.probability === "number" ? d.probability : null;
@@ -171,24 +181,34 @@ function wireCheckAny(form: HTMLFormElement): void {
   }
   const number = form.querySelector('input[name="flight_number"]') as HTMLInputElement | null;
   const button = form.querySelector('button[type="submit"]') as HTMLButtonElement | null;
-  // The route fields belong to the airline that asked for them: another
-  // airline's number must not be scoped by airports typed for the last one.
-  const route = document.getElementById(`${form.id}-route`);
-  const routeInputs = Array.from(route?.querySelectorAll("input") ?? []);
-  const showRoute = (code: string | null) => {
-    if (!route) return;
-    route.classList.toggle("hidden", code === null);
-    route.dataset.routeFor = code ?? "";
-    for (const input of routeInputs) {
-      input.disabled = code === null;
-      if (code === null) input.value = "";
-    }
+  // The route fields, and the aircraft-type field, belong to the airline that
+  // asked for them: another airline's number must not be scoped by airports,
+  // or answered for a type, typed for the last one.
+  const askBlock = (suffix: string) => {
+    const block = document.getElementById(`${form.id}-${suffix}`);
+    const inputs = Array.from(block?.querySelectorAll("input") ?? []);
+    return {
+      heldFor: () => block?.dataset.routeFor ?? "",
+      show: (code: string | null) => {
+        if (!block) return;
+        block.classList.toggle("hidden", code === null);
+        block.dataset.routeFor = code ?? "";
+        for (const input of inputs) {
+          input.disabled = code === null;
+          if (code === null) input.value = "";
+        }
+      },
+    };
   };
+  const route = askBlock("route");
+  const type = askBlock("type");
   // The placeholder lists real examples ("UA1736, AS118…"); the first one is the hint.
   const example = number?.placeholder.split(",")[0].replace(/…$/, "").trim() ?? "";
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    if (route && route.dataset.routeFor !== carrierCode(number?.value ?? "")) showRoute(null);
+    for (const block of [route, type]) {
+      if (block.heldFor() !== carrierCode(number?.value ?? "")) block.show(null);
+    }
     const params = new URLSearchParams();
     new FormData(form).forEach((v, k) => {
       if (v) params.set(k, String(v));
@@ -203,7 +223,10 @@ function wireCheckAny(form: HTMLFormElement): void {
     fetch(`/api/check-any-flight?${params}`)
       .then((r) => r.json() as Promise<CheckAnyBody>)
       .then((d) => {
-        showRoute(d.airline_statement ? carrierCode(typed) : null);
+        const byType = d.airline_statement?.by === "aircraft_type";
+        const code = d.airline_statement ? carrierCode(typed) : null;
+        route.show(byType ? null : code);
+        type.show(byType ? code : null);
         out.innerHTML =
           checkAnyHtml(d, community) +
           (d.error ? shapeHint(typed, example) : numberNoteHtml(notes, typed)) +

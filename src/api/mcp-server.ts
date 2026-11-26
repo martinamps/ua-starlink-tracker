@@ -85,6 +85,7 @@ import {
   predictRoute,
   routeBaseline,
 } from "../scripts/starlink-predictor";
+import { aircraftTypeText } from "../server/community-wire";
 import { jsonRpc, mcpMethodNotAllowed } from "../server/respond";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
@@ -326,6 +327,15 @@ function buildTools(scope: Scope) {
       ? "not confirmed"
       : "not yet verified";
 
+  // Hub only: the airlines answered from a statement about one aircraft type.
+  const typeRuled =
+    scope === "ALL"
+      ? hubLookupAirlines()
+          .filter((a) => a.statementRule?.by === "type")
+          .map((a) => a.name)
+          .join(" and ")
+      : "";
+
   const tools = [
     {
       name: "check_flight",
@@ -354,6 +364,14 @@ function buildTools(scope: Scope) {
             description:
               "Optional 3-letter IATA arrival airport of the traveller's leg (e.g. 'SAN'); with origin, picks one leg of a multi-leg flight number.",
           },
+          ...(typeRuled
+            ? {
+                aircraft_type: {
+                  type: "string",
+                  description: `Optional aircraft type exactly as the traveller's booking shows it (e.g. 'Airbus A350-1000'). Read only for ${typeRuled}, answered from the airline's own statement about one aircraft type; pass it only when the traveller's booking or itinerary states it — never guess it.`,
+                },
+              }
+            : {}),
         },
         required: ["flight_number", "date"],
         examples: [{ flight_number: example, date: "2026-05-15" }],
@@ -579,8 +597,9 @@ function withToolAnnotations<T extends { name: string }>(tool: T) {
 
 const TOOL_NAMES = buildTools("UA").map((t) => t.name);
 // Parameter names are the same on every scope; only the descriptions differ.
+// The hub adds one (check_flight's aircraft_type), so its list is the full one.
 const TOOL_PARAMS: Record<string, string[]> = Object.fromEntries(
-  buildTools("UA").map((t) => [t.name, Object.keys(t.inputSchema.properties)])
+  buildTools("ALL").map((t) => [t.name, Object.keys(t.inputSchema.properties)])
 );
 
 // Cheap edit-distance for "did you mean" — tool names are short, so O(n*m) is fine.
@@ -713,7 +732,13 @@ function invalidDateError(): ToolResult {
 async function toolCheckFlight(
   hostReader: ScopedReader,
   getReader: GetReader,
-  args: { flight_number?: unknown; date?: unknown; origin?: unknown; destination?: unknown },
+  args: {
+    flight_number?: unknown;
+    date?: unknown;
+    origin?: unknown;
+    destination?: unknown;
+    aircraft_type?: unknown;
+  },
   opts: { undated?: boolean } = {}
 ): Promise<ToolResult> {
   const flightNumber =
@@ -739,7 +764,15 @@ async function toolCheckFlight(
     flightNumber,
     date,
     withLeg(
-      hostReader.scope === "ALL" ? { lookupTail: null } : undefined,
+      hostReader.scope === "ALL"
+        ? {
+            lookupTail: null,
+            // Read only for an airline answered by its statement on one type.
+            ...(cfg.statementRule?.by === "type"
+              ? { aircraftType: aircraftTypeText(args.aircraft_type) }
+              : {}),
+          }
+        : undefined,
       parseLegQuery(
         typeof args.origin === "string" ? args.origin : null,
         typeof args.destination === "string" ? args.destination : null
@@ -1003,9 +1036,10 @@ const HUB_LOOKUP_INSTRUCTION = [
   // No schedule is held for these, so only the route places a flight.
   ...hubLookupAirlines()
     .filter((a) => a.statementRule)
-    .map(
-      (a) =>
-        `• ${a.name} (${a.iata}…): use check_flight with origin and destination — it answers by route from ${a.name}'s own dated statement, and says so; without both airports it can only ask for them.\n`
+    .map((a) =>
+      a.statementRule?.by === "type"
+        ? `• ${a.name} (${a.iata}…): use check_flight with aircraft_type, the type the traveller's booking shows — it answers for that type from ${a.name}'s own dated statement, and says so; without a stated type it can only ask for one. Never guess the type.\n`
+        : `• ${a.name} (${a.iata}…): use check_flight with origin and destination — it answers by route from ${a.name}'s own dated statement, and says so; without both airports it can only ask for them.\n`
     ),
 ].join("");
 
@@ -1432,7 +1466,9 @@ function formatCarrierPrediction(
       ? `**${normalized}**: ${joinSentences(describeCarrierPrediction(cfg, answer), "For a firm answer, use check_flight with a date to see the scheduled aircraft")}`
       : answer.kind === "statement"
         ? // This tool takes no airports, and only a route places the flight.
-          `${cfg.name} is answered by route, from its own dated statement: call check_flight with this flight number, its date, and the origin and destination airports.`
+          cfg.statementRule?.by === "type"
+          ? `${cfg.name} is answered by aircraft type, from its own dated statement: call check_flight with this flight number, its date, and aircraft_type, the type the traveller's booking shows.`
+          : `${cfg.name} is answered by route, from its own dated statement: call check_flight with this flight number, its date, and the origin and destination airports.`
         : joinSentences(
             describeCarrierPrediction(cfg, answer),
             "Use check_flight with a date to see the scheduled aircraft"

@@ -252,6 +252,8 @@ const TAIL_SAMPLES: Record<string, string> = {
   QR: "A7-ALA",
   AF: "F-HTYA",
   EI: "EI-EIN",
+  VS: "G-VLUX",
+  SK: "SE-ROA",
 };
 
 describe("tail patterns", () => {

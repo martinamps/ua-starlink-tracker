@@ -17,9 +17,13 @@ export { noModelConfidence } from "../scripts/starlink-predictor";
  * else is ignored rather than rejected, so a bad value can't break a lookup. */
 const AIRCRAFT_TYPE_PARAM = /^[A-Za-z0-9 ()-]{1,40}$/;
 
-export function aircraftTypeParam(url: URL): string | null {
-  const raw = url.searchParams.get("aircraft_type")?.trim();
+export function aircraftTypeText(value: unknown): string | null {
+  const raw = typeof value === "string" ? value.trim() : "";
   return raw && AIRCRAFT_TYPE_PARAM.test(raw) ? raw : null;
+}
+
+export function aircraftTypeParam(url: URL): string | null {
+  return aircraftTypeText(url.searchParams.get("aircraft_type"));
 }
 
 export type TypeStatus =

@@ -1742,7 +1742,8 @@ const mcp: Handler = async (ctx) => {
       ogTitle: "Add Starlink Tracker to Claude",
     };
     if (!site.features.mcpPage) {
-      const description = `Paste one URL into Claude Desktop. ${mcpPageCopy(site).dek}`;
+      const copy = mcpPageCopy(site);
+      const description = `Paste one URL into Claude Desktop. ${copy.metaDek ?? copy.dek}`;
       return renderSubPage(ctx, McpPage, "/mcp", {
         ...meta,
         siteDescription: description,

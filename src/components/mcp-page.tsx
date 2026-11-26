@@ -32,11 +32,18 @@ const EITHER = new Intl.ListFormat("en-GB", { style: "long", type: "disjunction"
  * the hub looks up every hub-lookup airline and compares them on a route, a
  * planner airline also builds connections, any other airline answers per
  * flight and per aircraft type. */
-export function mcpPageCopy(site: SiteConfig): { dek: string; prompts: string[] } {
+export function mcpPageCopy(site: SiteConfig): {
+  dek: string;
+  /** The dek for a meta description, where the hub's list of airlines no
+   * longer fits whole. */
+  metaDek?: string;
+  prompts: string[];
+} {
   if (site.scope === "ALL") {
     const airlines = hubLookupAirlines();
     return {
       dek: `Ask Claude whether your ${EITHER.format(airlines.map((a) => a.shortName))} flight has Starlink, and compare airlines on a route.`,
+      metaDek: `Ask Claude whether your flight has Starlink on ${airlines.length} airlines, and compare airlines on a route.`,
       prompts: [
         `Does ${airlines[0].iata}544 tomorrow have Starlink?`,
         "Which airline has the best Starlink odds from Seattle to San Francisco?",
