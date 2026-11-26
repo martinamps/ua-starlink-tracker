@@ -42,3 +42,22 @@ export const PLACE_ALIASES: readonly PlaceAlias[] = [
   { names: ["philly"], airports: ["PHL"] },
   { names: ["nola"], airports: ["MSY"] },
 ];
+
+/**
+ * The airports behind letters shaped like a code that are a place's name
+ * instead: a city code ("NYC") or "nola". Null for anything else. For the two
+ * readers that meet such letters without the names table: the planner's page
+ * before its names file has loaded, and the plan address.
+ */
+export function placeCodeAirports(text: string): readonly string[] | null {
+  const typed = text.trim().toLowerCase();
+  if (!/^[a-z]{3,4}$/.test(typed)) return null;
+  return PLACE_ALIASES.find(({ names }) => names.includes(typed))?.airports ?? null;
+}
+
+/** "JFK, LGA or EWR": a row's airports as a sentence offers them. */
+export function orList(codes: readonly string[]): string {
+  return codes.length > 1
+    ? `${codes.slice(0, -1).join(", ")} or ${codes[codes.length - 1]}`
+    : (codes[0] ?? "");
+}

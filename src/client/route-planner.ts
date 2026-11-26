@@ -7,6 +7,7 @@
  */
 import type { RouteFlightBoard } from "../api/route-flights";
 import { probLabel, probTier } from "../components/ui/format";
+import { orList, placeCodeAirports } from "../utils/airport-aliases";
 import type { AirportBox, attachAirportBox } from "./airport-picker";
 import { esc } from "./esc";
 import { HINT_ERROR, HINT_PLAIN } from "./hint-classes";
@@ -173,7 +174,7 @@ const NAME_MAX = 40;
  * fetched when a visitor first touches a box, so a page view that never
  * searches by name never pays for the table.
  */
-function wireAirportNames(
+export function wireAirportNames(
   form: HTMLFormElement,
   boxes: HTMLInputElement[]
 ): (box: HTMLInputElement) => Promise<string | null> {
@@ -247,11 +248,16 @@ function wireAirportNames(
   };
   return async (box) => {
     const typed = box.value.trim();
+    // Letters shaped like a code that name a city (NYC, typed fast or arriving
+    // in the address) are no code: they wait for the list like any name.
+    const cityAirports = attached.has(box) ? null : placeCodeAirports(typed);
     // A code never waits on the table.
-    if (!attached.has(box) && CODE_SHAPED.test(typed)) {
+    if (!attached.has(box) && !cityAirports && CODE_SHAPED.test(typed)) {
       sentAsTyped.set(box, box.value);
-      // A "did not load" line from an earlier try no longer applies.
+      // A "did not load" line from an earlier try no longer applies, under
+      // the box or in the status line.
       say(box, "");
+      announce("");
       return typed.toUpperCase();
     }
     if (!attached.has(box)) {
@@ -261,6 +267,21 @@ function wireAirportNames(
     await load();
     const picker = attached.get(box);
     if (picker) return picker.resolve();
+    // Without the list, the city's airports are still known: one is searched,
+    // several are named for the visitor to type.
+    if (cityAirports?.length === 1) {
+      box.value = cityAirports[0];
+      say(box, "");
+      announce("");
+      return cityAirports[0];
+    }
+    if (cityAirports) {
+      const which = `${typed.toUpperCase()} covers several airports. Enter ${orList(cityAirports)}.`;
+      say(box, which, true);
+      announce(which);
+      box.focus();
+      return null;
+    }
     const failed = "The airport list did not load. Enter a 3-letter airport code, or try again.";
     say(box, failed, true);
     announce(failed);

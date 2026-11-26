@@ -275,6 +275,7 @@ import type {
   RouteSchedule,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
+import { orList, placeCodeAirports } from "../utils/airport-aliases";
 import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-names";
 import {
   airportLocalDate,
@@ -1559,9 +1560,15 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   if (!from || !to || unknown.length > 0) {
     // Only letters shaped like a code are said back.
     const named = unknown.filter((code) => /^[A-Z]{3,4}$/.test(code));
+    // A city code (NYC from an address, or typed before the page's names
+    // file loaded) is offered that city's airports, from the alias list.
+    const offers = named.flatMap((code) => {
+      const airports = placeCodeAirports(code);
+      return airports ? [` For ${code}, try ${orList(airports)}.`] : [];
+    });
     const message =
       named.length === unknown.length
-        ? `No airport on record with the code ${named.join(" or ")}. Enter a city or a 3-letter airport code.`
+        ? `No airport on record with the code ${named.join(" or ")}.${offers.join("")} Enter a city or a 3-letter airport code.`
         : "Enter a 3-letter airport code for both airports.";
     return json({ origin, destination, itineraries: [], baseline: null, message });
   }

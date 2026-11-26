@@ -86,11 +86,16 @@ function table(): Row[] {
   return rows;
 }
 
+/** A name this short is offered only once typed whole: "nol" is not yet "nola". */
+const STARTED_ALIAS_MIN = 5;
+
 /**
  * The airports an alias names for this text. `whole` when the text is the
  * alias itself, spaces and dots aside ("dc", "D.C.", "new york", "newyork");
  * `started` when it begins one, from three letters on, so "new" already
- * lists Newark but "d" does not list Dulles.
+ * lists Newark but "d" does not list Dulles. A short alias is never started:
+ * three letters that only begin "nola" would otherwise be sent as New
+ * Orleans, where they are a code for the plan address to refuse.
  */
 function aliased(q: string): { whole: Set<string>; started: Set<string> } {
   const whole = new Set<string>();
@@ -101,7 +106,7 @@ function aliased(q: string): { whole: Set<string>; started: Set<string> } {
       const into =
         name.replace(/ /g, "") === closed
           ? whole
-          : q.length >= 3 && name.startsWith(q)
+          : q.length >= 3 && name.length >= STARTED_ALIAS_MIN && name.startsWith(q)
             ? started
             : null;
       if (into) for (const code of airports) into.add(code);
@@ -128,7 +133,9 @@ const SQUASH_MIN = 6;
  * or that match with the spaces closed up ("la guardia", "newyork"), then
  * codes that start with it. When the text is a place's other name, only that
  * place and names that start the same way are offered: "new york" is the
- * city's airports, not every airport in the state.
+ * city's airports, not every airport in the state. Three letters are the
+ * exception: a city code is also the start of a word, so "chi" leads with
+ * Chicago and still offers Ho Chi Minh City.
  * Within a rank, the airports in `prefer` come first in its order (the ones
  * this airline flies most, so "chicago" leads with O'Hare and "new york"
  * with Newark on United's site), then by name.
@@ -147,13 +154,14 @@ export function searchAirports(
   const squash = q.replace(/ /g, "");
   const closedUp = squash.length >= SQUASH_MIN ? squash : null;
   const { whole, started } = aliased(q);
+  const onlyThePlace = whole.size > 0 && !(tokens.length === 1 && q.length === 3);
   const ranked: Array<{ rank: number; row: Row }> = [];
   for (const row of table()) {
     let rank = -1;
     if (row.code === exact) rank = 0;
     else if (whole.has(row.code)) rank = 1;
     else if (started.has(row.code) || row.phrases.some((p) => p.startsWith(q))) rank = 2;
-    else if (whole.size > 0) rank = -1;
+    else if (onlyThePlace) rank = -1;
     else if (tokens.every((t) => row.words.some((w) => w.startsWith(t)))) rank = 3;
     else if (
       closedUp &&
@@ -195,7 +203,9 @@ export type AirportResolution =
  * choice, and a place's other name that covers several airports is always a
  * choice. Three letters that match nothing still go through as a code, since
  * the data may hold an airport this table lacks; the plan address refuses
- * one it does not know. Four letters that match nothing are no code at all.
+ * one it does not know. So does a K/P spelling of three such letters, which
+ * the plan address reads by its own, wider table. Any other four letters that
+ * match nothing are no code at all.
  */
 export function resolveAirport(text: string, prefer: readonly string[] = []): AirportResolution {
   const typed = text.trim();
@@ -205,6 +215,6 @@ export function resolveAirport(text: string, prefer: readonly string[] = []): Ai
   const { matches, total } = searchAirports(typed, 8, prefer);
   if (total === 1) return { kind: "code", code: matches[0].code, name: matches[0].name };
   if (total > 1) return { kind: "choose", matches, total };
-  if (/^[A-Z]{3}$/.test(upper)) return { kind: "code", code: upper, name: null };
+  if (/^[KP]?[A-Z]{3}$/.test(upper)) return { kind: "code", code: upper, name: null };
   return { kind: "none" };
 }
