@@ -76,6 +76,7 @@ export const ASSIGNMENT_LOG_DDL = `
     dep_date TEXT NOT NULL,
     departure_airport TEXT NOT NULL,
     seen_at INTEGER NOT NULL,
+    cleared_at INTEGER,
     PRIMARY KEY (airline, flight_number, dep_date, departure_airport)
   );
 `;
@@ -332,6 +333,13 @@ export interface DepartureReading {
  * mark; one that does not return it leaves it, as absence is not news. A mark
  * with no airport can't be matched to a departure, so any later lookup that
  * returns a departure clears it and sets it again if it still stands.
+ *
+ * `now` is when the lookup was fetched, and a row keeps both times: seen_at,
+ * the newest lookup that named an unread aircraft there (0 for none), and
+ * cleared_at, the newest that returned the departure without one. The mark
+ * stands while seen_at is not older than cleared_at, so an older lookup
+ * replayed from the cache after a newer one cleared it changes nothing. A
+ * tie keeps the mark: it can only take an answer away.
  */
 export function noteUnreadAircraft(
   db: Database,
@@ -356,11 +364,13 @@ export function noteUnreadAircraft(
   }
   const a = airlineIn(airlines);
   const flight = `${a.sql} AND flight_number IN (${placeholders(variants)})`;
+  const stored = ensureAirlinePrefix(cfg, flightNumber);
   try {
     db.transaction(() => {
       db.query(
-        `DELETE FROM unread_aircraft_log WHERE ${flight} AND departure_airport = '' AND seen_at <= ?`
-      ).run(...a.params, ...variants, now);
+        `UPDATE unread_aircraft_log SET cleared_at = MAX(COALESCE(cleared_at, 0), ?)
+         WHERE ${flight} AND departure_airport = ''`
+      ).run(now, ...a.params, ...variants);
       for (const d of departures.values()) {
         if (d.unread) {
           db.query(
@@ -368,12 +378,23 @@ export function noteUnreadAircraft(
              VALUES (?, ?, ?, ?, ?)
              ON CONFLICT (airline, flight_number, dep_date, departure_airport) DO UPDATE SET
                seen_at = MAX(seen_at, excluded.seen_at)`
-          ).run(cfg.code, ensureAirlinePrefix(cfg, flightNumber), d.date, d.origin, now);
+          ).run(cfg.code, stored, d.date, d.origin, now);
         } else {
-          db.query(
-            `DELETE FROM unread_aircraft_log
-             WHERE ${flight} AND dep_date = ? AND departure_airport = ? AND seen_at <= ?`
-          ).run(...a.params, ...variants, d.date, d.origin, now);
+          const cleared = db
+            .query(
+              `UPDATE unread_aircraft_log SET cleared_at = MAX(COALESCE(cleared_at, 0), ?)
+               WHERE ${flight} AND dep_date = ? AND departure_airport = ?`
+            )
+            .run(now, ...a.params, ...variants, d.date, d.origin);
+          // No row yet: one is kept all the same, so a lookup fetched before
+          // this one that lands after it finds the departure already cleared.
+          if (cleared.changes === 0) {
+            db.query(
+              `INSERT OR IGNORE INTO unread_aircraft_log
+                 (airline, flight_number, dep_date, departure_airport, seen_at, cleared_at)
+               VALUES (?, ?, ?, ?, 0, ?)`
+            ).run(cfg.code, stored, d.date, d.origin, now);
+          }
         }
       }
     })();
@@ -381,9 +402,10 @@ export function noteUnreadAircraft(
 }
 
 /**
- * Did the last lookup to return one of the flight's departures on that local
- * date name an aircraft there we could not read. False on a database this
- * version never booted on (a read-only copy), which has no such table.
+ * Did the newest lookup to return one of the flight's departures on that
+ * local date name an aircraft there we could not read. False on a database
+ * this version never booted on (a read-only copy), which lacks the table or
+ * its cleared_at column.
  */
 export function hasUnreadAircraft(
   db: Database,
@@ -397,7 +419,8 @@ export function hasUnreadAircraft(
     return !!db
       .query(
         `SELECT 1 FROM unread_aircraft_log
-         WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND dep_date = ? LIMIT 1`
+         WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND dep_date = ?
+           AND seen_at > 0 AND seen_at >= COALESCE(cleared_at, 0) LIMIT 1`
       )
       .get(...a.params, ...variants, depDate);
   } catch {

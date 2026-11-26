@@ -838,6 +838,9 @@ export function setupTables(db: Database) {
   // When a lookup last returned the row's departure without its tail
   // (withdrawUnreturnedSightings); cleared when the tail is seen there again.
   addColumn(db, "flight_assignment_log", "withdrawn_at", "INTEGER");
+  // When a lookup last returned the row's departure with no unread aircraft
+  // on it (noteUnreadAircraft).
+  addColumn(db, "unread_aircraft_log", "cleared_at", "INTEGER");
 
   // Per-tail marks from a curated community fleet guide (AF: FlyerTalk). The
   // section only gates the type and names the operator; the guide's seat and

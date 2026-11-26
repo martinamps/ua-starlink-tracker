@@ -32,6 +32,7 @@ import {
   pruneAssignmentLog,
 } from "../src/database/assignment-log";
 import { utcDay } from "../src/database/chart-bounds";
+import { migrate } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { runAlaskaTrackerSync } from "../src/scripts/alaska-tracker";
 import {
@@ -1268,6 +1269,11 @@ describe("an aircraft the lookup named and we could not read is not the band's a
       return { site, hub, page };
     }
 
+    // A mark is only cleared by a lookup fetched after the one that set it,
+    // and both lookups of a test land in one second: the first is moved back.
+    const aSecondPasses = (db: Database) =>
+      db.run("UPDATE unread_aircraft_log SET seen_at = seen_at - 1 WHERE seen_at > 0");
+
     // The sixth case's tail is readable, so it is logged and already answered without a number.
     test.each(UNREADABLE.slice(0, 5))(
       "%s: the hub and the first paint say no more than the site",
@@ -1328,6 +1334,7 @@ describe("an aircraft the lookup named and we could not read is not the band's a
         noLookup();
         const flatYes = await jsonOf(app, hubPath, HUB_HOST);
         expect((await afterLookup(app, [tailUnread])).hub.probability).toBeUndefined();
+        aSecondPasses(db);
         const { site, hub } = await afterLookup(app, [later]);
         expect(JSON.stringify(site)).not.toContain("could not read");
         expect(JSON.stringify(hub)).not.toContain("could not read");
@@ -1343,6 +1350,7 @@ describe("an aircraft the lookup named and we could not read is not the band's a
       noLookup();
       const flatYes = await jsonOf(app, hubPath, HUB_HOST);
       expect((await afterLookup(app, [UNREADABLE[4][1]])).hub.probability).toBeUndefined();
+      aSecondPasses(db);
       expect((await afterLookup(app, [leg(null, null, ["HNL", "SFO"])])).hub).toEqual(flatYes);
       db.close();
     });
@@ -1370,6 +1378,92 @@ describe("an aircraft the lookup named and we could not read is not the band's a
       expect(hub.probability).toBeUndefined();
       expect(JSON.stringify(hub)).toContain("could not read");
       db.close();
+    });
+
+    // Finding 2c of the second look: an older lookup, replayed from the cache
+    // after a newer one cleared the mark, set it again.
+    describe("the mark goes by when each lookup was fetched", () => {
+      const at = (origin: string, unread: boolean) => [{ origin, departure_time: DEPARTS, unread }];
+      async function marks() {
+        const db = await fleetDb();
+        const reader = createReaderFactory(db)("AS");
+        return {
+          db,
+          note: (origin: string, unread: boolean, fetched: number) =>
+            reader.noteUnreadAircraft("AS812", at(origin, unread), fetched),
+          marked: () => reader.hasUnreadAircraft(["AS812"], DATE),
+        };
+      }
+
+      test("an older lookup replayed after a newer one cleared it sets nothing", async () => {
+        const m = await marks();
+        m.note("HNL", true, now - 600);
+        expect(m.marked()).toBe(true);
+        m.note("HNL", false, now - 60);
+        expect(m.marked()).toBe(false);
+        for (let i = 0; i < 3; i++) {
+          m.note("HNL", true, now - 600);
+          expect(m.marked()).toBe(false);
+        }
+        // A lookup fetched after the clear still sets it, and a replay of the
+        // clear does not undo that.
+        m.note("HNL", true, now);
+        expect(m.marked()).toBe(true);
+        m.note("HNL", false, now - 60);
+        expect(m.marked()).toBe(true);
+        m.note("HNL", false, now + 1);
+        expect(m.marked()).toBe(false);
+        m.db.close();
+      });
+
+      test("an older lookup that lands for the first time after a newer one sets nothing", async () => {
+        const m = await marks();
+        m.note("HNL", false, now - 60);
+        m.note("HNL", true, now - 600);
+        expect(m.marked()).toBe(false);
+        m.db.close();
+      });
+
+      test("two lookups fetched in the same second leave the mark: it errs to not sure", async () => {
+        const m = await marks();
+        m.note("HNL", true, now);
+        m.note("HNL", false, now);
+        expect(m.marked()).toBe(true);
+        m.db.close();
+      });
+
+      test("an unreadable origin's mark is held to the same order", async () => {
+        const m = await marks();
+        m.note("", true, now - 600);
+        expect(m.marked()).toBe(true);
+        m.note("HNL", false, now - 60);
+        expect(m.marked()).toBe(false);
+        m.note("", true, now - 600);
+        expect(m.marked()).toBe(false);
+        m.note("", true, now);
+        expect(m.marked()).toBe(true);
+        m.db.close();
+      });
+
+      test("a table made before the column gains it on the next boot, and reads without it", async () => {
+        const m = await marks();
+        m.db.run("DROP TABLE unread_aircraft_log");
+        m.db.run(`CREATE TABLE unread_aircraft_log (
+          airline TEXT NOT NULL, flight_number TEXT NOT NULL, dep_date TEXT NOT NULL,
+          departure_airport TEXT NOT NULL, seen_at INTEGER NOT NULL,
+          PRIMARY KEY (airline, flight_number, dep_date, departure_airport))`);
+        m.db.run("INSERT INTO unread_aircraft_log VALUES ('AS', 'AS812', ?, 'HNL', ?)", [
+          DATE,
+          now,
+        ]);
+        // Without the column the read fails quietly to "no mark", as on a file with no table.
+        expect(m.marked()).toBe(false);
+        migrate(m.db);
+        expect(m.marked()).toBe(true);
+        m.note("HNL", false, now + 1);
+        expect(m.marked()).toBe(false);
+        m.db.close();
+      });
     });
 
     test("a database this version never booted on answers as before, with no error", async () => {
