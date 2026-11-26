@@ -64,6 +64,16 @@ describe("who runs the site", () => {
     }
   });
 
+  test("llms.txt tells an assistant the same, and never that a community runs the site", async () => {
+    const app = createApp(openSnapshot());
+    for (const site of sites.filter((s) => s.live)) {
+      const { status, text } = await bodyOf(app, "/llms.txt", site.canonicalHost);
+      expect(status).toBe(200);
+      expect(text).not.toMatch(/community-(run|maintained),/);
+      expect(text).toContain("independent, community-oriented and open source");
+    }
+  });
+
   test("a page that does not exist carries it too", async () => {
     const app = createApp(openSnapshot());
     const { status, text } = await bodyOf(app, "/no-such-page", SITES.united.canonicalHost);

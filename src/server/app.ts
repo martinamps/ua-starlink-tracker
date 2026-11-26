@@ -2220,7 +2220,7 @@ function llmsKeyFacts(subject: string, rolloutBullets: string, callCodes: string
 - Whether a *specific flight* has it depends on the *aircraft* assigned, not the route or flight number. Assignments are published ~1-2 days before departure; before that, only a probability estimate is possible.
 ${rolloutBullets}
 - "WiFi" is not the same as "Starlink." Many aircraft still have older Viasat/Panasonic/Thales systems that are slower and usually paid. This site distinguishes them.
-- This tracker is independent and community-maintained, cross-referencing airline schedules, aircraft registries, and live verification, refreshed continuously.`;
+- This tracker is independent, community-oriented and open source, cross-referencing airline schedules, aircraft registries, and live verification, refreshed continuously.`;
 }
 
 // /chrome serves on every host (canonical on United's), so each llms.txt links
