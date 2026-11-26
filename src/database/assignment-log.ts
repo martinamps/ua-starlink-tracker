@@ -139,7 +139,15 @@ function tailStarlinkFlag(db: Database, tailNumber: string, airline: string): nu
   return starlinkFlag(tailEvidence({ listed, fleet, inMod: listed?.in_mod === 1 }));
 }
 
-/** Upsert one row per scheduled leg; first_seen survives, last_seen moves. */
+// A cached lookup is replayed for an hour, so a sighting can arrive after a
+// newer one: it then moves nothing the newer one set.
+const NEWER = "excluded.last_seen >= last_seen";
+
+/**
+ * Upsert one row per scheduled leg; first_seen survives, last_seen moves
+ * forward only. `now` is when the sighting was made: for a lookup, when it
+ * was fetched. A sighting older than the row's withdrawal leaves it withdrawn.
+ */
 export function logFlightAssignments(
   db: Database,
   airline: string,
@@ -159,12 +167,12 @@ export function logFlightAssignments(
        starlink, departure_time, arrival_time, first_seen, last_seen)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (airline, flight_number, dep_date, departure_airport, tail_number) DO UPDATE SET
-      arrival_airport = excluded.arrival_airport,
+      arrival_airport = CASE WHEN ${NEWER} THEN excluded.arrival_airport ELSE arrival_airport END,
       starlink = excluded.starlink,
-      departure_time = excluded.departure_time,
-      arrival_time = excluded.arrival_time,
-      last_seen = excluded.last_seen,
-      withdrawn_at = NULL
+      departure_time = CASE WHEN ${NEWER} THEN excluded.departure_time ELSE departure_time END,
+      arrival_time = CASE WHEN ${NEWER} THEN excluded.arrival_time ELSE arrival_time END,
+      last_seen = MAX(last_seen, excluded.last_seen),
+      withdrawn_at = CASE WHEN withdrawn_at > excluded.last_seen THEN withdrawn_at END
   `);
   for (const f of flights) {
     if (!f.flight_number || !f.departure_airport) continue;
@@ -248,6 +256,8 @@ export interface ReturnedDeparture {
  * Watch feed's swap history reads it; getListedSightings skips a stamped row,
  * and seeing the tail on the departure again clears the stamp. A departure the
  * lookup did not return at all withdraws nothing: absence is not a swap.
+ * `now` is when the lookup was fetched, so a cached one replayed later
+ * withdraws no sighting made after it.
  */
 export function withdrawUnreturnedSightings(
   db: Database,
@@ -262,29 +272,46 @@ export function withdrawUnreturnedSightings(
   );
   if (!cfg || returned.length === 0) return;
   const variants = buildAirlineFlightNumberVariants(cfg, flightNumber);
-  const departures = new Map<string, { where: string; at: (string | number)[]; tails: string[] }>();
+  // The lookup and the log may spell an airport two ways (KSEA, SEA).
+  const departureKey = (origin: string, depDate: string) => `${icaoToIata(origin)}|${depDate}`;
+  // A returned departure, by airport and local date, or by its time alone
+  // where the lookup's origin could not be read, with the tails named on it.
+  const placed = new Map<string, Set<string>>();
+  const unplaced = new Map<number, Set<string>>();
+  const tailsAt = <K>(map: Map<K, Set<string>>, key: K) => {
+    const tails = map.get(key) ?? new Set<string>();
+    map.set(key, tails);
+    return tails;
+  };
   for (const r of returned) {
-    const at = r.origin
-      ? [r.origin, departureLocalDate(r.origin, r.departure_time)]
-      : [r.departure_time];
-    const key = at.join("|");
-    const departure = departures.get(key) ?? {
-      where: r.origin ? "departure_airport = ? AND dep_date = ?" : "departure_time = ?",
-      at,
-      tails: [],
-    };
-    if (r.tail_number) departure.tails.push(r.tail_number);
-    departures.set(key, departure);
+    const tails = r.origin
+      ? tailsAt(placed, departureKey(r.origin, departureLocalDate(r.origin, r.departure_time)))
+      : tailsAt(unplaced, r.departure_time);
+    if (r.tail_number) tails.add(r.tail_number);
   }
   const a = airlineIn(airlines);
   try {
-    for (const { where, at, tails } of departures.values()) {
-      db.query(
-        `UPDATE flight_assignment_log SET withdrawn_at = ?
-         WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND ${where}
-           AND tail_number NOT IN (${placeholders(tails)})
+    const rows = db
+      .query(
+        `SELECT rowid AS id, departure_airport, dep_date, departure_time, tail_number
+         FROM flight_assignment_log
+         WHERE ${a.sql} AND flight_number IN (${placeholders(variants)})
            AND last_seen <= ? AND withdrawn_at IS NULL`
-      ).run(now, ...a.params, ...variants, ...at, ...tails, now);
+      )
+      .all(...a.params, ...variants, now) as Array<{
+      id: number;
+      departure_airport: string;
+      dep_date: string;
+      departure_time: number | null;
+      tail_number: string;
+    }>;
+    const stamp = db.query("UPDATE flight_assignment_log SET withdrawn_at = ? WHERE rowid = ?");
+    for (const row of rows) {
+      const returnedAt = [
+        placed.get(departureKey(row.departure_airport, row.dep_date)),
+        row.departure_time === null ? undefined : unplaced.get(row.departure_time),
+      ];
+      if (returnedAt.some((tails) => tails && !tails.has(row.tail_number))) stamp.run(now, row.id);
     }
   } catch {}
 }
@@ -321,10 +348,11 @@ export function noteUnreadAircraft(
   const variants = buildAirlineFlightNumberVariants(cfg, flightNumber);
   const departures = new Map<string, { origin: string; date: string; unread: boolean }>();
   for (const r of returned) {
-    const date = departureLocalDate(r.origin, r.departure_time);
-    const key = `${r.origin}|${date}`;
+    const origin = icaoToIata(r.origin);
+    const date = departureLocalDate(origin, r.departure_time);
+    const key = `${origin}|${date}`;
     const unread = r.unread || (departures.get(key)?.unread ?? false);
-    departures.set(key, { origin: r.origin, date, unread });
+    departures.set(key, { origin, date, unread });
   }
   const a = airlineIn(airlines);
   const flight = `${a.sql} AND flight_number IN (${placeholders(variants)})`;

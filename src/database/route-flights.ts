@@ -39,19 +39,22 @@ type LegFilter = { origin: string; destination: string } | null;
  * A future leg the log still holds after its tail's schedule was refreshed
  * without it: the plane was swapped off. The updater only follows equipped
  * tails, so nothing newer replaces the row, and the board kept showing the
- * Starlink plane (about one future UA slot in nine on prod data).
+ * Starlink plane (about one future UA slot in nine on prod data). So is one
+ * a later lookup returned without its tail (withdrawUnreturnedSightings).
  */
 const SUPERSEDED_FUTURE_LEG = `uf.departure_time > ?
-  AND EXISTS (
-    SELECT 1 FROM upcoming_flights r
-    WHERE r.tail_number = uf.tail_number AND r.airline = uf.airline
-      AND r.last_updated > uf.last_seen
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM upcoming_flights m
-    WHERE m.tail_number = uf.tail_number AND m.airline = uf.airline
-      AND m.departure_airport = uf.departure_airport AND m.departure_time = uf.departure_time
-  )`;
+  AND (uf.withdrawn_at IS NOT NULL OR (
+    EXISTS (
+      SELECT 1 FROM upcoming_flights r
+      WHERE r.tail_number = uf.tail_number AND r.airline = uf.airline
+        AND r.last_updated > uf.last_seen
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM upcoming_flights m
+      WHERE m.tail_number = uf.tail_number AND m.airline = uf.airline
+        AND m.departure_airport = uf.departure_airport AND m.departure_time = uf.departure_time
+    )
+  ))`;
 
 function loggedLegs(
   db: Database,

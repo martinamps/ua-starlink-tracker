@@ -1644,6 +1644,9 @@ describe("a lookup that returns the departure without the logged tail withdraws 
       leg(UNLISTED.b738, "Boeing 737-800", ["S<b>", "ANC"]),
     ],
     ["names another aircraft", leg(UNLISTED.b738, TYPES.b738.type, route)],
+    ["names no aircraft and spells the origin KSEA", leg(null, null, ["KSEA", "ANC"])],
+    ["names no aircraft and spells the origin sea", leg(null, null, ["sea", "ANC"])],
+    ["names another aircraft from KSEA", leg(UNLISTED.b738, TYPES.b738.type, ["KSEA", "ANC"])],
   ];
 
   test.each(WITHOUT_IT)("a later lookup that %s: the blend, not yes", async (_n, later) => {
@@ -1670,6 +1673,85 @@ describe("a lookup that returns the departure without the logged tail withdraws 
     noLookup();
     expect((await jsonOf(app, hubPath, HUB_HOST)).hasStarlink).toBe(true);
     db.close();
+  });
+
+  describe("a cached lookup replayed after a newer one", () => {
+    const start = Math.floor(Date.parse(`${DATE}T00:00:00Z`) / 1000);
+    const NEXT_DATE = utcDay((start + DAY) * 1000);
+    const asked = now - 600;
+
+    /** The lookup answers `first` when asked for DATE and `next` when asked for the day after. */
+    async function twoLookups(first: ReturnType<typeof leg>, next: ReturnType<typeof leg>) {
+      const db = await fleetDb();
+      db.run("UPDATE starlink_planes SET last_flight_check = ? WHERE TailNumber = ?", [
+        now - 3600,
+        LISTED,
+      ]);
+      const app = createApp(db);
+      const reader = createReaderFactory(db)("AS");
+      let fetches = 0;
+      setAssignmentFetcher(async (_fn, target) => {
+        fetches++;
+        return target < start + DAY ? [first] : [next];
+      });
+      const ask = (day: 0 | 1, at: number) =>
+        lookupFlightTailVerdict(
+          reader,
+          "AS200",
+          day === 0 ? DATE : NEXT_DATE,
+          start + day * DAY,
+          start + (day + 1) * DAY,
+          at
+        );
+      const hub = () => jsonOf(app, hubPath, HUB_HOST);
+      return { db, ask, hub, fetches: () => fetches };
+    }
+
+    test("it does not bring a withdrawn yes back", async () => {
+      // Asked for DATE, the lookup names the tail; asked a minute later for
+      // the next day, it returns the same departure with no aircraft.
+      const { db, ask, hub, fetches } = await twoLookups(
+        leg(LISTED, TYPES.a330.type, route),
+        leg(null, null, route)
+      );
+      await ask(0, asked);
+      expect((await hub()).hasStarlink).toBe(true);
+      await ask(1, asked + 60);
+      expect((await hub()).hasStarlink).toBeNull();
+      await ask(0, asked + 120);
+      expect(fetches()).toBe(2);
+      expect((await hub()).hasStarlink).toBeNull();
+      db.close();
+    });
+
+    test("it does not withdraw a sighting made after it was fetched", async () => {
+      const { db, ask, hub, fetches } = await twoLookups(
+        leg(LISTED, TYPES.a330.type, route),
+        leg(null, null, route)
+      );
+      await ask(1, asked);
+      await ask(0, asked + 60);
+      expect((await hub()).hasStarlink).toBe(true);
+      await ask(1, asked + 120);
+      expect(fetches()).toBe(2);
+      expect((await hub()).hasStarlink).toBe(true);
+      db.close();
+    });
+
+    test("a fresh lookup, fetched later, still withdraws and still restores", async () => {
+      const { db, ask, hub } = await twoLookups(
+        leg(LISTED, TYPES.a330.type, route),
+        leg(null, null, route)
+      );
+      await ask(0, asked);
+      await ask(1, asked + 60);
+      expect((await hub()).hasStarlink).toBeNull();
+      // Past the cache's hour, the lookup for DATE is fetched again and names the tail.
+      setAssignmentFetcher(async () => [leg(LISTED, TYPES.a330.type, route)]);
+      await ask(0, asked + 180);
+      expect((await hub()).hasStarlink).toBe(true);
+      db.close();
+    });
   });
 
   const KEEPS_IT: Array<[string, Array<ReturnType<typeof leg>> | Error]> = [

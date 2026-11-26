@@ -466,6 +466,21 @@ describe("board behavior (synthetic)", () => {
     expect(r?.assignment ?? null).toBeNull();
   });
 
+  test("a plane a later lookup returned the leg without no longer answers it", () => {
+    // Not a tail the updater follows, so only the lookup's stamp can retire the row.
+    log("UA", "UA350", "N222UA", at(1, 23), ["SFO", "ORD"], now - 60);
+    try {
+      expect(row(board(), "UA350").assignment?.tail_number).toBe("N222UA");
+      sdb.run("UPDATE flight_assignment_log SET withdrawn_at = ? WHERE flight_number = 'UA350'", [
+        now,
+      ]);
+      const r = board().flights.find((f) => f.flight_number === "UA350");
+      expect(r?.assignment ?? null).toBeNull();
+    } finally {
+      sdb.run("DELETE FROM flight_assignment_log WHERE flight_number = 'UA350'");
+    }
+  });
+
   test("a past date names the plane that flew", () => {
     const yesterday = departureLocalDate("SFO", at(-1, 16));
     const r = row(board(yesterday), "UA5212");

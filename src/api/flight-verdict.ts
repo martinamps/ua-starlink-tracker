@@ -111,7 +111,11 @@ export function cachedFlightAssignments(
 
   let promise: Promise<Assignment>;
   try {
-    promise = fetchAssignments(flightNumber, targetDateUnix).then(readableLegs);
+    promise = fetchAssignments(flightNumber, targetDateUnix).then((raw) => {
+      const legs = readableLegs(raw);
+      fetchedAt.set(legs, now);
+      return legs;
+    });
   } catch (err) {
     settleShare(true);
     throw err;
@@ -166,6 +170,8 @@ interface UnreadLeg {
   departure_time: number;
 }
 const unreadLegs = new WeakMap<Assignment, UnreadLeg[]>();
+/** When each cached answer was asked for: what it says was true then, not when it is replayed. */
+const fetchedAt = new WeakMap<Assignment, number>();
 const unreadCounts = new WeakMap<FallbackSegment[], number>();
 
 const trimmed = (text: string | null | undefined): string | null =>
@@ -455,6 +461,9 @@ export async function lookupFlightTailVerdict(
     });
   }
 
+  // The log goes by when the lookup was fetched: replayed from the cache, it
+  // must not outrank what a newer lookup of another date has since logged.
+  const asOf = fetchedAt.get(assignments) ?? nowSec;
   // Before the log: a tail the lookup still names is seen again just below.
   reader.withdrawUnreturnedSightings(
     normalizedFlightNumber,
@@ -462,7 +471,7 @@ export async function lookupFlightTailVerdict(
       ...assignments,
       ...(unreadLegs.get(assignments) ?? []).map((u) => ({ ...u, tail_number: null })),
     ],
-    nowSec
+    asOf
   );
   reader.noteUnreadAircraft(
     normalizedFlightNumber,
@@ -470,9 +479,9 @@ export async function lookupFlightTailVerdict(
       ...assignments.map((a) => ({ ...a, unread: false })),
       ...(unreadLegs.get(assignments) ?? []).map((u) => ({ ...u, unread: true })),
     ],
-    nowSec
+    asOf
   );
-  if (segments.length > 0) reader.logResolvedAssignments(normalizedFlightNumber, segments, nowSec);
+  if (segments.length > 0) reader.logResolvedAssignments(normalizedFlightNumber, segments, asOf);
   unreadCounts.set(segments, unread);
   return segments;
 }
