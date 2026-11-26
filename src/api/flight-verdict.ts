@@ -19,6 +19,7 @@ import {
 } from "../observability";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
+import { isAirportCode, isRegistration, plainTypeName } from "../utils/outside-text";
 import { memoPromise } from "../utils/ttl-cache";
 import {
   FR24_QUEUE_SHED_MESSAGE,
@@ -230,10 +231,13 @@ export interface FallbackSegment {
  * hitting FR24.
  */
 export function resolveTailVerdict(
-  reader: ScopedReader,
+  scope: ScopedReader,
   tail: string,
   nowSec = unixNow()
 ): TailVerdict {
+  // The tail was found on one of the scope's flights, so it may be an
+  // operating partner's: a listed Hawaiian A330 on an Alaska number.
+  const reader = scope.assignedTails;
   const sp = reader.getStarlinkPlaneByTail(tail);
 
   if (sp) {
@@ -293,7 +297,7 @@ interface TailVerdict {
 
 /** Shared united_fleet-negative verdict: re-queue stale settles for discovery. */
 function negativeTailVerdict(
-  reader: ScopedReader,
+  reader: ScopedReader["assignedTails"],
   tail: string,
   uf: { verified_wifi: string | null; verified_at: number | null },
   nowSec: number,
@@ -341,13 +345,16 @@ export async function lookupFlightTailVerdict(
   const segments: FallbackSegment[] = [];
 
   for (const a of assignments) {
-    if (!a.tail_number) continue;
+    // The lookup's strings are an outside service's text and are echoed in
+    // answers: a leg whose tail or airports aren't shaped like one is dropped.
+    if (!isRegistration(a.tail_number)) continue;
+    if (!isAirportCode(a.origin) || !isAirportCode(a.destination)) continue;
     if (!matchesLocalDate(date, a.origin, a.departure_time, startOfDay, endOfDay)) continue;
 
     const v = resolveTailVerdict(reader, a.tail_number, nowSec);
     segments.push({
       tail_number: a.tail_number,
-      aircraft_model: v.aircraft_model || a.aircraft_model,
+      aircraft_model: v.aircraft_model || plainTypeName(a.aircraft_model),
       origin: a.origin,
       destination: a.destination,
       departure_time: a.departure_time,

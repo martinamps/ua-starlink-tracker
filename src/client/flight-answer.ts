@@ -67,6 +67,14 @@ export interface CheckFlightBody {
   fallback?: { segments?: WireSegment[] };
   /** The scheduled aircraft a type answer names. */
   assignment?: { tail_number?: string | null };
+  /** The airline's own dated count, where it and not our tail list decided the answer. */
+  airline_count?: {
+    airline?: string;
+    aircraft?: string;
+    connected?: number;
+    total?: number;
+    as_of?: string;
+  };
   sameDayAlternatives?: WireAlternative[];
 }
 
@@ -296,6 +304,51 @@ function timingNote(ctx: AnswerContext, airlineName: string): string {
   return "We don't have the aircraft assignment yet. Check again closer to departure.";
 }
 
+/**
+ * An answer that rests on the airline's own count at either end of it: none
+ * connected, or every one. A count is the airline's and has a date, so the
+ * headline says whose it is and when, never our "0%" or our yes. The API's
+ * sentence stays under it. Null for any share in between, which reads as odds.
+ */
+function countedAnswer(
+  body: CheckFlightBody,
+  ctx: AnswerContext,
+  on: string,
+  probability: number | null
+): FlightAnswer | null {
+  const c = body.airline_count;
+  if (
+    !c ||
+    typeof c.airline !== "string" ||
+    typeof c.aircraft !== "string" ||
+    typeof c.as_of !== "string" ||
+    typeof c.connected !== "number" ||
+    typeof c.total !== "number"
+  ) {
+    return null;
+  }
+  const none = probability !== null && probability <= 0;
+  const every = probability === null && c.total > 0 && c.connected >= c.total;
+  if (!none && !every) return null;
+  const whose = `${c.airline}'s own count (${monthDay(c.as_of, ctx.nowSec)})`;
+  const headline = every
+    ? `By ${whose}, every ${c.aircraft} is connected — we haven't confirmed the one on ${on}`
+    : c.connected <= 0
+      ? `Not yet for ${on} — ${whose} has no ${c.aircraft} connected`
+      : `Not yet for ${on}, by ${whose}`;
+  const tone: AnswerTone = every ? "unknown" : probTier(0);
+  const said = capitalize((body.message ?? "").replace(/^~\d+% Starlink probability: /, ""));
+  const note =
+    degradedNote(body.message) ??
+    (body.assignment?.tail_number ? CHANGE_NOTE : timingNote(ctx, ctx.airlineName));
+  const html = card(
+    tone,
+    headline,
+    `<p class="mt-3 text-sm text-secondary">${esc(said)} ${esc(note)}</p>${watchRow(ctx, false)}`
+  );
+  return { tone, headline, html, firm: false };
+}
+
 export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
   const fn = ctx.flightNumber;
   const on = `${fn} on ${monthDay(ctx.date, ctx.nowSec)}`;
@@ -401,6 +454,9 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     };
   }
 
+  const counted = countedAnswer(body, ctx, on, hasPred && pred ? pred.probability : null);
+  if (counted) return counted;
+
   if (!hasPred || !pred) {
     const headline = `Not sure yet about ${on}`;
     const text =
@@ -418,7 +474,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
   }
 
   // A type rule is a yes for every aircraft that can fly the number, not a forecast.
-  const typeRule = body.confidence === "type" && pred.probability >= 1;
+  const typeRule = body.confidence === "type" && pred.probability >= 1 && !body.airline_count;
   const tone: AnswerTone = typeRule ? "yes" : probTier(pred.probability);
   const headline = typeRule
     ? `Yes — every aircraft that flies ${fn} has Starlink`

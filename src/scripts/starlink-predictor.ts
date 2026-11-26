@@ -61,6 +61,7 @@ import { type ScopedReader, aggregatePenetration, createReaderFactory } from "..
 import type { RouteFlightLeg } from "../database/route-flights";
 import { airportDistanceMiles, detourBoundMiles, hubAllowedForTrip } from "../utils/airport-geo";
 import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
+import { plainTypeName } from "../utils/outside-text";
 import { memo, perOwner } from "../utils/ttl-cache";
 import {
   LEG_MIN_DRAWS,
@@ -1274,9 +1275,17 @@ export interface AircraftBasis {
   aircraftType: string | null;
   /** The answer in prose, without the probability lead. */
   sentence: string;
-  /** The airline's own dated count the probability rests on, if any. */
-  count: AirlineTypeCount | null;
+  /** The airline's own dated count the answer rests on, if any. */
+  count: QuotedCount | null;
 }
+
+/** A chart line as an answer quotes it: whose count, and of which aircraft. */
+export type QuotedCount = AirlineTypeCount & {
+  /** The airline's short name ("Alaska"). */
+  airline: string;
+  /** The type's short name ("787"). */
+  aircraft: string;
+};
 
 export function typeShare(t: Pick<TypeProgress, "equipped" | "total" | "excluded">): number {
   return t.excluded || t.total === 0 ? 0 : t.equipped / t.total;
@@ -1441,6 +1450,10 @@ function typedSightings(sightings: readonly AircraftSighting[]): TypedSighting[]
     .filter((a) => a.family !== "unknown" && a.family !== "other");
 }
 
+// The log holds departures still to come beside flown ones, and only some of
+// its tails have a type we know; the wording claims neither more.
+const KNOWN_DEPARTURES = "departures whose aircraft type we know";
+
 // One logged departure on a type is a swap as easily as a habit.
 const MIN_LOGGED_FOR_TYPE = 2;
 
@@ -1455,6 +1468,18 @@ function chartCountClause(cfg: AirlineConfig, c: AirlineTypeCount): string {
         ? `all ${c.total} of its ${name}`
         : `${c.connected} of its ${c.total} ${name}`;
   return `${cfg.shortName}'s own chart (${formatFactDate(c.asOf)}) counts ${share} as connected`;
+}
+
+/** The tails we name beside the chart's line, or null when we name none.
+ * The chart can trail our list, so "of them" is said only when it doesn't. */
+function namedClause(c: AirlineTypeCount, tail: string | null): string | null {
+  if (c.named <= 0) return null;
+  const name = plural(aircraftName(c.family));
+  const said =
+    c.named > c.connected
+      ? `We name ${c.named} ${name} by tail, more than that chart counts`
+      : `We name ${c.named} of them by tail`;
+  return tail ? `${said}, and ${tail}` : said;
 }
 
 /** "not the Hawaiian-operated A330/A321neo aircraft its number (AS800-999) usually means". */
@@ -1497,7 +1522,7 @@ function aircraftAnswer(
   const base = {
     basis,
     tail: one?.tail ?? null,
-    aircraftType: one?.aircraftType ?? null,
+    aircraftType: plainTypeName(one?.aircraftType),
   };
 
   if (families.length > 1) {
@@ -1509,7 +1534,7 @@ function aircraftAnswer(
     const sentence = joinSentences(
       scheduled
         ? `${flightNumber} is scheduled on more than one aircraft type: ${parts.join(" and ")}`
-        : `${flightNumber} flew on more than one aircraft type in the ${typed.length} departures we have on record: ${parts.join(" and ")}`,
+        : `${flightNumber} is on more than one aircraft type across the ${typed.length} ${KNOWN_DEPARTURES}: ${parts.join(" and ")}`,
       ...notes.map(capitalize),
       "Starlink depends on which aircraft flies yours"
     );
@@ -1526,8 +1551,8 @@ function aircraftAnswer(
     : scheduled
       ? `scheduled on ${typed.map((a) => a.tail).join(" and ")}, each ${aLabel}`
       : typed.length === 1
-        ? `the one departure we have on record was flown by ${aLabel}`
-        : `the ${typed.length} departures we have on record were all flown by the ${label(family)}`;
+        ? `${aLabel} is on the one departure whose aircraft type we know`
+        : `the ${label(family)} is on ${typed.length === 2 ? "both" : `all ${typed.length}`} ${KNOWN_DEPARTURES}`;
   const subject = strays.length > 0 ? `${who}, ${overruledClause(sf)}` : who;
 
   // A band of mixed types: the log can only narrow it on departures nobody
@@ -1536,21 +1561,46 @@ function aircraftAnswer(
     if (typed.length < MIN_LOGGED_FOR_TYPE || typed.some((a) => a.equipped)) return null;
   }
 
-  const count = home ? reader.getAirlineTypeCount(family) : null;
+  const line = home ? reader.getAirlineTypeCount(family) : null;
+  const count: QuotedCount | null = line
+    ? { ...line, airline: cfg.shortName, aircraft: aircraftName(family) }
+    : null;
   if (home && count) {
-    // A scheduled tail is not one we name, so it can only be among the
-    // connected aircraft the chart counts beyond those.
+    const chart = chartCountClause(cfg, count);
+    // The log leans toward the tails we name: the flight updater logs those on
+    // its own, other tails only when someone looked the flight up. For a type
+    // we name tails of, the answer turns on which tail flies, and the log
+    // can't say how often a named one does. So no share is drawn from it: a
+    // blended band keeps its own answer, a fixed band keeps no number.
+    if (!scheduled && count.named > 0) {
+      if (!fixed) return null;
+      const sentence = joinSentences(
+        capitalize(subject),
+        chart,
+        namedClause(count, null),
+        "Starlink depends on which aircraft flies yours"
+      );
+      return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count } };
+    }
+    // A chart is the airline's count, never our yes for a flight: a line it
+    // marks complete is quoted under its name and date, with no number a
+    // client could badge.
+    if (count.connected >= count.total) {
+      const sentence = joinSentences(
+        capitalize(subject),
+        chart,
+        `That is ${cfg.shortName}'s count, not ours: we have not confirmed ${one ? `${one.tail} ourselves` : "these aircraft tail by tail"}`
+      );
+      return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count } };
+    }
+    // An aircraft we don't name can only be among the connected aircraft the
+    // chart counts beyond the ones we do.
     const unnamed = count.total - count.named;
-    const pct = scheduled
-      ? unnamed > 0
-        ? Math.max(0, count.connected - count.named) / unnamed
-        : 0
-      : count.connected / count.total;
-    const named =
-      scheduled && count.named > 0 && count.connected > 0
-        ? `We name ${count.named} of them by tail, and ${one ? `${one.tail} is not one` : "these are not among them"}`
-        : null;
-    const sentence = joinSentences(capitalize(subject), chartCountClause(cfg, count), named);
+    const pct = unnamed > 0 ? Math.max(0, count.connected - count.named) / unnamed : 0;
+    const named = scheduled
+      ? namedClause(count, one ? `${one.tail} is not one` : "these are not among them")
+      : null;
+    const sentence = joinSentences(capitalize(subject), chart, named);
     return {
       kind: "penetration",
       sf: home,
