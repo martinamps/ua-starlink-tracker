@@ -8,10 +8,11 @@ import {
   airportDek,
   perDayLabel,
 } from "../api/airport-board";
+import { HubFigureSource } from "./airport-ranking";
 import type { Link } from "./layout";
 import { LINK, PageHeader, PageShell, Panel, SECTION, Section, StatValue, Td, Th } from "./layout";
 import { VERIFIED_LEGEND, VERIFIED_MARK } from "./route-flights-copy";
-import { fmt, utcDateTime } from "./ui/format";
+import { fmt, utcDateTime, weekdayDate } from "./ui/format";
 import { Meter } from "./ui/meter";
 
 interface AirportPageProps {
@@ -48,21 +49,51 @@ function Stat({
 }
 
 function Stats({ board }: { board: AirportBoard }) {
-  const { history, airport } = board;
+  const { history, airport, day, airlineFigure } = board;
   if (history.starlink === 0 && board.departures.length === 0) return null;
+  const flown = history.starlink > 0;
   return (
     <Panel as="section" aria-label={`Starlink at ${airport}`} className={SECTION}>
-      <div className="grid gap-5 sm:grid-cols-2">
+      <div className={day && flown ? "grid gap-5 sm:grid-cols-3" : "grid gap-5 sm:grid-cols-2"}>
+        {day && (
+          <Stat value={fmt(day.departures)}>
+            Starlink {day.departures === 1 ? "departure" : "departures"} scheduled for{" "}
+            {weekdayDate(day.date)}
+            {day.rank !== null && (
+              <>
+                {" · "}
+                <a href="/routes#airports" className={LINK}>
+                  No. {fmt(day.rank)} of {fmt(day.ranked)} airports
+                </a>
+              </>
+            )}
+          </Stat>
+        )}
         <Stat value={fmt(board.departures.length)}>
           Starlink {board.departures.length === 1 ? "departure" : "departures"} assigned in the next{" "}
           {board.windowHours} hours
         </Stat>
-        {history.starlink > 0 && (
+        {flown && (
           <Stat value={perDayLabel(history.starlink / history.days)} unit="a day">
             flown by Starlink planes: {fmt(history.starlink)} in the last {history.days} days
           </Stat>
         )}
       </div>
+      {day && (
+        <p className="mt-4 text-xs text-muted text-pretty">
+          The day's figure counts departures scheduled on planes we list as having Starlink, by{" "}
+          {airport}'s own calendar day, as we hold the schedule now. Planes are swapped before
+          departure, and we hold no total of {airport}'s departures to set it against.
+        </p>
+      )}
+      {airlineFigure && (
+        <p className="mt-2 text-xs text-muted text-pretty">
+          <span className="font-semibold">
+            {airlineFigure.figures.by}'s figure for {airport}: {fmt(airlineFigure.perDay)} a day.
+          </span>{" "}
+          <HubFigureSource figures={airlineFigure.figures} />
+        </p>
+      )}
     </Panel>
   );
 }

@@ -6656,6 +6656,10 @@ function slotFlightSql(col: string, airlineCol: string): string {
  * `equipped` is equippedSql, the predicate behind the headline counts and
  * the verdict engine's classifyRow; a tail missing from starlink_planes is not
  * equipped. Placeholders: the scope clause's, then [from, to) on departure_time.
+ *
+ * A tail the sheet lists on two tabs has two starlink_planes rows (N89349 in
+ * Nov 2026); joining both would count each of its departures twice, so the
+ * join takes one listing per tail, a verified one first.
  */
 function departureSlotsSql(scopeClause: string): string {
   // departure_airport and departure_time are partition keys, so a caller's
@@ -6674,7 +6678,11 @@ function departureSlotsSql(scopeClause: string): string {
       WHERE ${scopeClause} AND uf.departure_time >= ? AND uf.departure_time < ?
     ) k
   ) s
-  LEFT JOIN starlink_planes sp ON sp.TailNumber = s.tail_number AND sp.airline = s.airline
+  LEFT JOIN starlink_planes sp ON sp.id = (
+    SELECT _one.id FROM starlink_planes _one
+    WHERE _one.TailNumber = s.tail_number AND _one.airline = s.airline
+    ORDER BY (_one.verified_wifi = 'Starlink') DESC, _one.id ASC LIMIT 1
+  )
   ${settledNegativeJoin("_sneg", "s.tail_number", "s.airline")}
   WHERE s.slot_rank = 1`;
 }

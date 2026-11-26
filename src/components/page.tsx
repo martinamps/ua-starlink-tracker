@@ -300,7 +300,21 @@ export default function Page({
         <Section
           id="airports"
           title="Starlink departures by airport"
-          dek={`Top ${Math.min(12, airportDepartures.rows.length)} airports, ${airportDepartures.windowLabel}.`}
+          dek={
+            <>
+              Top {Math.min(12, airportDepartures.rows.length)} airports,{" "}
+              {airportDepartures.windowLabel}.
+              {features.airportPages && features.routesPage && (
+                <>
+                  {" "}
+                  <a href="/routes#airports" className={LINK}>
+                    Every airport, ranked by day
+                  </a>
+                  .
+                </>
+              )}
+            </>
+          }
           wide
         >
           <AirportBars rows={airportDepartures.rows} linked={features.airportPages} />

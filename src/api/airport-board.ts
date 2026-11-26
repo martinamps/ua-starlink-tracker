@@ -11,12 +11,15 @@
  */
 
 import { aircraftName } from "../airlines/aircraft-families";
+import { type HubFigures, hubFigures } from "../airlines/hub-figures";
 import type { AirlineConfig } from "../airlines/registry";
 import { fmt, zonedDeparture } from "../components/ui/format";
+import { countOnLocalDay, nextLocalDay } from "../database/airports";
 import type { ScopedReader } from "../database/reader";
 import { DEPARTURE_WINDOW_HOURS, unixNow } from "../database/sql/windows";
 import { airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
+import { AIRPORT_RANK_MIN_DEPARTURES } from "./airport-ranking";
 
 /**
  * An airport page indexes, and joins the sitemap, once Starlink planes have
@@ -64,6 +67,15 @@ export interface AirportBoard {
   destinations: AirportBoardDestination[];
   /** Departures Starlink planes flew from here over the last `days` days. */
   history: { days: number; starlink: number };
+  /**
+   * The airport's next local day (YYYY-MM-DD), the Starlink departures in
+   * `departures` that leave on it, and where that puts the airport among those
+   * ranked on /routes (null under the ranking's minimum). Null for an airport
+   * with no mapped timezone.
+   */
+  day: { date: string; departures: number; rank: number | null; ranked: number } | null;
+  /** The airline's own per-day figure for this airport, with who reprinted it and when. */
+  airlineFigure: { perDay: number; figures: HubFigures } | null;
   indexable: boolean;
 }
 
@@ -121,6 +133,10 @@ export function buildAirportBoard(
         a.destination.localeCompare(b.destination)
     );
 
+  const date = nextLocalDay(airport, nowSec);
+  const figures = hubFigures(cfg.code, nowSec);
+  const perDay = figures?.perDay[airport];
+
   return {
     airport,
     airline: cfg.shortName,
@@ -128,7 +144,34 @@ export function buildAirportBoard(
     departures,
     destinations,
     history: { days: history.days, starlink: flown?.starlink ?? 0 },
+    day: date
+      ? dayStanding(reader, airport, date, countOnLocalDay(airport, date, departures))
+      : null,
+    airlineFigure: figures && perDay !== undefined ? { perDay, figures } : null,
     indexable: (flown?.starlink ?? 0) >= AIRPORT_INDEX_MIN_DEPARTURES,
+  };
+}
+
+/**
+ * The day's count with its place among the ranked airports. The rank is read
+ * off the other airports' counts, so it agrees with this page's own number
+ * even when the shared ranking was built a minute earlier.
+ */
+function dayStanding(
+  reader: ScopedReader,
+  airport: string,
+  date: string,
+  departures: number
+): NonNullable<AirportBoard["day"]> {
+  const others = reader
+    .getAirportDayCounts()
+    .filter((c) => c.airport !== airport && c.departures >= AIRPORT_RANK_MIN_DEPARTURES);
+  const ranks = departures >= AIRPORT_RANK_MIN_DEPARTURES;
+  return {
+    date,
+    departures,
+    rank: ranks ? others.filter((c) => c.departures > departures).length + 1 : null,
+    ranked: others.length + (ranks ? 1 : 0),
   };
 }
 

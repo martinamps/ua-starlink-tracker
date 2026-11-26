@@ -331,6 +331,7 @@ import {
   buildAirportBoard,
   indexableAirports,
 } from "../api/airport-board";
+import { buildAirportRanking } from "../api/airport-ranking";
 import AirportPage from "../components/airport-page";
 
 import {
@@ -4501,6 +4502,9 @@ const routesPage: Handler = (ctx) => {
     {
       schedule,
       airports: ctx.reader.getAirportDepartures(),
+      ranking: ctx.site.features.airportPages
+        ? buildAirportRanking(siteAirline(ctx.site), ctx.reader)
+        : undefined,
       popularFlights,
       updatedAt: ctx.reader.getLastUpdatedRaw(),
       network: routeNetwork(ctx.reader),

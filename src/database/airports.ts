@@ -11,6 +11,7 @@
 import type { Database } from "bun:sqlite";
 import { canonicalPermalinkFor } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
+import { airportLocalDate } from "../utils/airport-tz";
 import { getDepartureSlots, getObservationAnchor, slotScope } from "./database";
 import { tailEquippedSql } from "./sql/equipped";
 import { ROUTE_AIRPORT_RE, isCleanAirportPair, prefixGlob } from "./sql/fragments";
@@ -35,18 +36,17 @@ export interface AirportDepartureRow {
 }
 
 /**
- * Equipped departures from one airport in the next 48 hours: the airport's
- * slice of the slots /routes counts, under the numbers the airline sells.
- * A slot with no bookable number (an ATC callsign on a positioning leg) or no
- * clean destination would be a dead link, so it is left off, as on the route
- * pages.
+ * Equipped departures in the next 48 hours, from one airport or from all: the
+ * slots /routes counts, under the numbers the airline sells. A slot with no
+ * bookable number (an ATC callsign on a positioning leg) or no clean
+ * destination would be a dead link, so it is left off, as on the route pages.
  */
-export function getAirportStarlinkDepartures(
+function bookableStarlinkDepartures(
   db: Database,
   airline: string,
-  airport: string,
-  nowSec = unixNow()
-): AirportDepartureRow[] {
+  nowSec: number,
+  origin?: string
+): Array<AirportDepartureRow & { origin: string }> {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
   const permalink = canonicalPermalinkFor(cfg);
@@ -54,7 +54,7 @@ export function getAirportStarlinkDepartures(
     from: nowSec,
     to: nowSec + DEPARTURE_WINDOW_SEC,
     partners: true,
-    origin: airport,
+    origin,
   }).flatMap((r) =>
     r.equipped === 1 &&
     r.slot_flight &&
@@ -62,6 +62,7 @@ export function getAirportStarlinkDepartures(
     isCleanAirportPair(r.departure_airport, r.arrival_airport)
       ? [
           {
+            origin: r.departure_airport,
             flight_number: r.slot_flight,
             destination: r.arrival_airport,
             departure_time: r.departure_time,
@@ -72,6 +73,75 @@ export function getAirportStarlinkDepartures(
         ]
       : []
   );
+}
+
+/** One airport's slice of the window, soonest first. */
+export function getAirportStarlinkDepartures(
+  db: Database,
+  airline: string,
+  airport: string,
+  nowSec = unixNow()
+): AirportDepartureRow[] {
+  return bookableStarlinkDepartures(db, airline, nowSec, airport).map(
+    ({ origin: _, ...row }) => row
+  );
+}
+
+/**
+ * The day a "departures a day" count is for: the calendar day after today at
+ * the airport, as YYYY-MM-DD. Today is partly flown and the schedule holds
+ * only what is still to leave, and the day after tomorrow runs past the 48
+ * hours the schedule reaches; tomorrow is the one local day that is always
+ * whole inside the window. Null for an airport with no mapped timezone, which
+ * has no local day to count.
+ */
+export function nextLocalDay(airport: string, nowSec = unixNow()): string | null {
+  const today = airportLocalDate(airport, nowSec);
+  if (!today) return null;
+  return new Date(Date.parse(`${today}T00:00:00Z`) + DAY_SEC * 1000).toISOString().slice(0, 10);
+}
+
+/** How many of an airport's window departures leave on its `date` (local). */
+export function countOnLocalDay(
+  airport: string,
+  date: string,
+  departures: readonly { departure_time: number }[]
+): number {
+  return departures.filter((d) => airportLocalDate(airport, d.departure_time) === date).length;
+}
+
+export interface AirportDayCount {
+  airport: string;
+  /** The airport's next local day, YYYY-MM-DD. */
+  date: string;
+  /** Equipped departures scheduled to leave on it. */
+  departures: number;
+}
+
+/**
+ * Starlink departures on each airport's next local day, for every airport
+ * with at least one, most first. One pass over the same slots the airport
+ * pages list, so a page's own count and its row here are the same rows.
+ */
+export function getAirportDayCounts(
+  db: Database,
+  airline: string,
+  nowSec = unixNow()
+): AirportDayCount[] {
+  const byAirport = new Map<string, AirportDayCount>();
+  for (const d of bookableStarlinkDepartures(db, airline, nowSec)) {
+    let entry = byAirport.get(d.origin);
+    if (entry === undefined) {
+      const date = nextLocalDay(d.origin, nowSec);
+      if (!date) continue;
+      entry = { airport: d.origin, date, departures: 0 };
+      byAirport.set(d.origin, entry);
+    }
+    if (airportLocalDate(d.origin, d.departure_time) === entry.date) entry.departures++;
+  }
+  return [...byAirport.values()]
+    .filter((e) => e.departures > 0)
+    .sort((a, b) => b.departures - a.departures || a.airport.localeCompare(b.airport));
 }
 
 /**

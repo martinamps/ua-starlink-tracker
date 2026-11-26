@@ -41,9 +41,11 @@ import {
   programmeHeadlineWithChart,
 } from "./airline-count";
 import {
+  type AirportDayCount,
   type AirportDepartureRow,
   type AirportHistory,
   airportHasData,
+  getAirportDayCounts,
   getAirportHistory,
   getAirportStarlinkDepartures,
 } from "./airports";
@@ -357,6 +359,8 @@ export interface ScopedReader {
   /** Starlink departures flown per airport over the last few days; the airport
    * pages' index rule and the sitemap read the same build. */
   getAirportHistory(): AirportHistory;
+  /** Starlink departures on each airport's next local day, most first. */
+  getAirportDayCounts(): AirportDayCount[];
 
   // /fleet/{tail}
   /** A typed tail (any case, with or without the N) as the airline stores it; null when it has none. */
@@ -509,6 +513,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   const networkMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
   const rankedMemo = memo<Array<{ origin: string; destination: string }>>(DEPARTURE_AGGREGATE_MEMO);
   const airportHistoryMemo = memo<AirportHistory>(AIRPORT_HISTORY_MEMO);
+  const airportDayMemo = memo<AirportDayCount[]>(DEPARTURE_AGGREGATE_MEMO);
   const tailIndexMemo = memo<TailIndexEntry[]>(DEPARTURE_AGGREGATE_MEMO);
   const outlookMemo = memo<AirlineOutlook>(OUTLOOK_MEMO);
   const routeOutlookCache = lruCache<RouteOutlookResult | null>(ROUTE_OUTLOOK_CACHE);
@@ -617,6 +622,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     airportHasData: (a) => airportHasData(db, a, soleAirline()),
     getAirportStarlinkDepartures: (a) => getAirportStarlinkDepartures(db, soleAirline(), a),
     getAirportHistory: () => airportHistoryMemo("", () => getAirportHistory(db, soleAirline())),
+    getAirportDayCounts: () => airportDayMemo("", () => getAirportDayCounts(db, soleAirline())),
 
     resolveTail: (segment) => resolveTail(db, soleAirline(), segment),
     getTailRecord: (tail) => getTailRecord(db, soleAirline(), tail),

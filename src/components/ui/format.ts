@@ -117,6 +117,10 @@ export function longDate(input: DateInput | null | undefined): string | undefine
 export const shortDate = (input: DateInput) =>
   utc(input, { month: "short", day: "numeric", year: "numeric" });
 
+/** "Thursday, Nov 26" for a bare date: a day named in a sentence. */
+export const weekdayDate = (input: DateInput) =>
+  utc(input, { weekday: "long", month: "short", day: "numeric" });
+
 /** "Sep 21"; with `nowSec`, the year is added when it isn't the current one. */
 export function monthDay(input: DateInput, nowSec?: number): string {
   const d = toDate(input);

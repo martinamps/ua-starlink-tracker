@@ -1,7 +1,9 @@
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
+import type { AirportRanking } from "../api/airport-ranking";
 import type { PopularFlight } from "../database/database";
 import type { AirportDepartures, RouteSchedule, RouteScheduleRow } from "../types";
 import { airportTimezone } from "../utils/airport-tz";
+import { AirportRankingPanel } from "./airport-ranking";
 import { PopularFlightsLinks } from "./atoms";
 import { AirportBars } from "./home/rollout";
 import type { Link } from "./layout";
@@ -149,6 +151,8 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
 interface RoutesPageProps {
   schedule: RouteSchedule;
   airports?: AirportDepartures;
+  /** Per-day ranking of every airport; takes the place of the top-airport bars. */
+  ranking?: AirportRanking;
   site: SiteConfig;
   popularFlights?: PopularFlight[];
   pageLinks?: Link[];
@@ -163,6 +167,7 @@ export default function RoutesPage({
   updatedAt,
   schedule,
   airports,
+  ranking,
   site,
   popularFlights = [],
   pageLinks,
@@ -214,7 +219,9 @@ export default function RoutesPage({
               </p>
             </Panel>
           </div>
-          {airports && airports.rows.length > 0 && (
+          {ranking && ranking.rows.length > 0 ? (
+            <AirportRankingPanel ranking={ranking} updatedAt={updatedAt} />
+          ) : airports && airports.rows.length > 0 ? (
             <div className="min-w-0">
               <SectionTitle>Busiest airports</SectionTitle>
               <p className="mt-1 text-sm text-secondary">By departure airport.</p>
@@ -222,7 +229,7 @@ export default function RoutesPage({
                 <AirportBars rows={airports.rows} columns={1} linked={site.features.airportPages} />
               </Panel>
             </div>
-          )}
+          ) : null}
         </section>
       )}
 
