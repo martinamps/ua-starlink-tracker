@@ -35,7 +35,7 @@ import {
   endUnitedCheck,
   unitedBudgetState,
 } from "../src/scripts/united-check-budget";
-import { makeFreshDb, utc } from "./helpers";
+import { makeFreshDb, openFileDb, utc } from "./helpers";
 import {
   DAY,
   HOUR,
@@ -173,15 +173,11 @@ describe("the ledger", () => {
     const dir = mkdtempSync(join(tmpdir(), "united-budget-"));
     try {
       const path = join(dir, "db.sqlite");
-      let db = new Database(path);
-      migrate(db);
-      // One outer commit: on a CI runner's disk, 364 separate fsyncs took up
-      // to 5.7 s and timed the test out. What it tests is the reopen.
-      db.transaction(() => fill(db, UNITED_DAILY_CHECK_BUDGET, T0_MS))();
+      let db = openFileDb(path);
+      fill(db, UNITED_DAILY_CHECK_BUDGET, T0_MS);
       db.close();
 
-      db = new Database(path);
-      migrate(db);
+      db = openFileDb(path);
       expect(unitedBudgetState(db, T0_MS + 60_000)).toEqual({
         used: UNITED_DAILY_CHECK_BUDGET,
         open: { settle: false, reconfirm: false },
