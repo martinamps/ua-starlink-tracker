@@ -74,9 +74,10 @@ function LinkChips({ links }: { links: Link[] }) {
 
 /** Crawlable inlinks to the hub's own URL families: most of its sitemap URLs
  * were discovered but never crawled while the homepage linked only /airlines.
- * Airlines that chose other Wi-Fi get their own row, never "with Starlink". */
-function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
-  if (!links || (links.airlines.length === 0 && links.compares.length === 0)) return null;
+ * Airlines that chose other Wi-Fi get their own row, never "with Starlink".
+ * It sits under the rollout cards because it answers the page's question. */
+function HubAirlineGrid({ links }: { links?: HubHomeLinks }) {
+  if (!links || links.airlines.length === 0) return null;
   const without = links.airlines.filter((l) => NOT_STARLINK_PATHS.has(l.href));
   const withStarlink = links.airlines.filter((l) => !NOT_STARLINK_PATHS.has(l.href));
   return (
@@ -95,14 +96,16 @@ function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
           <LinkChips links={without} />
         </>
       )}
-      {links.compares.length > 0 && (
-        <>
-          <Eyebrow as="h2" className="mt-4 mb-3">
-            Compare
-          </Eyebrow>
-          <LinkChips links={links.compares} />
-        </>
-      )}
+    </Panel>
+  );
+}
+
+function HubCompareGrid({ links }: { links?: HubHomeLinks }) {
+  if (!links || links.compares.length === 0) return null;
+  return (
+    <Panel as="nav" aria-label="Compare airlines">
+      <Eyebrow as="h2">Compare</Eyebrow>
+      <LinkChips links={links.compares} />
     </Panel>
   );
 }
@@ -193,6 +196,7 @@ const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: 
           </a>
         </p>
       </section>
+      <HubAirlineGrid links={hubLinks} />
       <TrackerLinks />
       <RouteComparePanel />
       <Panel pad="sm">
@@ -208,7 +212,7 @@ const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: 
         />
       </Panel>
       <RecentInstallsFeed items={recentInstalls} airlines={perAirlineStats} />
-      <HubLinkGrid links={hubLinks} />
+      <HubCompareGrid links={hubLinks} />
       <ClientScriptTag name="hub" />
     </div>
   );
