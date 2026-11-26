@@ -223,10 +223,18 @@ describe("bulk writer sheet_gids are excluded from install surfaces", () => {
 describe("MCP scope vocabulary", () => {
   // A hand-enumerated list compiles clean when an airline is registered but
   // silently ignores its ?scope= override (falls back to the host scope).
-  test("VALID_SCOPES = ALL + every hub-lookup airline", () => {
+  // An airline answered by statement alone has no fleet for a scoped
+  // server's tools to read: the hub's check_flight is its only MCP surface.
+  test("VALID_SCOPES = ALL + every hub-lookup airline that has a roster", () => {
     expect([...VALID_SCOPES].sort()).toEqual(
-      ["ALL", ...hubLookupAirlines().map((a) => a.code)].sort()
+      [
+        "ALL",
+        ...hubLookupAirlines()
+          .filter((a) => !a.statementRule)
+          .map((a) => a.code),
+      ].sort()
     );
+    expect(hubLookupAirlines().some((a) => a.statementRule)).toBe(true);
   });
 
   test("an enabled but unpublished airline is not a valid scope", () => {
@@ -243,6 +251,7 @@ const TAIL_SAMPLES: Record<string, string> = {
   AS: "N967AK",
   QR: "A7-ALA",
   AF: "F-HTYA",
+  EI: "EI-EIN",
 };
 
 describe("tail patterns", () => {
@@ -267,11 +276,20 @@ describe("tail patterns", () => {
 // ── homepage content: exhaustive over registry codes ────────────────────────
 
 describe("airline content", () => {
-  test.each(airlineCodes)("%s has its own homepage content (not hub fallback)", (code) => {
+  const rosterCodes = airlineCodes.filter((c) => !AIRLINES[c].statementRule);
+  test.each(rosterCodes)("%s has its own homepage content (not hub fallback)", (code) => {
     const content = getContent(AIRLINES[code]);
     expect(content).toBeDefined();
     expect(content).not.toBe(hubContent);
   });
+
+  // No site, no homepage: asking for one must fail loudly, never fall back.
+  test.each(airlineCodes.filter((c) => AIRLINES[c].statementRule))(
+    "%s, answered by statement alone, has no homepage content",
+    (code) => {
+      expect(() => getContent(AIRLINES[code])).toThrow();
+    }
+  );
 
   test("hub tenant gets hub content", () => {
     expect(getContent("ALL")).toBe(hubContent);

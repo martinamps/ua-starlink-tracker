@@ -144,6 +144,9 @@ const ROLLOUT_TARGETS: Record<KnownAirlineCode, RolloutTargetDef[]> = {
   QR: [],
   // No dated, fleet-count target from Air France beyond "end of 2026".
   AF: [],
+  // Answered by statement alone: no aircraft is counted, so no target can be
+  // measured.
+  EI: [],
 };
 
 /**

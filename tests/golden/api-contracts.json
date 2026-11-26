@@ -601,7 +601,8 @@
       "airline": "Hawaiian Airlines",
       "confidence": "type",
       "message": "Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.",
-      "flights": []
+      "flights": [],
+      "flight_number_note": "Hawaiian's flights now carry Alaska's AS code: the HA code was retired on April 22, 2026. Look this flight up by the AS number on the booking."
     }
   },
   "airlinestarlinktracker.com /api/check-flight QR1 2026-09-20": {
@@ -1007,7 +1008,8 @@
       "airline": "Hawaiian Airlines",
       "confidence": "type",
       "reason": "Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.",
-      "flights": []
+      "flights": [],
+      "flight_number_note": "Hawaiian's flights now carry Alaska's AS code: the HA code was retired on April 22, 2026. Look this flight up by the AS number on the booking."
     }
   },
   "airlinestarlinktracker.com /api/check-any-flight DL100 2026-09-20": {
@@ -1021,7 +1023,25 @@
       "vary": "Host"
     },
     "json": {
-      "error": "Airline not tracked. Tracked: UA, HA, AS, QR"
+      "error": "Airline not tracked. Tracked: UA, HA, AS, QR, EI",
+      "airline_info": {
+        "airline": "Delta",
+        "iata": "DL",
+        "status": "not_starlink",
+        "status_label": "Chose Amazon Leo",
+        "flying": false,
+        "lead": "Delta has no Starlink programme: it chose another system",
+        "dated": "As of Mar 31, 2026",
+        "fact": "Delta signed with Amazon Leo (Amazon's low-Earth-orbit constellation, formerly Project Kuiper) rather than Starlink, with an initial installation on 500 aircraft beginning in 2028.",
+        "as_of": "2026-03-31",
+        "source": {
+          "label": "Delta News Hub",
+          "url": "https://news.delta.com/delta-amazon-leo-sign-agreement-deliver-next-era-connected-travel-and-digital-experiences"
+        },
+        "caveat": "This is the airline's own choice of system, not a check of this flight.",
+        "page": "https://airlinestarlinktracker.com/airlines/delta",
+        "summary": "Delta has no Starlink programme: it chose another system. As of Mar 31, 2026: Delta signed with Amazon Leo (Amazon's low-Earth-orbit constellation, formerly Project Kuiper) rather than Starlink, with an initial installation on 500 aircraft beginning in 2028. (Source: Delta News Hub, https://news.delta.com/delta-amazon-leo-sign-agreement-deliver-next-era-connected-travel-and-digital-experiences.) This is the airline's own choice of system, not a check of this flight. More: https://airlinestarlinktracker.com/airlines/delta"
+      }
     }
   },
   "airlinestarlinktracker.com /api/check-any-flight UA12345 2026-09-20": {
@@ -2434,7 +2454,7 @@
         "content": [
           {
             "type": "text",
-            "text": "HA100 on 2026-09-29: no assignment data. Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure."
+            "text": "HA100 on 2026-09-29: no assignment data. Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.\n\nHawaiian's flights now carry Alaska's AS code: the HA code was retired on April 22, 2026. Look this flight up by the AS number on the booking."
           }
         ]
       }
@@ -2456,7 +2476,7 @@
         "content": [
           {
             "type": "text",
-            "text": "Airline not tracked. Tracked carriers: UA (United Airlines), HA (Hawaiian Airlines), AS (Alaska Airlines), QR (Qatar Airways). Prefix the flight number with the carrier code, e.g. UA123."
+            "text": "Airline not tracked. Tracked carriers: UA (United Airlines), HA (Hawaiian Airlines), AS (Alaska Airlines), QR (Qatar Airways), EI (Aer Lingus). Prefix the flight number with the carrier code, e.g. UA123.\n\nDelta has no Starlink programme: it chose another system. As of Mar 31, 2026: Delta signed with Amazon Leo (Amazon's low-Earth-orbit constellation, formerly Project Kuiper) rather than Starlink, with an initial installation on 500 aircraft beginning in 2028. (Source: Delta News Hub, https://news.delta.com/delta-amazon-leo-sign-agreement-deliver-next-era-connected-travel-and-digital-experiences.) This is the airline's own choice of system, not a check of this flight. More: https://airlinestarlinktracker.com/airlines/delta"
           }
         ],
         "isError": true

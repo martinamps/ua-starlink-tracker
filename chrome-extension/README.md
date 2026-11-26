@@ -3,7 +3,8 @@
 Chrome extension (Manifest V3) that badges Google Flights search results with
 the Starlink WiFi status of each flight — for United, Alaska (including
 Hawaiian Airlines-operated flights, which Google Flights lists under Alaska
-`AS` flight numbers), and Qatar Airways.
+`AS` flight numbers), Qatar Airways and, from 2.4.0, Aer Lingus flights
+between Ireland and North America.
 
 ## Installation (development)
 
@@ -25,6 +26,7 @@ all** rather than a guess:
 |---|---|
 | **Starlink** (blue) | Verified — the assigned aircraft was confirmed Starlink against the airline's own site |
 | **Starlink (installed)** (green) | The assigned aircraft is Starlink-equipped per fleet data, not yet re-verified |
+| **Starlink (likely)** (gray) | No aircraft or schedule is held for the airline: the airline itself says Starlink is on this route (Aer Lingus, Ireland to North America). The tooltip quotes its sentence with the date |
 | **Starlink ~92%** (gray) | No aircraft assigned yet (airlines assign ~2 days out); the percentage is this flight number's historical rate (United), the equipped share of the subfleet that flies it (Alaska), or the fitted share of the scheduled aircraft type (a Qatar 777-300ER or 787-8). Shown only at ≥80% with non-low confidence |
 | *no badge* | Verified non-Starlink aircraft, a prediction below the bar or of low confidence, an answer that is type-determined with no aircraft assigned yet (see below), an untracked airline, or an API that couldn't answer — silence over invention |
 
@@ -78,6 +80,16 @@ depends on the airline:
   `HA`-numbered lookups still work if Google ever shows them again, but an
   `HA` number doesn't pin the aircraft type, so before the ~2-day assignment
   window it gets no badge rather than a blended guess.
+- **Aer Lingus** (2.4.0) — no aircraft and no schedule are held. Aer Lingus
+  said on 18 November 2026 that Starlink "is already available across all Aer
+  Lingus transatlantic routes", so a card for an `EI` flight between Ireland
+  and the US, Canada or Mexico shows a gray "Starlink (likely)" whose tooltip
+  quotes that sentence. The tracker answers by route, so the extension must
+  send the card's origin and destination: an `EI` flight with no leg, on
+  another route, or dated after the statement's end date (27 March 2027) gets
+  no badge and is never dimmed. An `EI` number flown by a partner airline is
+  not covered by the statement; the tooltip says so, and the card is not told
+  apart from Aer Lingus's own flights.
 - **Qatar** — no tail-level data, but Qatar publishes the scheduled aircraft
   type about a week ahead (selected routes only). Inside that window an A350 or
   777-200LR shows green "Starlink (installed)", because Qatar reports those

@@ -14,6 +14,7 @@ const StarlinkTrackerLib = (() => {
     HA: Object.freeze({ iata: "HA", airlineName: "Hawaiian", marker: "Hawaiian" }),
     AS: Object.freeze({ iata: "AS", airlineName: "Alaska", marker: "Alaska" }),
     QR: Object.freeze({ iata: "QR", airlineName: "Qatar", marker: "Qatar" }),
+    EI: Object.freeze({ iata: "EI", airlineName: "Aer Lingus", marker: "Aer Lingus" }),
   });
 
   const CARRIER_CODES = Object.freeze(Object.keys(TRACKED_CARRIERS));
@@ -285,6 +286,21 @@ const StarlinkTrackerLib = (() => {
       claim.aircraftType = typeof type === "string" ? type.slice(0, 60) : null;
     }
 
+    // An airline answered from its own dated statement, by route (Aer Lingus).
+    // Only a route the statement covers is a claim; "needs_route", a route it
+    // doesn't cover and a date outside it stay unknown, never a no.
+    const statement = payload.airline_statement;
+    if (statement && typeof statement === "object") {
+      if (statement.answer === "likely" && typeof statement.quote === "string") {
+        claim.status = "stated";
+        claim.statement = {
+          quote: statement.quote.slice(0, 200),
+          asOf: DATE_RE.test(statement.as_of ?? "") ? statement.as_of : null,
+        };
+      }
+      return claim;
+    }
+
     if (payload.hasStarlink === true) {
       claim.status = payload.confidence === "verified" ? "verified" : "installed";
       return claim;
@@ -346,8 +362,11 @@ const StarlinkTrackerLib = (() => {
   }
 
   const CLAIM_RANK = Object.freeze({
-    verified: 4,
-    installed: 3,
+    verified: 5,
+    installed: 4,
+    // The airline's word for a route: weaker than an aircraft we can name,
+    // firmer than odds.
+    stated: 3,
     predicted: 2,
     no_starlink: 1,
     unknown: 0,
@@ -397,6 +416,7 @@ const StarlinkTrackerLib = (() => {
   function shouldBadge(claim) {
     if (!claim) return false;
     if (claim.status === "verified" || claim.status === "installed") return true;
+    if (claim.status === "stated") return true;
     return (
       claim.status === "predicted" &&
       typeof claim.probability === "number" &&
@@ -460,6 +480,7 @@ const StarlinkTrackerLib = (() => {
   function badgeLabel(claim) {
     if (claim.status === "predicted") return `Starlink ~${wholePct(claim)}%`;
     if (claim.status === "installed") return "Starlink (installed)";
+    if (claim.status === "stated") return "Starlink (likely)";
     return "Starlink";
   }
 
@@ -503,6 +524,16 @@ const StarlinkTrackerLib = (() => {
   function badgeTitle(claim) {
     const typeTitle = claim.basis ? typeBasisTitle(claim) : null;
     if (typeTitle) return typeTitle;
+    if (claim.status === "stated") {
+      // The airline's own sentence, quoted: the tracker holds no aircraft or
+      // schedule for this airline, so it adds nothing of its own.
+      const who = claim.airline || "The airline";
+      const when = claim.statement?.asOf ? ` on ${claim.statement.asOf}` : "";
+      return (
+        `Likely Starlink: ${who} said${when}, "${claim.statement?.quote ?? ""}" ` +
+        `That holds for flights ${who} itself operates, not a partner airline's, and a last-minute aircraft change can alter it.`
+      );
+    }
     const airline = claim.airline ? ` (${claim.airline})` : "";
     if (claim.status === "predicted" && claim.typeShare) {
       // True at any distance from departure: the hub gives this answer
@@ -571,6 +602,7 @@ const StarlinkTrackerLib = (() => {
   const BADGE_COLORS = Object.freeze({
     verified: Object.freeze({ fg: "#1967d2", bg: "#e8f0fe" }),
     installed: Object.freeze({ fg: "#188038", bg: "#e6f4ea" }),
+    stated: Object.freeze({ fg: "#5f6368", bg: "#f1f3f4" }),
     predicted: Object.freeze({ fg: "#5f6368", bg: "#f1f3f4" }),
   });
 

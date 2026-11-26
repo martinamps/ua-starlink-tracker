@@ -1066,6 +1066,28 @@ function notTrackedResponse(
   );
 }
 
+/**
+ * The hub answers an old Hawaiian HA number as Hawaiian's, so the note saying
+ * which number is sold today rides behind the answer as an added last key. A
+ * single-airline host refuses the number, and notTrackedResponse adds it there.
+ */
+function withHubNumberNote(handler: Handler): Handler {
+  return async (ctx) => {
+    const res = await handler(ctx);
+    const note =
+      ctx.tenant === "ALL" && res.status === 200
+        ? retiredCodeNote(ctx.url.searchParams.get("flight_number") ?? "")
+        : null;
+    if (!note) return res;
+    const body: unknown = await res.clone().json();
+    if (!body || typeof body !== "object" || Array.isArray(body) || "error" in body) return res;
+    return new Response(JSON.stringify({ ...body, flight_number_note: note }), {
+      status: res.status,
+      headers: res.headers,
+    });
+  };
+}
+
 /** REST renderer over decideCarrier (check-flight-core owns the policy). */
 function resolveCarrier(
   tenant: Tenant,
@@ -5886,10 +5908,10 @@ export function createApp(
     "/api/data": read(apiData),
     "/api/fleet-summary": read(apiFleetSummary),
     "/api/routes": read(apiRoutes, "routesPage"),
-    "/api/check-flight": read(apiCheckFlight),
-    "/api/check-any-flight": read(apiCheckAnyFlight),
+    "/api/check-flight": read(withHubNumberNote(apiCheckFlight)),
+    "/api/check-any-flight": read(withHubNumberNote(apiCheckAnyFlight)),
     "/api/compare-route": read(apiCompareRoute),
-    "/api/predict-flight": read(apiPredictFlight),
+    "/api/predict-flight": read(withHubNumberNote(apiPredictFlight)),
     "/api/plan-route": read(apiPlanRoute),
     "/api/route-flights": read(apiRouteFlights, "routePlannerPage"),
     "/api/mismatches": read(apiMismatches),

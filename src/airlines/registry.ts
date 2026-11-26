@@ -5,6 +5,7 @@
 
 import type { VerificationSource } from "../database/database";
 import type { RolloutStatus, StarlinkStatus } from "../types";
+import { airportCountry } from "../utils/airport-geo";
 import { isFreighterFamily, normalizeAircraftType } from "./aircraft-families";
 
 // Registration patterns are stored as unanchored bodies; the anchored
@@ -21,6 +22,7 @@ function tailPatterns(body: string): { tailPattern: RegExp; tailScanPattern: Reg
 const FAA_TAIL = tailPatterns("N[1-9][0-9A-HJ-NP-Z]{0,4}");
 const QATAR_TAIL = tailPatterns("A7-[A-Z]{3}");
 const FRANCE_TAIL = tailPatterns("F-[GH][A-Z]{3}");
+const IRELAND_TAIL = tailPatterns("EI-[A-Z]{3}");
 
 export type AirlineCode = string;
 
@@ -146,6 +148,37 @@ export interface SiteConfig {
   headSnippet?: string;
 }
 
+/**
+ * The whole of what is held on an airline answered by rule alone: one dated
+ * statement of its own and the flights it speaks for. No roster, no schedule,
+ * no outside read. An answer built on it is never a yes of ours: it repeats
+ * the airline, with the date, for the flights the statement covers and no
+ * others (src/airlines/statement-rule.ts words it).
+ */
+export interface StatementRule {
+  /** The airline's sentence, word for word, as read on `source.url`. */
+  quote: string;
+  /** The day the airline said it. */
+  asOf: string;
+  source: { label: string; url: string };
+  /** The same claim, completing "{Airline} said on {date} that …". It may say
+   * no more than `quote` and the page around it do. */
+  claim: string;
+  /** What the statement leaves out, as a sentence of its own. */
+  beyond: string;
+  /** The flights the statement speaks for. A flight number can't be placed on
+   * a route without a schedule, so the caller gives both airports. */
+  covers: (origin: string, destination: string) => boolean;
+  /** Names `covers`, completing "we apply that only to …". */
+  coversLabel: string;
+  /** The last flight date answered from the statement, and the last day it
+   * answers at all: past it the statement has to be read again, so an answer
+   * can't outlive what the airline said. */
+  validThrough: string;
+  /** Why that day, completing "…, {reason}". */
+  validThroughReason: string;
+}
+
 export type LastUpdatedOwner =
   | "fleet-meta"
   | "sheet-scrape"
@@ -252,6 +285,11 @@ export interface AirlineConfig {
     origin: string,
     destination: string
   ) => { probability: number; reason: string } | null;
+  /** Answered from the airline's own dated statement alone (StatementRule).
+   * Such an airline has no roster, no tenant site and no homepage content, and
+   * every job that reads a fleet skips it for want of an fr24Slug or a
+   * verifier. */
+  statementRule?: StatementRule;
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
   metricTag: string;
   /** Which FR24 field becomes upcoming_flights.flight_number. "callsign"
@@ -786,12 +824,97 @@ const AIRLINE_DEFS = {
       analyticsDomain: "airlinestarlinktracker.com",
     },
   },
+  EI: {
+    code: "EI",
+    name: "Aer Lingus",
+    shortName: "Aer Lingus",
+    enabled: true,
+    // Hub flight lookup only, and only from Aer Lingus's own statement: no
+    // aircraft is counted, so it joins no homepage, fleet or content surface.
+    // Its hub page stays the dated-facts page (rollout-facts.ts).
+    publicInHub: false,
+    hubFlightLookup: true,
+    iata: "EI",
+    icao: "EIN",
+    operators: [{ icao: "EIN", iata: "EI" }],
+    subfleets: [{ key: "mainline", label: "Aer Lingus", match: () => true }],
+    metricTag: "aerlingus",
+    ...IRELAND_TAIL,
+    // No roster is pulled (no fr24Slug), so there is nothing to sanity-check.
+    minFleetSanity: 0,
+    verifierBackend: null,
+    flightHistoryModel: false,
+    verifySite: "aerlingus.com",
+    statementRule: {
+      quote: "The service is already available across all Aer Lingus transatlantic routes.",
+      asOf: "2026-11-18",
+      source: {
+        label: "Aer Lingus media centre",
+        url: "https://mediacentre.aerlingus.com/pressrelease/details/108/26586",
+      },
+      // The same release: "free ultra high-speed Wi-Fi powered by Starlink in
+      // every cabin".
+      claim: "Starlink is available across all its transatlantic routes, free in every cabin",
+      // Its release of March 29, 2026: "beginning with aircraft flying to
+      // North America, followed by those serving European destinations".
+      beyond: "It has not said that of its European flights",
+      // Ireland only, though Aer Lingus sells UK flights too. Its own
+      // transatlantic flights from Manchester were reported to end in March
+      // 2026 (Voyages d'Affaires, January 13, 2026), which leaves an EI number
+      // between Britain and North America to a partner's aircraft, and the
+      // statement doesn't speak for those. The Caribbean and South America
+      // are left out as well: its destination list names neither today.
+      covers: (o, d) => {
+        const [a, b] = [airportCountry(o), airportCountry(d)];
+        const farSide = (c: string | null) => c === "US" || c === "CA" || c === "MX";
+        return (a === "IE" && farSide(b)) || (b === "IE" && farSide(a));
+      },
+      coversLabel: "flights between Ireland and North America, the ones Aer Lingus flies itself",
+      // The last day of the winter 2026-27 schedule season, the one the
+      // statement was made in. The summer schedule (from March 28, 2027) can
+      // bring routes and leased aircraft the statement never saw.
+      validThrough: "2027-03-27",
+      validThroughReason: "the end of the winter schedule it was made in",
+    },
+    rollout: {
+      status: "in_progress",
+      statusLabel: "On all transatlantic routes",
+      phaseNote:
+        "Aer Lingus said on November 18, 2026 that Starlink is available across all its transatlantic routes; it has not said that of its European flights.",
+      // No roster at all, so no count is ever shown beside a denominator.
+      rosterIsProgramScope: true,
+    },
+    // No tenant site: the hub's own card and colours stand in wherever a
+    // brand is read.
+    brand: {
+      title: "Aer Lingus Starlink",
+      siteTitle: "Does Aer Lingus Have Starlink?",
+      description:
+        "Aer Lingus says free Starlink Wi-Fi is available across all its transatlantic routes.",
+      ogTitle: "Aer Lingus Starlink",
+      ogDescription:
+        "Aer Lingus says free Starlink Wi-Fi is available across all its transatlantic routes.",
+      keywords: "aer lingus starlink, aer lingus wifi",
+      accentColor: "#0ea5e9",
+      accentColorDim: "#0284c7",
+      socialImagePath: "/static/social-image-hub.webp",
+      analyticsDomain: "airlinestarlinktracker.com",
+    },
+  },
 } satisfies Record<string, Omit<AirlineConfig, "carrierPrefixes">>;
 
 /** Literal union of registered airline codes. Type per-airline maps as
  * Record<KnownAirlineCode, T> so a missing airline is a compile error, not a
  * silent fallback to another tenant's data (the og:image bug class). */
 export type KnownAirlineCode = keyof typeof AIRLINE_DEFS;
+
+/** Airlines answered by statement alone. They take no homepage content: the
+ * per-tenant maps are keyed by RosterAirlineCode so that is a decision the
+ * types record, not a missing entry. */
+type StatementAirlineCode = {
+  [K in KnownAirlineCode]: (typeof AIRLINE_DEFS)[K] extends { statementRule: unknown } ? K : never;
+}[KnownAirlineCode];
+export type RosterAirlineCode = Exclude<KnownAirlineCode, StatementAirlineCode>;
 
 export const AIRLINES: Record<AirlineCode, AirlineConfig> = Object.fromEntries(
   Object.entries(AIRLINE_DEFS).map(([code, def]) => [

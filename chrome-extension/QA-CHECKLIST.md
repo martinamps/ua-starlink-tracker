@@ -264,6 +264,26 @@ Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
       HA-numbered flight gets no badge: HA's answer is a per-type split with no
       single probability (see README "Coverage windows differ by airline")
 
+## Aer Lingus (hub endpoint, the airline's statement, new in 2.4.0)
+
+Not yet run in a real browser: 2.4.0 was built on 2026-11-26 and tested
+against the tracker's own answers only.
+
+- [ ] DUB → JFK or SNN → BOS on Aer Lingus, a date up to 2027-03-27: a gray
+      "Starlink (likely)" badge. Its tooltip begins "Likely Starlink: Aer
+      Lingus said on 2026-11-18," then quotes "The service is already available
+      across all Aer Lingus transatlantic routes." and ends with the caution
+      about flights a partner airline operates and aircraft changes
+- [ ] DUB → LHR or DUB → AMS on Aer Lingus: no badge, and with "Starlink
+      only" on the card is not dimmed
+- [ ] DUB → JFK dated 2027-03-28 or later: no badge, not dimmed
+- [ ] DevTools: the request goes to
+      `airlinestarlinktracker.com/api/check-any-flight` with `origin` and
+      `destination`, and the answer carries `airline_statement`
+- [ ] DUB → ORD: Aer Lingus and American both fly it, and American's flights
+      are also sold under `EI` numbers. Note what the card for an
+      American-operated `EI` number shows: the statement does not cover it
+
 ## Qatar (hub endpoint, equipment type)
 
 Qatar's flight numbers come and go with its schedule, so pick them on the day:

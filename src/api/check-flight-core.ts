@@ -694,6 +694,7 @@ export async function resolveFlightVerdict(
   }
 
   if (cfg.code === "QR") return resolveQatarLeg(reader, normalized, date, window, now, deps);
+  if (cfg.statementRule) return statementVerdict(cfg, reader, normalized, date, window, now, deps);
 
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
 
@@ -1209,6 +1210,48 @@ function assignedFromSegments(
     mark: guide?.mark ?? null,
     guideUpdated,
     guideStale: isGuideStale(guideUpdated, now * 1000),
+  };
+}
+
+/**
+ * An airline held by its own statement: no row, no schedule and no live
+ * lookup exists to read, so the route the caller gives is the whole of what
+ * places the flight. With no route the answer is the statement and an ask
+ * for one; `leg` appears only when a leg was sent, as everywhere else.
+ */
+function statementVerdict(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  normalized: string,
+  date: string,
+  window: FlightDateWindow,
+  now: number,
+  deps: ResolveDeps
+): FlightVerdict {
+  const verdict: AnsweredVerdict = {
+    kind: "no_model",
+    window,
+    normalized,
+    answer: carrierPrediction(cfg, reader, normalized, {
+      route: deps.leg,
+      date,
+      nowMs: now * 1000,
+    }),
+    fr24Error: false,
+  };
+  if (deps.unscoped) return { ...verdict, leg: unscopedResolution(deps.unscoped) };
+  if (!deps.leg) return verdict;
+  return {
+    ...verdict,
+    leg: {
+      origin: deps.leg.origin ?? null,
+      destination: deps.leg.destination ?? null,
+      // No assignment row is held for any leg of such an airline.
+      match: "no_data",
+      otherLegs: [],
+      answered: null,
+      unscopedOutcome: "none",
+    },
   };
 }
 

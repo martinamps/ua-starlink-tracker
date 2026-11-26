@@ -47,6 +47,7 @@ import {
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import { formatFactDate } from "../airlines/rollout-facts";
+import { type StatementAnswer, statementAnswer } from "../airlines/statement-rule";
 import { bandLabel, capitalize } from "../components/ui/format";
 import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
 import type { AirlineTypeCount } from "../database/airline-count";
@@ -1250,7 +1251,10 @@ export type CarrierPrediction =
       guideUpdated: string | null;
       guideStale: boolean;
     }
-  | { kind: "partner_operated"; tail: string };
+  | { kind: "partner_operated"; tail: string }
+  // An airline held by one dated statement of its own (cfg.statementRule):
+  // the airline's word for the route asked about, never a share or odds.
+  | { kind: "statement"; answer: StatementAnswer };
 
 /** One aircraft our own data puts on a flight. */
 export interface AircraftSighting {
@@ -1388,8 +1392,26 @@ export function carrierPrediction(
     nowMs?: number;
     /** The aircraft our data puts on the asked date; absent on an undated ask. */
     scheduled?: readonly AircraftSighting[];
+    /** The traveller's own airports and date, for an airline answered by its
+     * statement: only the route places such a flight. */
+    route?: { origin?: string; destination?: string };
+    date?: string;
   } = {}
 ): CarrierPrediction {
+  // Reads nothing: no roster or schedule is held for such an airline.
+  if (cfg.statementRule) {
+    return {
+      kind: "statement",
+      answer: statementAnswer(
+        { name: cfg.name, iata: cfg.iata, statementRule: cfg.statementRule },
+        {
+          ...ctx.route,
+          date: ctx.date,
+          today: new Date(ctx.nowMs ?? Date.now()).toISOString().slice(0, 10),
+        }
+      ),
+    };
+  }
   const noModel: CarrierPrediction = {
     kind: "no_model",
     reason: `No per-flight prediction model exists for ${cfg.name} — Starlink status is determined by aircraft type, not flight-number history. ${cfg.rollout.phaseNote}`,
@@ -1649,8 +1671,10 @@ export function namesScheduledAircraft(answer: CarrierPrediction): boolean {
   );
 }
 
-/** A named tail is a tail-level answer, not a per-type one. */
-export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" {
+/** A named tail is a tail-level answer, not a per-type one; an airline's own
+ * statement is neither. */
+export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" | "statement" {
+  if (answer.kind === "statement") return "statement";
   return answer.kind === "assigned_unconfirmed" || answer.kind === "partner_operated"
     ? "tail"
     : "type";
@@ -1662,7 +1686,11 @@ export function carrierPredictionTelemetry(answer: CarrierPrediction | RouteComp
   outcome: "predicted" | "no_data";
   confidence: "low" | "none";
 } {
-  const informative = answer !== null && answer.kind !== "no_model";
+  // A statement that doesn't cover the flight is no answer for it.
+  const informative =
+    answer !== null &&
+    answer.kind !== "no_model" &&
+    !(answer.kind === "statement" && answer.answer.outcome !== "likely");
   return informative
     ? { outcome: "predicted", confidence: "low" }
     : { outcome: "no_data", confidence: "none" };
@@ -1785,6 +1813,7 @@ export function describeCarrierPrediction(
   opts: { date?: string | null } = {}
 ): string {
   if (answer.kind === "no_model") return answer.reason;
+  if (answer.kind === "statement") return answer.answer.sentence;
   if (answer.kind === "type_progress") {
     const g = guideRef(cfg, answer.guideUpdated);
     return joinSentences(

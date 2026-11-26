@@ -7,7 +7,9 @@
  *    serialized into data-rules, and go to /check-flight/{fn}/{date}. Without
  *    JS it GETs /check-flight?flight_number=…&date=…, which redirects.
  *  - "check-any" (hub): ask /api/check-any-flight and print the answer under
- *    the form. `answer="community"` says only a firm yes out loud.
+ *    the form. `answer="community"` says only a firm yes out loud. An airline
+ *    answered by route (no schedule held) asks for the two airports: the
+ *    route fields under the answer stay hidden and disabled until it does.
  *  - "report" (onboard banner): no date, no navigation; the banner module
  *    owns the submit.
  */
@@ -143,6 +145,42 @@ export function FlightSearchForm({
           aria-live="polite"
           className="mt-3 hidden text-sm leading-relaxed text-secondary"
         />
+      )}
+      {mode === "check-any" && answer === "tracked" && (
+        <div id={`${id}-route`} className="mt-3 hidden">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            {(
+              [
+                ["origin", "From (airport code)", "DUB"],
+                ["destination", "To (airport code)", "JFK"],
+              ] as const
+            ).map(([name, text, example]) => (
+              <div key={name} className="sm:w-44">
+                <label htmlFor={`${id}-${name}`} className={LABEL}>
+                  {text}
+                </label>
+                <input
+                  type="text"
+                  id={`${id}-${name}`}
+                  name={name}
+                  form={id}
+                  disabled
+                  maxLength={4}
+                  placeholder={example}
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="search"
+                  className={`${FIELD_CLASS} font-mono uppercase`}
+                />
+              </div>
+            ))}
+            <button type="submit" form={id} className={`${buttonClass()} min-h-11`}>
+              Check this route
+            </button>
+          </div>
+        </div>
       )}
       {withScript && <ClientScriptTag name="flight-search" />}
     </>

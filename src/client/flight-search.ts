@@ -34,9 +34,22 @@ interface AirlineInfo {
   how_to_check?: { text: string; source: { label: string; url: string } };
 }
 
+/** The server's lead for a route its airline's statement covers
+ * (statement-rule.ts); the label says it, so the sentence after it doesn't. */
+const LIKELY_LEAD = "Likely yes. ";
+
+const STATEMENT_LABELS: Record<string, [string, string]> = {
+  likely: ["Likely yes", "text-accent"],
+  needs_route: ["Route needed", "text-muted"],
+  not_covered: ["No answer for this route", "text-muted"],
+  outside_dates: ["No answer for this date", "text-muted"],
+};
+
 interface CheckAnyBody {
   error?: string;
   airline_info?: AirlineInfo;
+  /** An airline answered from its own dated statement, by route. */
+  airline_statement?: { answer: string; source: { label: string; url: string } };
   hasStarlink?: boolean | null;
   probability?: number;
   confidence?: string;
@@ -69,13 +82,19 @@ export function airlineInfoHtml(info: AirlineInfo): string {
   ].join("");
 }
 
-function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
+export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
   if (d.error) {
     return `<span class="text-warn">${esc(d.error)}</span>${d.airline_info ? airlineInfoHtml(d.airline_info) : ""}`;
   }
   const sentence = esc(d.reason || d.message || "");
   if (community) {
     return `${d.hasStarlink === true ? '<span class="text-success">Starlink (listed, not yet verified)</span> · ' : ""}${sentence}`;
+  }
+  const stated = d.airline_statement ? STATEMENT_LABELS[d.airline_statement.answer] : undefined;
+  if (d.airline_statement && stated) {
+    const reason = d.reason ?? "";
+    const rest = reason.startsWith(LIKELY_LEAD) ? reason.slice(LIKELY_LEAD.length) : reason;
+    return `<span class="${stated[1]}">${stated[0]}</span> · ${esc(d.airline || "")} · ${esc(rest)} (${sourceLink(d.airline_statement.source)})`;
   }
   const p = typeof d.probability === "number" ? d.probability : null;
   const [label, cls] =
@@ -122,6 +141,11 @@ export function numberNoteHtml(notes: Record<string, string>, raw: string): stri
   return note ? `<span class="mt-2 block text-warn">${esc(note)}</span>` : "";
 }
 
+/** The airline code a typed flight number opens with, or "". */
+export function carrierCode(raw: string): string {
+  return canonicalFlightInput(raw).match(/^([A-Z][A-Z0-9]|\d[A-Z])/)?.[1] ?? "";
+}
+
 /** An error on an entry that isn't code-plus-number shaped ("hello", "1736")
  * gets a worked example; a well-formed number of an untracked airline does not. */
 export function shapeHint(raw: string, example: string): string {
@@ -147,10 +171,24 @@ function wireCheckAny(form: HTMLFormElement): void {
   }
   const number = form.querySelector('input[name="flight_number"]') as HTMLInputElement | null;
   const button = form.querySelector('button[type="submit"]') as HTMLButtonElement | null;
+  // The route fields belong to the airline that asked for them: another
+  // airline's number must not be scoped by airports typed for the last one.
+  const route = document.getElementById(`${form.id}-route`);
+  const routeInputs = Array.from(route?.querySelectorAll("input") ?? []);
+  const showRoute = (code: string | null) => {
+    if (!route) return;
+    route.classList.toggle("hidden", code === null);
+    route.dataset.routeFor = code ?? "";
+    for (const input of routeInputs) {
+      input.disabled = code === null;
+      if (code === null) input.value = "";
+    }
+  };
   // The placeholder lists real examples ("UA1736, AS118…"); the first one is the hint.
   const example = number?.placeholder.split(",")[0].replace(/…$/, "").trim() ?? "";
   form.addEventListener("submit", (e) => {
     e.preventDefault();
+    if (route && route.dataset.routeFor !== carrierCode(number?.value ?? "")) showRoute(null);
     const params = new URLSearchParams();
     new FormData(form).forEach((v, k) => {
       if (v) params.set(k, String(v));
@@ -165,6 +203,7 @@ function wireCheckAny(form: HTMLFormElement): void {
     fetch(`/api/check-any-flight?${params}`)
       .then((r) => r.json() as Promise<CheckAnyBody>)
       .then((d) => {
+        showRoute(d.airline_statement ? carrierCode(typed) : null);
         out.innerHTML =
           checkAnyHtml(d, community) +
           (d.error ? shapeHint(typed, example) : numberNoteHtml(notes, typed)) +

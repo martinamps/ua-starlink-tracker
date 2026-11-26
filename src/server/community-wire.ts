@@ -7,6 +7,7 @@
  * extension badges any numeric `probability`.
  */
 
+import { statementWireField } from "../airlines/statement-rule";
 import type { TypeProgress } from "../database/database";
 import type { CarrierPrediction } from "../scripts/starlink-predictor";
 
@@ -88,6 +89,8 @@ export function communityWireFields(answer: CarrierPrediction): Record<string, u
       };
     case "partner_operated":
       return { assignment: { tail_number: answer.tail, operated_by_other: true } };
+    case "statement":
+      return statementWireField(answer.answer);
     case "penetration":
     case "no_model": {
       // A type answer that names the one aircraft scheduled that day.
