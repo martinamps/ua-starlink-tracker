@@ -1229,7 +1229,8 @@ async function lookupFlightRoutes(
       targetDateUnix === undefined || targetDateUnix <= now + FR24_ROUTE_HORIZON_SEC;
     if (withinFr24Horizon) {
       try {
-        const found = await guardedFlightRoutes(uaFlightNumber, targetDateUnix, now);
+        // A fresh clock: L0 may have spent up to a lookup's deadline waiting.
+        const found = await guardedFlightRoutes(uaFlightNumber, targetDateUnix, unixNow());
         if (found === null) shed = true;
         else if (found.length > 0) {
           for (const r of found) {

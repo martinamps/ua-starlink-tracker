@@ -7,11 +7,13 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import {
+  FR24_BREAKER_BASE_SEC,
   FR24_REQUEST_BUCKET_PER_MIN,
   FR24_REQUEST_MAX_QUEUE_MS,
   cachedFlightAssignments,
+  guardedFlightRoutes,
   setAssignmentFetcher,
   setRouteFetcher,
 } from "../src/api/flight-verdict";
@@ -93,6 +95,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setSystemTime();
   setRouteFetcher(null);
   setAssignmentFetcher(null);
   db.close();
@@ -191,6 +194,58 @@ describe("MCP route lookup behind the live-lookup guards", () => {
     asked = [];
     for (let i = 0; i < FR24_REQUEST_BUCKET_PER_MIN; i++) await predict(freshNumber(), null);
     expect(asked.length).toBe(FR24_REQUEST_BUCKET_PER_MIN);
+  });
+});
+
+describe("the route lookup reads the clock when it asks", () => {
+  test("a route lookup holding an older clock gives nobody extra lookups", async () => {
+    const t = Math.floor(Date.now() / 1000);
+    let fetched = 0;
+    setAssignmentFetcher(async () => {
+      fetched++;
+      return [];
+    });
+    for (let i = 0; i < FR24_REQUEST_BUCKET_PER_MIN; i++) {
+      await cachedFlightAssignments(`UA${8000 + i}`, t + 86400, t);
+    }
+    expect(fetched).toBe(FR24_REQUEST_BUCKET_PER_MIN);
+
+    // A route lookup whose clock was read before a 9s wait, refused by the
+    // empty bucket, must not wind the bucket's clock back.
+    expect(await guardedFlightRoutes(freshNumber(), undefined, t - 9)).toBeNull();
+    for (let i = 0; i < 3; i++) {
+      await cachedFlightAssignments(`UA${8100 + i}`, t + 86400, t).catch(() => {});
+    }
+    expect(fetched).toBe(FR24_REQUEST_BUCKET_PER_MIN);
+  });
+
+  test("after a slow tail lookup, a route throttle holds the breaker for its full span", async () => {
+    const t0 = Math.floor(Date.now() / 1000);
+    setSystemTime(new Date(t0 * 1000));
+    const slow = 9;
+    // L0's tail lookup takes its whole deadline and finds nothing.
+    setAssignmentFetcher(async () => {
+      setSystemTime(new Date((t0 + slow) * 1000));
+      return [];
+    });
+    routeFetcher(async () => {
+      throw new Error("FR24 routes error: 429");
+    });
+    const tomorrow = new Date((t0 + 86400) * 1000).toISOString().slice(0, 10);
+    const dated = await asLookupAsker(ASSISTANT, () =>
+      mcpDirect("UA", factory, "tools/call", {
+        name: "predict_flight_starlink",
+        arguments: { flight_number: freshNumber(), date: tomorrow },
+      })
+    );
+    expect(toolText(dated).isError).toBe(false);
+    expect(asked.length).toBe(1);
+
+    // One second before the breaker, opened at the refusal, closes.
+    setSystemTime(new Date((t0 + slow + FR24_BREAKER_BASE_SEC - 1) * 1000));
+    const seen = await routeSheds(() => predict(freshNumber()));
+    expect(asked.length).toBe(1);
+    expect(seen.map((t) => t.reason)).toEqual(["breaker"]);
   });
 });
 

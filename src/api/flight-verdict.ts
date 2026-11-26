@@ -269,7 +269,9 @@ function fr24RequestShedReason(nowSec: number): "breaker" | "bucket" | null {
     FR24_REQUEST_BUCKET_PER_MIN,
     fr24Tokens + (elapsed * FR24_REQUEST_BUCKET_PER_MIN) / 60
   );
-  fr24TokensAt = nowSec;
+  // Never backwards: a caller holding an older reading (one that awaited a
+  // lookup first) would otherwise hand the next caller the same refill twice.
+  fr24TokensAt = Math.max(fr24TokensAt, nowSec);
   if (fr24Tokens < 1) return "bucket";
   fr24Tokens -= 1;
   return null;
@@ -359,7 +361,9 @@ export async function guardedFlightRoutes(
       return null;
     }
     settleShare(true);
-    if (isFr24Throttle(err)) openFr24Breaker(nowSec);
+    // Read after the fetch: the breaker runs from when FR24 refused, not from
+    // when the lookup began up to a deadline earlier.
+    if (isFr24Throttle(err)) openFr24Breaker(unixNow());
     warn(`FR24 route lookup failed for ${flightNumber}; answering from stored routes`, err);
     return [];
   }
