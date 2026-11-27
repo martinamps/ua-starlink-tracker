@@ -86,7 +86,8 @@ function probBars(prob: number, color: string): string {
 }
 
 /** The page path the API vouched for, re-checked so a stray value can't become an off-site link. */
-const LEG_PAGE = /^\/check-flight\/[A-Z0-9]{3,8}(\/\d{4}-\d{2}-\d{2})?$/;
+const LEG_PAGE =
+  /^\/check-flight\/[A-Z0-9]{3,8}(\/\d{4}-\d{2}-\d{2})?(\?origin=[A-Z0-9]{3}&destination=[A-Z0-9]{3})?$/;
 
 /**
  * The leg's flight number, as a link to its answer page when the API sent one:
