@@ -3790,12 +3790,18 @@ async function datedAnswer(
       buildAirlineFlightNumberVariants(cfg, flightNumber),
       date
     );
+    const body = checkFlightBody(cfg, reader, verdict, date, {}) as DatedAnswer["body"];
     return {
       flightNumber,
       date,
       daysOut: verdict.window.daysOut,
-      body: checkFlightBody(cfg, reader, verdict, date, {}) as DatedAnswer["body"],
-      swap: planeSwapFor(reader, verdict, history),
+      body,
+      swap: planeSwapFor(
+        reader,
+        verdict,
+        history,
+        (body.flights ?? []).map((f) => f.departure_airport)
+      ),
     };
   } catch (err) {
     logError(`Dated answer failed for ${flightNumber} ${date}`, err);

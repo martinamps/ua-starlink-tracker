@@ -152,6 +152,42 @@ describe("plane swap on the dated answer page (synthetic)", () => {
     expect(note).toMatch(/This departure had N381HA first\. We first saw N380HA on it .*HST\./);
   });
 
+  test("a flight of two legs: the note names the leg by its airports", async () => {
+    const legs = (dep: number) => [
+      { ...leg("UA123", dep), arrival_airport: "DEN", arrival_time: dep + 2 * 3600 },
+      {
+        flight_number: "UA123",
+        departure_airport: "DEN",
+        arrival_airport: "EWR",
+        departure_time: dep + 3 * 3600,
+        arrival_time: dep + 7 * 3600,
+      },
+    ];
+    const db = makeSyntheticDb();
+    addPlane(db, "N11111", "Starlink");
+    addPlane(db, "N22222", "Thales");
+    updateFlights(db, "N11111", legs(at("19:00")));
+    db.query("UPDATE flight_assignment_log SET first_seen = first_seen - 3600").run();
+    updateFlights(db, "N22222", legs(at("19:00")));
+    updateFlights(db, "N11111", []);
+    const { text } = await bodyOf(createApp(db), page, UA_HOST);
+    expect(text).toContain('id="plane-swap"');
+    const note = text.slice(text.indexOf('id="plane-swap"'));
+    expect(note).toMatch(
+      /The San Francisco \(SFO\) to Denver \(DEN\) leg had N11111 first\. We first saw N22222 on it /
+    );
+    expect(note).not.toContain("This departure had");
+  });
+
+  test("one leg: the note keeps 'This departure' and names no airports", async () => {
+    const db = swapped(["N11111", "Starlink"], ["N22222", "Thales"]);
+    const { text } = await bodyOf(createApp(db), page, UA_HOST);
+    const note = text.slice(text.indexOf('id="plane-swap"'), text.indexOf('id="flight-answer"'));
+    expect(note).toContain("This departure had N11111 first.");
+    expect(note).not.toContain(" leg had ");
+    expect(note).not.toContain("(SFO)");
+  });
+
   test("the API bodies carry no swap key", async () => {
     const db = swapped(["N11111", "Starlink"], ["N22222", "Thales"]);
     const app = createApp(db);
