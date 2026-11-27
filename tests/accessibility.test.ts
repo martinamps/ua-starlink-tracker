@@ -61,7 +61,7 @@ describe("states told to assistive technology", () => {
     expect(squares.length).toBeGreaterThan(0);
     for (const s of squares) {
       expect(s).toContain('tabindex="-1"');
-      expect(s).toContain("aria-label=");
+      expect(s).toMatch(/ title="[^"]+"/);
     }
     // Every tail a square names has a registry row a keyboard can reach.
     for (const s of squares) {
@@ -98,7 +98,8 @@ describe("long lists", () => {
         const { text } = await bodyOf(app, path, host);
         for (const [tag, tail] of text.matchAll(/<a href="#t-([^"]+)"[^>]*>/g)) {
           expect(tag).toContain('tabindex="-1"');
-          expect(tag).toContain("aria-label=");
+          // An empty link is named by its title.
+          expect(tag).toMatch(/ title="[^"]+"/);
           // Its row: a link a keyboard reaches, named with the tail and its Wi-Fi.
           const row = text.match(new RegExp(`<a id="t-${tail}"[^>]*>`))?.[0];
           expect(row, `${path} #t-${tail}`).toBeDefined();
@@ -188,6 +189,50 @@ describe("names told to assistive technology", () => {
     expect(css).toMatch(/\.fam-details-head \{\s*display: none;/);
     expect(css).toMatch(/min-width: 768px\)[^@]*\.fam-details-foot \{\s*display: block;/);
     expect(css).toMatch(/max-width: 767px\)[^@]*\.fam-details-foot \{\s*display: none;/);
+  });
+
+  test("the fleet page's 1.6k squares and rows carry no markup the stylesheet can draw", async () => {
+    const { text } = await bodyOf(app, "/fleet", UNITED);
+    const squares = [...text.matchAll(/<a href="#t-[^"]+"[^>]*>/g)].map((m) => m[0]);
+    expect(squares.length).toBeGreaterThan(0);
+    for (const tag of squares) {
+      // Named by the title alone; size, corners and hover from `.fam-grid > a`.
+      expect(tag).toMatch(/ title="[^"]+"/);
+      expect(tag).not.toContain("aria-label=");
+      expect(tag).toMatch(/ class="wifi-[a-z-]+( pipe-(mod|verif))?"/);
+    }
+    const rows = [...text.matchAll(/<a id="t-[^"]+"[^>]*>[\s\S]*?<\/a>/g)].map((m) => m[0]);
+    expect(rows.length).toBe(squares.length);
+    for (const row of rows) {
+      // The glyph comes from data-dot through ::before, not an element per row.
+      expect(row).not.toContain('tail-dot"');
+      expect(row).toMatch(/<span class="tail-num">[^<]+<\/span> <span class="tail-abbr">/);
+    }
+    expect(text).toContain('data-dot="');
+    const css = readFileSync(join(ROOT, "src/styles/tailwind.css"), "utf8");
+    expect(css).toMatch(/\.fam-grid > a \{\s*width: 8px;\s*height: 8px;/);
+    expect(css).toMatch(/\.tail-registry > a::before \{\s*content: attr\(data-dot\);/);
+  });
+
+  test("the registry's plain text keeps every tail apart from its neighbours", async () => {
+    const { text } = await bodyOf(app, "/fleet", UNITED);
+    const start = text.indexOf('class="tail-registry');
+    const end = text.indexOf("</div>", start);
+    expect(start).toBeGreaterThan(-1);
+    const block = text.slice(start, end);
+    const tails = [...block.matchAll(/<a id="t-([^"]+)"/g)].map((m) => m[1]);
+    expect(tails.length).toBeGreaterThan(0);
+    // What a crawler that doesn't render gets: the markup with its tags dropped.
+    const flat = block.slice(block.indexOf(">") + 1).replace(/<[^>]*>/g, "");
+    for (const tail of tails) {
+      expect(flat, tail).toMatch(new RegExp(`(^|[^A-Za-z0-9])${tail}(?![A-Za-z0-9])`));
+    }
+  });
+
+  test("a hidden spec card takes no room, so it can't widen the page", () => {
+    const css = readFileSync(join(ROOT, "src/styles/tailwind.css"), "utf8");
+    expect(css).toMatch(/\n\.spec-card \{\s*display: none;/);
+    expect(css).toMatch(/\.spec-trigger:focus-within \.spec-card \{\s*display: block;/);
   });
 });
 
