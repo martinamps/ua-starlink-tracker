@@ -394,8 +394,12 @@ const UTM_ALIASES: ReadonlyMap<string, OutsideSource> = new Map([
   ["facebook", "social"],
   ["linkedin", "social"],
 ]);
-// The one utm_source this site writes itself: the link inside a calendar event (utils/ics.ts).
+// The utm_sources this site writes itself: the link inside a calendar event
+// (utils/ics.ts), and the live-page line that ends an MCP answer
+// (api/mcp-live-page.ts). A person who follows the second was sent by an
+// assistant, and most MCP clients open links with no referrer.
 const OWN_CALENDAR_UTM = "cal";
+const OWN_MCP_UTM = "mcp";
 
 function outsideSourceOfHost(host: string): OutsideSource | null {
   for (const [source, domains] of SOURCE_DOMAINS) {
@@ -428,6 +432,7 @@ function sourceOfUtm(raw: string | null): VisitSource | null {
   const value = raw.slice(0, 64).trim().toLowerCase();
   if (!value) return null;
   if (value === OWN_CALENDAR_UTM) return "calendar";
+  if (value === OWN_MCP_UTM) return "assistant";
   // A utm_source never proves a search visit (ads and newsletters say "google" too).
   const named = UTM_ALIASES.get(value) ?? outsideSourceOfHost(value);
   return named && named !== "search" ? named : "other";
@@ -441,7 +446,7 @@ function sourceOfUtm(raw: string | null): VisitSource | null {
  *     engine's page: not a search visit, and not our extension
  *     either, which sends no referrer and is known by rule 1 alone   → that class | other
  *  3. Referer/Origin is one of our own hosts                         → own
- *  4. utm_source: ours (cal), an assistant's or a social site's      → calendar | assistant | social
+ *  4. utm_source: ours (cal, mcp), an assistant's or a social site's → calendar | assistant | social
  *  5. Sec-Fetch-Site same-origin/same-site. Our pages send no
  *     referrer (Referrer-Policy: no-referrer), so this is how
  *     in-site clicks and our own scripts' calls are seen             → own

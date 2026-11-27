@@ -133,6 +133,12 @@ describe("classifyVisitSource", () => {
     expect(source("/?utm_source=Perplexity")).toBe("assistant");
     expect(source("/?utm_source=reddit")).toBe("social");
     expect(source("/check-flight/UA1/2026-06-01?utm_source=cal")).toBe("calendar");
+    // The live-page line that ends an MCP answer: an assistant sent this person,
+    // whether the client sent a referrer or opened the link from a desktop app.
+    expect(source("/check-flight/UA1/2026-06-01?utm_source=mcp")).toBe("assistant");
+    expect(source("/route-planner/SFO/EWR?utm_source=MCP", { "Sec-Fetch-Site": "none" })).toBe(
+      "assistant"
+    );
     expect(source("/?utm_source=google")).toBe("other");
     expect(source("/?utm_source=newsletter")).toBe("other");
     expect(source("/?utm_source=")).toBe("none");

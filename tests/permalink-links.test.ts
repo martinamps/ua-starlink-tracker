@@ -97,6 +97,10 @@ describe("permalink-only readers", () => {
   // the tenant-scoped pairs (never Alaska's OO rows on a UA answer) and marks
   // the result stale. Any other API/MCP use needs a deliberate exemption here.
   const ROUTE_PAIR_READERS: Record<string, number> = { "mcp-server.ts": 1 };
+  // flightNumberHasData is the flight page's existence gate, so its one API
+  // reader is the MCP answer's link to that page: no gate, no link, never a
+  // different answer.
+  const PAGE_GATE_READERS = new Set(["mcp-live-page.ts"]);
 
   test("only sanctioned API readers use getFlightRoutePairs; none use flightNumberHasData", () => {
     const apiDir = join(import.meta.dir, "..", "src", "api");
@@ -104,7 +108,7 @@ describe("permalink-only readers", () => {
       const src = readFileSync(join(apiDir, f), "utf8");
       const pairReads = src.split("getFlightRoutePairs").length - 1;
       expect(pairReads, f).toBe(ROUTE_PAIR_READERS[f] ?? 0);
-      expect(src.includes("flightNumberHasData"), f).toBe(false);
+      expect(src.includes("flightNumberHasData"), f).toBe(PAGE_GATE_READERS.has(f));
     }
   });
 });

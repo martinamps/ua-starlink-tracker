@@ -108,7 +108,7 @@ fires wins:
 |---|---|
 | `extension` | `client_class` is `extension` or `other-extension`: the extension's own marks (its version param or its origin) and nothing else |
 | `search` | Referer (else Origin) host is a search engine's results host, on any path but `/api/*`: `google.com` and Google's country hosts (bare or `www.`), Bing, DuckDuckGo, `search.yahoo.com` and its country hosts, Yandex, Baidu, Ecosia, Brave Search, Kagi, Startpage, Qwant, `search.naver.com`, `search.aol.com`, or the Google app on Android. Exact hosts: a portal's mail, news, finance, blog and forum hosts are `other` |
-| `assistant` | Referer host or `utm_source` names an assistant: ChatGPT, Claude, Perplexity, Gemini, Copilot, Grok, Meta AI, Mistral, DeepSeek, Poe, You, Phind |
+| `assistant` | Referer host or `utm_source` names an assistant: ChatGPT, Claude, Perplexity, Gemini, Copilot, Grok, Meta AI, Mistral, DeepSeek, Poe, You, Phind. Also `utm_source=mcp`, the live-page link this site writes at the end of an MCP flight or route answer (`src/api/mcp-live-page.ts`) |
 | `social` | Referer host or `utm_source` names a social site or forum: Facebook, Instagram, Threads, X/Twitter, Reddit, LinkedIn, YouTube, TikTok, Bluesky, Pinterest, Hacker News, FlyerTalk |
 | `calendar` | `utm_source=cal`, the link this site writes into its own calendar events |
 | `own` | Referer/Origin is one of our hosts, or `Sec-Fetch-Site` is `same-origin`/`same-site`. Our pages send `Referrer-Policy: no-referrer`, so the fetch-metadata header is what marks in-site clicks, assets and our own scripts' API calls |
