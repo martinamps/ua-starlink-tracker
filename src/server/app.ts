@@ -255,6 +255,7 @@ import {
   fmt,
   monthDay,
   pct as pctLabel,
+  pctWhole,
   probPhrase,
   zonedDeparture,
 } from "../components/ui/format";
@@ -931,7 +932,9 @@ const apiData: Handler = ({ reader }) => {
 };
 
 // Per-airline rollout summary — used by the OG image generator and any
-// cross-airline UI. Cheap to compute per-request.
+// cross-airline UI. Cheap to compute per-request. `percentage` is pctWhole,
+// the pages' own rule: it once rounded to a tenth, and answered 45 for the
+// 736 of 1,636 that the home page printed as 44%.
 const apiFleetSummary: Handler = ({ getReader }) => {
   const airlines = publicAirlines().map((cfg) => {
     const r = getReader(cfg.code);
@@ -942,7 +945,7 @@ const apiFleetSummary: Handler = ({ getReader }) => {
       body: f.body,
       installed: f.starlink,
       total: f.total,
-      percentage: f.total > 0 ? Math.round((f.starlink / f.total) * 1000) / 10 : 0,
+      percentage: pctWhole(f.starlink, f.total),
       ...(f.outsideProgramme ? { excluded: true, label: f.outsideProgramme.label } : {}),
     }));
     return {
@@ -950,7 +953,7 @@ const apiFleetSummary: Handler = ({ getReader }) => {
       name: cfg.name,
       installed,
       total,
-      percentage: total > 0 ? Math.round((installed / total) * 1000) / 10 : 0,
+      percentage: pctWhole(installed, total),
       families,
     };
   });
@@ -3284,10 +3287,6 @@ function buildBaseTemplateVars(
     currentDate: new Date().toLocaleDateString(),
     mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
     expressCount: (fleetStats?.express.starlink || 0).toString(),
-    mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
-    expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
-    mainlinePercentageRounded: (fleetStats?.mainline.percentage || 0).toFixed(0),
-    expressPercentageRounded: (fleetStats?.express.percentage || 0).toFixed(0),
   };
 
   // Brand copy is registry-authored and may embed count placeholders (e.g.

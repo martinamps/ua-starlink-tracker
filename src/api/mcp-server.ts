@@ -57,7 +57,7 @@ import {
   airlineOwnTypeSum,
 } from "../airlines/rollout-facts";
 import { retiredCodeNote, untrackedAirlineInfo } from "../airlines/untracked-airline";
-import { seenOnDays, weekdayName } from "../components/ui/format";
+import { pct as pctLabel, seenOnDays, weekdayName } from "../components/ui/format";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
 import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/windows";
@@ -2165,14 +2165,11 @@ function scopeConfigError(scope: Scope): ToolResult {
   return toolError(`Error: no airline registered for scope "${scope}".`, "config");
 }
 
-const pctOf = (starlink: number, total: number) =>
-  total > 0 ? ((starlink / total) * 100).toFixed(1) : "0.0";
-
 /** "N of M aircraft (P%)" where the roster is the programme's own denominator,
  * else just the count: the same gate the pages, badge and share cards use. */
 function aircraftShare(starlink: number, total: number, rosterIsProgramScope: boolean): string {
   return denominatorIsPublishable(starlink, total, rosterIsProgramScope)
-    ? `${starlink} of ${total} aircraft (${pctOf(starlink, total)}%)`
+    ? `${starlink} of ${total} aircraft (${pctLabel(starlink, total)})`
     : `${starlink} aircraft`;
 }
 
@@ -2269,7 +2266,7 @@ ${lines.join("\n")}`;
     .map((f) =>
       f.outsideProgramme
         ? `- ${f.family}: ${f.outsideProgramme.label} (${f.total})`
-        : `- ${f.family}: ${f.starlink} of ${f.total} (${pctOf(f.starlink, f.total)}%)`
+        : `- ${f.family}: ${f.starlink} of ${f.total} (${pctLabel(f.starlink, f.total)})`
     );
   // A partnered programme (Alaska with Hawaiian's Airbus jets) headlines its
   // site with the wider count; both figures appear, each named, so an agent
@@ -2494,14 +2491,26 @@ function handleInitialize(
   let fleetParagraph = "";
   const fleetStats = reader.getFleetStats();
   if (fleetStats) {
-    const expressPct = fleetStats.express.percentage.toFixed(0);
-    const mainlinePct = fleetStats.mainline.percentage.toFixed(1);
-    const hasFleetSplit = fleetStats.express.total > 0 || fleetStats.mainline.total > 0;
+    const { express, mainline } = fleetStats;
+    const expressPct = pctLabel(express.starlink, express.total);
+    const mainlinePct = pctLabel(mainline.starlink, mainline.total);
+    // A share only where get_fleet_stats and the pages print one: a roster
+    // that holds aircraft outside the programme (Hawaiian's 717s, Qatar's
+    // narrowbodies) is no denominator, and a subfleet with no aircraft has
+    // no share. This once told an agent "~60.1%" of a fleet the site counts
+    // by type and gives no percent for.
+    const inScope = AIRLINES[scope as AirlineCode]?.rollout.rosterIsProgramScope ?? false;
+    const said = (s: { starlink: number; total: number }) =>
+      denominatorIsPublishable(s.starlink, s.total, inScope);
+    const lines = [
+      said(mainline) ? `• Mainline: ${mainlinePct} Starlink` : null,
+      said(express) ? `• Express/regional: ${expressPct} Starlink` : null,
+    ].filter((l) => l !== null);
     fleetParagraph =
       scope === "UA"
-        ? `Fleet reality:\n• Express/regional (UA3000-6999): ~${expressPct}% Starlink\n• Mainline (UA1-2999, 737/787/etc): only ~${mainlinePct}% — assume NO Starlink on long-haul\n\n`
-        : hasFleetSplit
-          ? `Fleet reality (${carrier}):\n• Mainline: ~${mainlinePct}% Starlink\n• Express/regional: ~${expressPct}% Starlink\n\n`
+        ? `Fleet reality:\n• Express/regional (UA3000-6999): ${expressPct} Starlink\n• Mainline (UA1-2999, 737/787/etc): only ${mainlinePct} — assume NO Starlink on long-haul\n\n`
+        : lines.length > 0
+          ? `Fleet reality (${carrier}):\n${lines.join("\n")}\n\n`
           : "";
   }
 

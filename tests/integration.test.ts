@@ -302,7 +302,8 @@ describe("MCP tools", () => {
     const json = await mcpCall("tools/call", { name: "get_fleet_stats", arguments: {} });
     const text = json.result.content[0].text as string;
     expect(text).toContain("**By Aircraft Type**");
-    expect(text).toMatch(/- \S+: \d+ of \d+ \(\d+\.\d%\)/);
+    // Whole percents, the pages' rule (tests/one-percent.test.ts): no decimal.
+    expect(text).toMatch(/- \S+: \d+ of \d+ \([<>]?\d+%\)/);
     expect(text).not.toContain("unknown");
   });
 
