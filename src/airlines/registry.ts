@@ -371,6 +371,13 @@ export interface AirlineConfig {
   /** Poll non-equipped roster tails for flights with idle updater capacity, so
    * an assigned-but-unconfirmed tail can be named without a live lookup. */
   fleetFallbackFlights?: boolean;
+  /** No public surface reads this airline's upcoming_flights, so the updater
+   * refreshes each of its listed tails once per this many hours, evenly
+   * spaced, instead of once per lap of the main queue. Every poll it gives up
+   * goes to the airlines people ask about. Remove it when the airline gets a
+   * per-flight surface (tests/flight-updater-schedule.test.ts refuses the
+   * combination). */
+  flightPollLapHours?: number;
   /** Anchored registration format for tails operated by this airline. Used to
    * reject sheet typos at ingest and gate cleanup scripts. Built by
    * tailPatterns() from the same body as tailScanPattern. */
@@ -841,6 +848,9 @@ const AIRLINE_DEFS = {
       [/787-?9/i, "B787", "787-9"],
     ],
     fleetFallbackFlights: true,
+    // One poll a day per tail still sees every departure: FR24 answers about
+    // two days ahead.
+    flightPollLapHours: 24,
     rollout: {
       status: "in_progress",
       statusLabel: "Mostly done",

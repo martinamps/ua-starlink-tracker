@@ -3563,14 +3563,51 @@ export function getFleetEntryByTail(
   } | null;
 }
 
+/** Airlines whose listed tails are polled on their own slow lap. */
+function slowLapAirlines(): AirlineConfig[] {
+  return enabledAirlines().filter((a) => (a.flightPollLapHours ?? 0) > 0);
+}
+
+/** The main updater queue, stalest first. Slow-lap airlines are left out:
+ * getSlowLapTailDue hands their tails out one at a time. */
 export function getStarlinkTailsByCheckAge(db: Database): string[] {
+  const slow = slowLapAirlines().map((a) => a.code);
+  const skip = slow.length ? `AND airline NOT IN (${placeholders(slow)})` : "";
   return (
     db
       .query(
-        "SELECT TailNumber FROM starlink_planes WHERE TailNumber IS NOT NULL ORDER BY last_flight_check ASC"
+        `SELECT TailNumber FROM starlink_planes WHERE TailNumber IS NOT NULL ${skip} ORDER BY last_flight_check ASC`
       )
-      .all() as { TailNumber: string }[]
+      .all(...slow) as { TailNumber: string }[]
   ).map((r) => r.TailNumber);
+}
+
+/**
+ * The stalest listed tail of a slow-lap airline, once that airline's newest
+ * poll is a slot old (its lap divided by its tail count). Spacing by the
+ * newest poll, read from the table, keeps the airline's tails spread over the
+ * lap across restarts: polled as one block, they starved every other airline
+ * for an hour a lap and left their own freshness gauge silent for the rest.
+ */
+export function getSlowLapTailDue(db: Database, now = unixNow()): string | null {
+  for (const a of slowLapAirlines()) {
+    const lapSec = (a.flightPollLapHours as number) * 3600;
+    const q = db
+      .query(
+        `SELECT COUNT(*) AS n, MAX(COALESCE(last_flight_check, 0)) AS newest
+         FROM starlink_planes WHERE airline = ? AND TailNumber IS NOT NULL`
+      )
+      .get(a.code) as { n: number; newest: number | null };
+    if (q.n === 0 || now - (q.newest ?? 0) < lapSec / q.n) continue;
+    const row = db
+      .query(
+        `SELECT TailNumber FROM starlink_planes WHERE airline = ? AND TailNumber IS NOT NULL
+         ORDER BY COALESCE(last_flight_check, 0) ASC, TailNumber LIMIT 1`
+      )
+      .get(a.code) as { TailNumber: string } | null;
+    if (row) return row.TailNumber;
+  }
+  return null;
 }
 
 export function updateLastFlightCheck(db: Database, tailNumber: string, success = true) {
