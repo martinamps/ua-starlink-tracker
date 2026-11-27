@@ -214,6 +214,21 @@ describe("names told to assistive technology", () => {
     expect(css).toMatch(/\.tail-registry > a::before \{\s*content: attr\(data-dot\);/);
   });
 
+  test("the registry's plain text keeps every tail apart from its neighbours", async () => {
+    const { text } = await bodyOf(app, "/fleet", UNITED);
+    const start = text.indexOf('class="tail-registry');
+    const end = text.indexOf("</div>", start);
+    expect(start).toBeGreaterThan(-1);
+    const block = text.slice(start, end);
+    const tails = [...block.matchAll(/<a id="t-([^"]+)"/g)].map((m) => m[1]);
+    expect(tails.length).toBeGreaterThan(0);
+    // What a crawler that doesn't render gets: the markup with its tags dropped.
+    const flat = block.slice(block.indexOf(">") + 1).replace(/<[^>]*>/g, "");
+    for (const tail of tails) {
+      expect(flat, tail).toMatch(new RegExp(`(^|[^A-Za-z0-9])${tail}(?![A-Za-z0-9])`));
+    }
+  });
+
   test("a hidden spec card takes no room, so it can't widen the page", () => {
     const css = readFileSync(join(ROOT, "src/styles/tailwind.css"), "utf8");
     expect(css).toMatch(/\n\.spec-card \{\s*display: none;/);

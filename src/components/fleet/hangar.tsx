@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { type CSSProperties, Fragment } from "react";
 import { isStarlinkProvider } from "../../database/sql/equipped";
 import type {
   FleetFamily,
@@ -342,31 +342,36 @@ export function TailRegistry({
           const dot = registryDot(t, marks);
           const own = tailHref?.(t.tail) ?? null;
           const abbr = t.family === "unknown" ? "—" : familyLabel(t.family, typeLinks);
+          // The space after each row draws nothing between these flex rows,
+          // but keeps one row's type from running into the next tail in the
+          // page's plain text ("E175N105SY"), as a crawler that doesn't
+          // render reads it. The glyph that used to sit there is CSS now.
           return (
-            <a
-              key={t.tail}
-              id={`t-${t.tail}`}
-              {...(own
-                ? { href: own }
-                : {
-                    href: `https://flightaware.com/live/flight/${t.tail}`,
-                    target: "_blank",
-                    rel: "nofollow noreferrer noopener",
-                  })}
-              title={`${familyLabel(t.family, typeLinks)} · ${tailTitle(t, marks, labels)}`}
-              // The row shows a tail and a type; its Wi-Fi is colour and a
-              // glyph, so the name says it (a title alone is often skipped).
-              // It opens with the row's own text, space and all, as speech
-              // control expects (WCAG 2.5.3).
-              aria-label={`${t.tail} ${abbr} · ${wifiNote(t, marks, labels)}`}
-              // The glyph is drawn by CSS from data-dot (an empty box where
-              // there is none), as on a type page's list: one element fewer
-              // on each of 1.6k rows. The name above already says it.
-              data-dot={dot.ch}
-              className={`${registryClass(t, marks)}${dot.cls}`}
-            >
-              <span className="tail-num">{t.tail}</span> <span className="tail-abbr">{abbr}</span>
-            </a>
+            <Fragment key={t.tail}>
+              <a
+                id={`t-${t.tail}`}
+                {...(own
+                  ? { href: own }
+                  : {
+                      href: `https://flightaware.com/live/flight/${t.tail}`,
+                      target: "_blank",
+                      rel: "nofollow noreferrer noopener",
+                    })}
+                title={`${familyLabel(t.family, typeLinks)} · ${tailTitle(t, marks, labels)}`}
+                // The row shows a tail and a type; its Wi-Fi is colour and a
+                // glyph, so the name says it (a title alone is often skipped).
+                // It opens with the row's own text, space and all, as speech
+                // control expects (WCAG 2.5.3).
+                aria-label={`${t.tail} ${abbr} · ${wifiNote(t, marks, labels)}`}
+                // The glyph is drawn by CSS from data-dot (an empty box where
+                // there is none), as on a type page's list: one element fewer
+                // on each of 1.6k rows. The name above already says it.
+                data-dot={dot.ch}
+                className={`${registryClass(t, marks)}${dot.cls}`}
+              >
+                <span className="tail-num">{t.tail}</span> <span className="tail-abbr">{abbr}</span>
+              </a>{" "}
+            </Fragment>
           );
         })}
       </div>
