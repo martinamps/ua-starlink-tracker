@@ -2,8 +2,18 @@
  * IATA -> [lat, lon] for every airport in the tracked route network, plus a
  * great-circle helper. Source: OurAirports (public domain). Used by the
  * itinerary planner's detour gate; coordinates are static facts, so an
- * unknown code means a new airport entered the network -- callers must treat
- * a null distance as "can't check" and keep the option, never drop it.
+ * unknown code means a new airport entered the network.
+ *
+ * A null distance means "can't check". For a connection the planner now
+ * drops what it can't check: no hub without coordinates, and no connection
+ * for a trip that starts or ends at such a code (its nonstops stay, they need
+ * no geography). The first rule here was the opposite, keep the option and
+ * never drop it, from when the table held 455 airports and an unknown code
+ * was common, so dropping would have emptied real answers. The tables now
+ * hold every airport the site names and a gauge counts the unplaced ones, so
+ * an unknown code is rare and new, and keeping it offered DEN->EWR by way of
+ * St. Kitts. Answers must say such a trip's connections went unchecked, not
+ * that none exists.
  */
 
 // biome-ignore format: one airport per line keeps the table diffable
@@ -738,8 +748,10 @@ export function airportCountry(code: string): string | null {
 /**
  * May `hub` connect a US-domestic trip? Routing SFO→EWR via Halifax means a
  * passport, customs, and a fare nobody books. Only US↔US trips are gated: a
- * YVR→YYZ trip on United legitimately connects through a US hub. Unknown hub
- * codes pass (fail open, like the detour gate).
+ * YVR→YYZ trip on United legitimately connects through a US hub. A hub of
+ * unknown country passes here, but the planner never asks about one: it
+ * refuses a hub without coordinates before this gate, since an unknown
+ * country once let St. Kitts into a US-domestic trip.
  */
 export function hubAllowedForTrip(origin: string, destination: string, hub: string): boolean {
   if (airportCountry(origin) !== "US" || airportCountry(destination) !== "US") return true;
