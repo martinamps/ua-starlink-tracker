@@ -21,6 +21,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { AIRLINES } from "../src/airlines/registry";
 import { AIRPORT_COORDS, airportCountry, hubAllowedForTrip } from "../src/utils/airport-geo";
 import { AIRPORT_REGISTER } from "../src/utils/airport-register-data";
 import { AIRPORT_TZ } from "../src/utils/airport-tz";
@@ -146,5 +147,24 @@ describe("the planner's hub gate, for those airports", () => {
   test("a territory still connects a domestic trip, and a trip to one is still gated", () => {
     expect(hubAllowedForTrip("HNL", "SPN", "GUM")).toBe(true);
     expect(hubAllowedForTrip("EWR", "SJU", "YYZ")).toBe(false);
+  });
+});
+
+describe("Aer Lingus's transatlantic statement, for those airports", () => {
+  // Its rule reads the country of each end. While Stansted read as US, a
+  // Dublin to London flight was answered "likely yes" from a statement about
+  // transatlantic routes.
+  const rule = AIRLINES.EI.statementRule;
+  const covers = (o: string, d: string) => rule?.by === "route" && rule.covers(o, d);
+
+  test("does not speak for a flight from Ireland to one outside North America", () => {
+    for (const code of ["STN", "FAB", "BDA", "SVO", "ESB", "NGO", "CEB", "KHH", "KTI", "XPL"]) {
+      expect(covers("DUB", code), code).toBe(false);
+      expect(covers(code, "SNN"), code).toBe(false);
+    }
+  });
+
+  test("still speaks for Ireland to the US, Canada and Mexico", () => {
+    for (const code of ["JFK", "SJU", "YYZ", "TGZ"]) expect(covers("DUB", code), code).toBe(true);
   });
 });
