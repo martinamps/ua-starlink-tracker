@@ -8,6 +8,16 @@
 /** Half of a 24 px fingertip, the smallest target a tap is expected to hit. */
 export const FINGER_RADIUS_PX = 12;
 
+/**
+ * The fingertip's radius in page px when the person has pinched the page in.
+ * A finger stays the same size on the glass while the map grows under it, so
+ * at 3x zoom it covers a third as much of the map: zooming in is how a person
+ * picks out Dulles from Reagan with one tap.
+ */
+export function fingerRadius(zoom: number): number {
+  return FINGER_RADIUS_PX / Math.max(1, zoom);
+}
+
 /** Three rows of four in the chooser; the list under the map has the rest. */
 export const CHOOSER_MAX = 12;
 
@@ -63,13 +73,18 @@ export function airportsUnderTap<T extends MapDot>(
  * under it is at least HUB_CLEAR_PX further off, and that dot is far busier
  * than all the rest together. `near` is airportsUnderTap's answer.
  */
-export function clearHub<T extends DrawnDot>(near: readonly T[], x: number, y: number): T | null {
+export function clearHub<T extends DrawnDot>(
+  near: readonly T[],
+  x: number,
+  y: number,
+  clearPx = HUB_CLEAR_PX
+): T | null {
   const [top, ...rest] = near;
   if (!top || rest.length === 0) return null;
   const d = (dot: T) => Math.hypot(dot.x - x, dot.y - y);
   const own = d(top);
   if (own > top.radius + ROUNDING_PX) return null;
-  if (rest.some((dot) => d(dot) - own < HUB_CLEAR_PX)) return null;
+  if (rest.some((dot) => d(dot) - own < clearPx)) return null;
   const others = rest.reduce((sum, dot) => sum + dot.departures, 0);
   return top.departures >= HUB_SHARE * others ? top : null;
 }

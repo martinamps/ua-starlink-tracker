@@ -8,6 +8,10 @@
  * It never opens an airport the finger wasn't on. On a tablet or a phone held
  * sideways, a finger squarely on a far busier hub opens it without asking.
  *
+ * Pinched in, the finger covers less of the map, so the fingertip shrinks
+ * with the zoom and the chooser is drawn at the finger's scale, inside what
+ * the screen shows.
+ *
  * A mouse on a wider screen keeps the server's links untouched, and so does a
  * link activated with no pointer (keyboard, most screen readers). A finger is
  * caught at every width: a phone held sideways is wider than `sm`.
@@ -16,8 +20,10 @@ import {
   CHOOSER_MAX,
   type DrawnDot,
   FINGER_RADIUS_PX,
+  HUB_CLEAR_PX,
   airportsUnderTap,
   clearHub,
+  fingerRadius,
   tapIsOurs,
 } from "./routes-map-pick";
 
@@ -26,12 +32,19 @@ const WIDE = "(min-width: 40rem)";
 /** A click this soon after a pointerup on the map is that tap's click. */
 const TAP_FRESH_MS = 1000;
 const GAP_PX = 8;
+/** The chooser's width from `sm` up (`sm:w-80`), and its most when pinched in. */
+const CHOOSER_WIDTH_PX = 320;
 
 const CHIP =
   "flex min-h-11 flex-col items-center justify-center rounded border border-neutral bg-surface px-1 font-mono text-sm leading-tight text-primary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/50";
 const CHIP_COUNT = "text-xs text-muted tabular-nums";
 
 type Dot = DrawnDot & { link: SVGAElement };
+
+/** How far the person has pinched the page in; 1 when they haven't. */
+function pageZoom(): number {
+  return Math.max(1, window.visualViewport?.scale ?? 1);
+}
 
 export function wireRoutesMap(): void {
   const map = document.querySelector<HTMLElement>(".js-map");
@@ -107,7 +120,7 @@ function wire(
     return a;
   }
 
-  function offer(near: Dot[], x: number, y: number): void {
+  function offer(near: Dot[], x: number, y: number, zoom: number): void {
     close();
     const shown = near.slice(0, CHOOSER_MAX);
     list.replaceChildren(...shown.map(chip));
@@ -124,10 +137,57 @@ function wire(
     const mapBox = map.getBoundingClientRect();
     ring.style.left = `${x - mapBox.left}px`;
     ring.style.top = `${y - mapBox.top}px`;
+    const ringSize = zoom > 1 ? `${(2 * FINGER_RADIUS_PX) / zoom}px` : "";
+    ring.style.width = ringSize;
+    ring.style.height = ringSize;
     ring.hidden = false;
 
     chooser.open = true;
     const frame = (chooser.offsetParent ?? map).getBoundingClientRect();
+    if (zoom > 1) {
+      placeZoomed(x, y, zoom, frame);
+    } else {
+      for (const key of ["transform", "transformOrigin", "width", "right"] as const)
+        chooser.style[key] = "";
+      placeUnzoomed(x, y, frame);
+    }
+
+    const active = document.activeElement;
+    returnFocus = active instanceof HTMLElement && active !== document.body ? active : null;
+    list.querySelector<HTMLElement>("a")?.focus({ preventScroll: true });
+    if (zoom === 1) chooser.scrollIntoView({ block: "nearest" });
+  }
+
+  /**
+   * Pinched in, the chooser is shrunk by the zoom so it reads at its usual
+   * size on the glass, and kept inside the part of the page the screen shows
+   * (the visual viewport), next to the finger.
+   */
+  function placeZoomed(x: number, y: number, zoom: number, frame: DOMRect): void {
+    const view = window.visualViewport;
+    const seen = view
+      ? { left: view.offsetLeft, top: view.offsetTop, width: view.width, height: view.height }
+      : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    const gap = GAP_PX / zoom;
+    chooser.style.transformOrigin = "0 0";
+    chooser.style.transform = `scale(${1 / zoom})`;
+    chooser.style.right = "auto";
+    chooser.style.width = `${Math.min(CHOOSER_WIDTH_PX, seen.width * zoom - 2 * GAP_PX)}px`;
+    const width = chooser.offsetWidth / zoom;
+    const height = chooser.offsetHeight / zoom;
+    const left = Math.min(
+      Math.max(x - width / 2, seen.left + gap),
+      seen.left + seen.width - gap - width
+    );
+    const reach = fingerRadius(zoom) + gap;
+    const below = y + reach;
+    const above = y - reach - height;
+    const top = below + height > seen.top + seen.height && above >= seen.top ? above : below;
+    chooser.style.left = `${left - frame.left}px`;
+    chooser.style.top = `${top - frame.top}px`;
+  }
+
+  function placeUnzoomed(x: number, y: number, frame: DOMRect): void {
     // Narrower than its frame (wider screens): centred on the tap, kept inside.
     const width = chooser.offsetWidth;
     const room = frame.width - width - 2 * GAP_PX;
@@ -141,11 +201,6 @@ function wire(
     // Under the finger's spot unless that runs off the screen and above fits.
     const top = below + height > window.innerHeight && above >= 0 ? above : below;
     chooser.style.top = `${top - frame.top}px`;
-
-    const active = document.activeElement;
-    returnFocus = active instanceof HTMLElement && active !== document.body ? active : null;
-    list.querySelector<HTMLElement>("a")?.focus({ preventScroll: true });
-    chooser.scrollIntoView({ block: "nearest" });
   }
 
   let tap: { x: number; y: number; at: number; pointer: string } | null = null;
@@ -172,18 +227,23 @@ function wire(
       // browser then sent it. With no pointer it is the focused link's own.
       if (!fromTap && (e.detail === 0 || !target || !map.contains(target))) return;
       const point = fromTap ?? { x: e.clientX, y: e.clientY };
-      const near = airportsUnderTap(dots(), point.x, point.y);
+      const zoom = pageZoom();
+      const near = airportsUnderTap(dots(), point.x, point.y, fingerRadius(zoom));
       // Upright phones always ask: there a hub's neighbours sit inside the
       // finger's own error.
       const only =
-        near.length === 1 ? near[0] : wide.matches ? clearHub(near, point.x, point.y) : null;
+        near.length === 1
+          ? near[0]
+          : wide.matches
+            ? clearHub(near, point.x, point.y, HUB_CLEAR_PX / zoom)
+            : null;
       // The browser's own choice stands when it is the airport the finger
       // meant, so new-tab clicks and the like keep working.
       if (only && target?.closest("a") === (only.link as Element)) return;
       e.preventDefault();
       e.stopPropagation();
       if (only) location.assign(`/routes/${only.code}`);
-      else if (near.length > 1) offer(near, point.x, point.y);
+      else if (near.length > 1) offer(near, point.x, point.y, zoom);
       else close();
     },
     true
@@ -211,6 +271,8 @@ function wire(
     allAirports.scrollIntoView({ block: "nearest" });
   });
   window.addEventListener("resize", () => close());
+  // A pinch moves the map out from under an open chooser.
+  window.visualViewport?.addEventListener("resize", () => close());
   // Back from an airport's page, the restored map shouldn't still be asking.
   window.addEventListener("pagehide", () => close());
 }
