@@ -220,8 +220,14 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
         return (
           <React.Fragment key={cfg.code}>
             <li className="py-3 first:pt-0 last:pb-0">
-              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                <span className="flex flex-wrap items-baseline gap-x-2">
+              {/* The name takes what the pill leaves and wraps inside itself,
+                  so every row keeps its pill on the first line at the right.
+                  Only when the name's longest word and the pill cannot share
+                  a line (a 320px phone at a 20px base font, where the row
+                  ran 4px past the page) does the pill take a line of its own,
+                  still at the right. */}
+              <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                <span className="flex flex-1 flex-wrap items-baseline gap-x-2">
                   <a
                     href={stat.href || "#"}
                     className="font-display text-base text-primary hover:text-accent transition-colors"

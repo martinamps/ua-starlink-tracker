@@ -6,9 +6,9 @@
 import React from "react";
 import { AIRLINES, SITES, type SiteConfig, liveAirlineSites } from "../airlines/registry";
 import { type ClientScript, clientScriptSrc } from "../client/bundle";
-import { AIRPORT_NAMES } from "../utils/airport-names";
 import { EYEBROW_TEXT, PANEL_PAD, SURFACE } from "./ui/box-classes";
 import { fmt } from "./ui/format";
+import { SLASHED_AIRPORT_WORDS } from "./ui/slashed-airport-words";
 
 /** A page's browser bundle, content-hashed; nothing when it isn't built. */
 export function ClientScriptTag({ name }: { name: ClientScript }) {
@@ -111,22 +111,12 @@ const H1 =
   "font-display text-3xl sm:text-4xl tracking-tight text-primary text-balance wrap-break-word";
 export const H2 = "font-display text-xl text-primary wrap-break-word";
 
-// The words of the airport table's names that join two places with a slash:
-// "Seattle/Tacoma", and "Dallas/Fort" of "Dallas/Fort Worth". No other slash
-// in a heading is an airport's. Built here and not beside the table, which
-// the browser's airport picker bundles too.
-const SLASHED_AIRPORT_WORDS = [
-  ...new Set(
-    Object.values(AIRPORT_NAMES).flatMap(([city]) =>
-      city.split(" ").filter((word) => /\p{L}\/\p{L}/u.test(word))
-    )
-  ),
-];
 // Longest first, so "Wilkes-Barre/Scranton" is never matched by a shorter
 // word that it ends with. A match stands alone: not inside a longer word or
 // a path.
 const SLASHED_AIRPORT_WORD = new RegExp(
-  `(?<![\\p{L}\\p{N}/-])(?:${SLASHED_AIRPORT_WORDS.sort((a, b) => b.length - a.length)
+  `(?<![\\p{L}\\p{N}/-])(?:${[...SLASHED_AIRPORT_WORDS]
+    .sort((a, b) => b.length - a.length)
     .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join("|")})(?![\\p{L}\\p{N}/-])`,
   "gu"
@@ -155,43 +145,47 @@ const breaksBefore = (text: string, i: number) => text[i] === " " || text[i - 1]
  */
 function headingWords(title: React.ReactNode): { words: React.ReactNode; label?: string } {
   if (typeof title !== "string" || !title.includes("/")) return { words: title };
-  const words: React.ReactNode[] = [];
-  let done = 0;
+  // Where a break is offered: after each slash of an airport's name.
+  const cuts: number[] = [];
   for (const match of title.matchAll(SLASHED_AIRPORT_WORD)) {
-    const from = match.index;
-    const to = from + match[0].length;
-    for (let slash = title.indexOf("/", from); slash >= 0 && slash < to; ) {
-      let start = slash;
-      while (start > done && !breaksBefore(title, start)) start--;
-      if (title[start] === " ") start++;
-      let end = slash + 1;
-      while (end < title.length && !breaksBefore(title, end)) end++;
-      const halves: string[] = [];
-      let cut = start;
-      for (let i = start; i < Math.min(end, to); i++) {
-        if (title[i] === "/" && i >= from) {
-          halves.push(title.slice(cut, i + 1));
-          cut = i + 1;
-        }
-      }
-      halves.push(title.slice(cut, end));
-      words.push(
-        title.slice(done, start),
-        <span key={start} className="inline-block max-w-full">
-          {halves.map((half, k) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: the halves of one fixed name, never reordered
-            <React.Fragment key={k}>
-              {k > 0 && <wbr />}
-              {half}
-            </React.Fragment>
-          ))}
-        </span>
-      );
-      done = end;
-      slash = title.indexOf("/", end);
+    for (let i = match.index; i < match.index + match[0].length; i++) {
+      if (title[i] === "/") cuts.push(i + 1);
     }
   }
-  if (done === 0) return { words: title };
+  if (cuts.length === 0) return { words: title };
+  const words: React.ReactNode[] = [];
+  let done = 0;
+  for (let c = 0; c < cuts.length; ) {
+    const slash = cuts[c] - 1;
+    let start = slash;
+    while (start > done && !breaksBefore(title, start)) start--;
+    if (title[start] === " ") start++;
+    let end = slash + 1;
+    while (end < title.length && !breaksBefore(title, end)) end++;
+    // One box for the whole run, with every cut that falls in it: two names
+    // tied by an arrow or a no-break space share a run, and a box each
+    // printed the second name's end twice.
+    const halves: string[] = [];
+    let cut = start;
+    for (; c < cuts.length && cuts[c] <= end; c++) {
+      halves.push(title.slice(cut, cuts[c]));
+      cut = cuts[c];
+    }
+    halves.push(title.slice(cut, end));
+    words.push(
+      title.slice(done, start),
+      <span key={start} className="inline-block max-w-full">
+        {halves.map((half, k) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the halves of one fixed run, never reordered
+          <React.Fragment key={k}>
+            {k > 0 && <wbr />}
+            {half}
+          </React.Fragment>
+        ))}
+      </span>
+    );
+    done = end;
+  }
   words.push(title.slice(done));
   return { words, label: title };
 }

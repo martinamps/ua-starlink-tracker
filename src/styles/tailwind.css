@@ -419,12 +419,17 @@
    that column's card ends at its block's right padding instead. The gap is
    in px like the blocks: at a 20px base font a 0.75rem gap made a column
    fewer than these ranges count, and the shift went to the wrong block.
-   The column before the last has 248px to the grid's edge and the page's
-   2rem padding beyond it: at 16px its card fits there as it always did (the
-   shift is 0), and from about 17px it moves left by what it would overrun,
-   staying 4px inside the window. Ranges run to 14 columns, the grid's width
-   at a 26px base font. The container is lifted so the cards still draw over
-   the sections below it. */
+   The column before the last moves left by what it would overrun. Its card
+   starts a border and the head's 0.5rem inside its block, so it has 247px
+   less 0.5rem to the grid's edge, and then the page's margin: half of what
+   the window is wider than the grid. That margin is measured and not
+   assumed: with a larger font set in the browser the rem breakpoints move
+   too, and the page's padding is 1rem or 1.5rem at widths where a rule that
+   counted on 2rem left the card up to 20px outside. The card stays 8px
+   clear, half a classic scrollbar, which 100vw counts as window. At 16px the
+   sum is positive (the shift is 0), so no card moves at the default size.
+   Ranges run to 14 columns. The container is lifted so the cards still draw
+   over the sections below it. */
 @media (min-width: 768px) {
   .fam-container {
     container-type: inline-size;
@@ -432,7 +437,7 @@
     z-index: 1;
     gap: 12px;
     --spec-last: calc(118px - 1rem - 16rem);
-    --spec-next: min(0px, calc(243px + 1.5rem - 16rem));
+    --spec-next: min(0px, calc(239px - 16.5rem + (100vw - 100cqw) / 2));
   }
 }
 @container (508px <= width < 638px) {

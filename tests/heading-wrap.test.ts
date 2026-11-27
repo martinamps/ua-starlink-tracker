@@ -6,11 +6,12 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PageHeader, Section } from "../src/components/layout";
+import { SLASHED_AIRPORT_WORDS } from "../src/components/ui/slashed-airport-words";
 import { AIRPORT_NAMES } from "../src/utils/airport-names";
 import { readableText } from "./helpers";
 
@@ -92,6 +93,63 @@ describe("a heading", () => {
       const html = h1(title);
       expect(html.split("<wbr/>"), city).toHaveLength(2);
       expect(readableText(html), city).toBe(title);
+    }
+  });
+
+  test("the written-out words are exactly the tables' slashed words", async () => {
+    const cities = Object.values(AIRPORT_NAMES).map(([city]) => city);
+    // The register under the hand table (airport-register-data.ts) names a
+    // code the hand table lacks by its municipality. Where a checkout has
+    // it, its slashed names need their words here too.
+    const register = join(import.meta.dir, "../src/utils/airport-register-data.ts");
+    if (existsSync(register)) {
+      const { AIRPORT_REGISTER } = (await import(register)) as {
+        AIRPORT_REGISTER: Record<string, readonly [string, ...unknown[]]>;
+      };
+      cities.push(...Object.values(AIRPORT_REGISTER).map(([city]) => city));
+    }
+    const words = new Set(
+      cities.flatMap((city) => city.split(" ").filter((word) => /\p{L}\/\p{L}/u.test(word)))
+    );
+    expect([...SLASHED_AIRPORT_WORDS].sort()).toEqual([...words].sort());
+  });
+
+  test("two names in one unbreakable run share a box, and no text is printed twice", () => {
+    expect(h1("Seattle/Tacoma→Arcata/Eureka")).toBe(
+      '<span class="inline-block max-w-full">Seattle/<wbr/>Tacoma→Arcata/<wbr/>Eureka</span>'
+    );
+    expect(h1("From Seattle/Tacoma\u00a0(SEA)\u00a0to\u00a0Arcata/Eureka\u00a0(ACV) today")).toBe(
+      `From ${'<span class="inline-block max-w-full">Seattle/<wbr/>Tacoma\u00a0(SEA)\u00a0to\u00a0Arcata/<wbr/>Eureka\u00a0(ACV)</span>'} today`
+    );
+    const slashed = Object.values(AIRPORT_NAMES)
+      .map(([city]) => city)
+      .filter((city) => city.includes("/"));
+    // Every pair of names, tied by each thing a browser does not break at
+    // and by each it does: the heading reads as written, with a break for
+    // every name's slash.
+    const ties = [
+      "→",
+      "\u00a0",
+      "\u00a0(XXX)\u00a0to\u00a0",
+      ",",
+      "–",
+      "—",
+      " ",
+      " to ",
+      ", ",
+      "→ ",
+    ];
+    for (const first of slashed) {
+      for (const second of slashed) {
+        for (const tie of ties) {
+          const title = `Fly ${first}${tie}${second} (XXX) now`;
+          const html = h1(title);
+          expect(readableText(html), title).toBe(readableText(title));
+          expect(html.replace(/<[^>]+>/g, ""), title).toBe(title);
+          expect(html.split("<wbr/>"), title).toHaveLength(3);
+          expect(html, title).not.toMatch(/<span[^>]*>[^<]*<span/);
+        }
+      }
     }
   });
 

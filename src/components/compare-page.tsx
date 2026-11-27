@@ -66,13 +66,19 @@ function SidePanel({ side }: { side: CompareSide }) {
   const showBlended = fleet > 0 && !side.phases && !side.typeProgress;
   return (
     <Panel className="flex flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <a
-          href={`/airlines/${airlineSlug(cfg)}`}
-          className="font-display text-lg font-semibold text-primary hover:text-accent transition-colors"
-        >
-          {cfg.name}
-        </a>
+      {/* As AirlineProgressList's row: the name wraps inside itself beside the
+          pill, and the pill drops only when the name's longest word cannot
+          share its line. The span takes the spare room so the link stays as
+          wide as its words. */}
+      <div className="flex flex-wrap items-center justify-end gap-2 mb-3">
+        <span className="flex flex-1">
+          <a
+            href={`/airlines/${airlineSlug(cfg)}`}
+            className="font-display text-lg font-semibold text-primary hover:text-accent transition-colors"
+          >
+            {cfg.name}
+          </a>
+        </span>
         <StagePill info={trackedStage(cfg, stat)} />
       </div>
 
