@@ -14,6 +14,7 @@ import type { AirlineConfig } from "../airlines/registry";
 import { recentFlights } from "../components/route-flights-copy";
 import {
   approxShare,
+  flightLabel,
   probLabel,
   zonedClock,
   zonedDeparture,
@@ -243,7 +244,7 @@ function legOdds(
       confidence: pred.confidence,
       basis: history ? "flight_history" : "aircraft_type",
       enough_history: history,
-      odds_label: history ? probLabel(p) : `~${probLabel(p)}`,
+      odds_label: history ? probLabel(p) : `~${flightLabel(p, s.observations)}`,
       aircraft: leg.aircraft,
     };
   }

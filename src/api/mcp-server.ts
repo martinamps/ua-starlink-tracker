@@ -1441,7 +1441,7 @@ function buildAlternativesBlock(
         flights: base?.flight_number ? ensureAirlinePrefix(cfg, base.flight_number) : "nonstop",
         via: "direct — baseline",
         stops: 0,
-        starlinkPct: approxPct(directProb),
+        starlinkPct: flightPct(directProb, base?.n_observations ?? 0),
         starlinkH: hours !== null ? approxShare(directProb, hours, fmtH) : "?",
         totalH,
       });
@@ -1475,7 +1475,7 @@ function buildAlternativesBlock(
           flights: legs,
           via,
           stops: it.via.length,
-          starlinkPct: `${((it.coverage_ratio ?? 0) * 100).toFixed(0)}%`,
+          starlinkPct: unseenNonstop(it) ?? `${((it.coverage_ratio ?? 0) * 100).toFixed(0)}%`,
           starlinkH: fmtH(it.expected_starlink_hours),
           totalH: fmtH(it.total_flight_hours),
         });
@@ -1903,7 +1903,7 @@ function toolPlanStarlinkItinerary(
       null)
     : null;
   const nonstopStats = baseline
-    ? `${approxPct(baseline.probability)} Starlink · ${approxShare(baseline.probability, baseline.duration_hours, fmtBaseH, baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
+    ? `${flightPct(baseline.probability, baseline.n_observations)} Starlink · ${approxShare(baseline.probability, baseline.duration_hours, fmtBaseH, baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
     : "";
   const baselineLine = !baseline
     ? ""
@@ -1957,7 +1957,6 @@ function toolPlanStarlinkItinerary(
         leg.duration_hours !== null ? `~${fmtHours(leg.duration_hours)} est.` : "duration unknown";
       return `position ${from}→${to} (mainline, ${approxShareLabel(leg.probability)} Starlink, ${dur})`;
     }
-    const pct = (leg.probability * 100).toFixed(0);
     const fleetTag = inferSubfleet(cfg, leg.flight_number) === "mainline" ? " [Mainline]" : "";
     const dur = leg.duration_hours !== null ? ` ~${fmtHours(leg.duration_hours)}` : "";
     const tag = leg.confirmed
@@ -1974,12 +1973,14 @@ function toolPlanStarlinkItinerary(
       : leg.time_basis === undefined || leg.time_basis === "usual"
         ? `, usually ${times}${offDay}`
         : `, ${times} (${seenOnDays(leg.days_seen)}, not yet a usual time${offDay})`;
-    return `${leg.flight_number}${fleetTag} (${leg.route}${dur}${when}) — ${pct}% ${tag}`;
+    return `${leg.flight_number}${fleetTag} (${leg.route}${dur}${when}) — ${listedPct(leg.probability, leg.n_observations)} ${tag}`;
   };
 
   const renderItin = (it: (typeof itineraries)[number], i: number): string => {
-    // One decimal so displayed ranking matches sort order
-    const jointPct = (it.joint_probability * 100).toFixed(1);
+    // One decimal so displayed ranking matches sort order. A nonstop with no
+    // history is that flight's fleet share, and repeats its own answer.
+    const unseen = unseenNonstop(it);
+    const jointPct = unseen ?? `${(it.joint_probability * 100).toFixed(1)}%`;
     const stops = it.via.length;
     const viaLabel =
       stops === 0 ? "DIRECT" : `via ${it.via.join("→")} (${stops} stop${stops > 1 ? "s" : ""})`;
@@ -1987,7 +1988,10 @@ function toolPlanStarlinkItinerary(
     // Time-aware summary — this is what users actually care about for tradeoffs
     let timeSummary: string;
     if (it.total_flight_hours !== null && it.expected_starlink_hours !== null) {
-      const ratio = it.coverage_ratio !== null ? ` (${(it.coverage_ratio * 100).toFixed(0)}%)` : "";
+      const ratio =
+        it.coverage_ratio !== null
+          ? ` (${unseen ?? `${(it.coverage_ratio * 100).toFixed(0)}%`})`
+          : "";
       timeSummary = ` · **~${fmtHours(it.expected_starlink_hours)} Starlink** / ~${fmtHours(it.total_flight_hours)} flying${ratio}`;
     } else if (it.coverage === "partial") {
       const knownStarlink = it.legs.reduce(
@@ -2003,9 +2007,9 @@ function toolPlanStarlinkItinerary(
     if (it.coverage === "partial") {
       header = `${i + 1}. **${viaLabel}**${timeSummary}`;
     } else if (stops === 0) {
-      header = `${i + 1}. **${viaLabel}** — ${jointPct}% Starlink${timeSummary}`;
+      header = `${i + 1}. **${viaLabel}** — ${jointPct} Starlink${timeSummary}`;
     } else {
-      header = `${i + 1}. **${viaLabel}** — ${jointPct}% joint${timeSummary}`;
+      header = `${i + 1}. **${viaLabel}** — ${jointPct} joint${timeSummary}`;
     }
 
     const legLines = it.legs
@@ -2123,7 +2127,7 @@ function toolPredictRouteStarlink(
   recordFlightLookup("mcp", "predicted", shown[0].confidence, reader.scope);
   for (const f of shown) recordPrediction(f, reader.scope);
   const lines = shown.map((f) => {
-    const pct = (f.probability * 100).toFixed(0);
+    const pct = listedPct(f.probability, f.n_observations);
     const fleet = inferSubfleet(cfg, f.flight_number);
     const fleetTag = fleet === "mainline" ? "[Mainline]" : "          "; // align columns
     // Distinguish "observed and confirmed 0%" from "unobserved (fleet prior)"
@@ -2131,7 +2135,7 @@ function toolPredictRouteStarlink(
       f.n_observations === 0
         ? "(unobserved — fleet prior)"
         : confidenceTag(f.n_observations, f.confidence);
-    return `  ${f.flight_number.padEnd(8)} ${fleetTag} (${f.route})  ${pct.padStart(3)}%  ${obsNote}`;
+    return `  ${f.flight_number.padEnd(8)} ${fleetTag} (${f.route})  ${pct.padStart(4)}  ${obsNote}`;
   });
 
   const routeDesc =
@@ -2414,6 +2418,20 @@ export function approxFleetPct(p: number): string {
 
 /** A flight's number: odds once it has history, its fleet's share until then. */
 const flightPct = (p: number, tracked: number) => (tracked > 0 ? approxPct(p) : approxFleetPct(p));
+
+/** flightPct with no "~", for a planner leg or a listed flight: the percent
+ * the flight's own answer prints, so one flight never carries two numbers. */
+const listedPct = (p: number, tracked: number) =>
+  tracked > 0 ? `${(p * 100).toFixed(0)}%` : shareLabel(p);
+
+/** The percent of a nonstop whose one flight has no history, else null: every
+ * figure of such an option is that flight's fleet share. */
+function unseenNonstop(it: {
+  legs: ReadonlyArray<{ probability: number; n_observations: number }>;
+}): string | null {
+  const [leg] = it.legs;
+  return it.legs.length === 1 && leg.n_observations === 0 ? shareLabel(leg.probability) : null;
+}
 
 /** Expected Starlink time for a share of `hours`, "0" when the share rounds to 0%. */
 function approxShare(
