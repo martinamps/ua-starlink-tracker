@@ -1890,7 +1890,11 @@ function toolPlanStarlinkItinerary(
     const tag = leg.confirmed
       ? "(assigned to a Starlink-equipped tail)"
       : confidenceTag(leg.n_observations, leg.confidence);
-    return `${leg.flight_number}${fleetTag} (${leg.route}${dur}) — ${pct}% ${tag}`;
+    const day = leg.date && dateStr && leg.date !== dateStr ? ` on ${leg.date}` : "";
+    const when = leg.typical_departure
+      ? `, usually ${leg.typical_departure}${leg.typical_arrival ? `–${leg.typical_arrival}` : ""}${day}`
+      : "";
+    return `${leg.flight_number}${fleetTag} (${leg.route}${dur}${when}) — ${pct}% ${tag}`;
   };
 
   const renderItin = (it: (typeof itineraries)[number], i: number): string => {
@@ -1924,7 +1928,16 @@ function toolPlanStarlinkItinerary(
       header = `${i + 1}. **${viaLabel}** — ${jointPct}% joint${timeSummary}`;
     }
 
-    const legLines = it.legs.map((l, idx) => `   · Leg ${idx + 1}: ${renderLeg(l)}`).join("\n");
+    const legLines = it.legs
+      .map((l, idx) => {
+        const wait = idx > 0 ? it.connection_minutes?.[idx - 1] : undefined;
+        const layover =
+          typeof wait === "number"
+            ? ` (${fmtHours(wait / 60)} to connect in ${it.via[idx - 1]})`
+            : "";
+        return `   · Leg ${idx + 1}${layover}: ${renderLeg(l)}`;
+      })
+      .join("\n");
     return `${header}\n${legLines}`;
   };
 
@@ -1943,10 +1956,16 @@ ${fullItins.map(renderItin).join("\n\n")}`);
 ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")}`);
   }
 
-  const hasMultiLeg = itineraries.some((it) => it.legs.length > 1);
-  const timingNote = hasMultiLeg
-    ? `\n\n⚠️ Connection timing NOT validated — verify legs actually connect same-day on ${cfg.verifySite}.`
-    : "";
+  // Connections are picked from each flight's usual times; one with a leg
+  // whose time isn't on record, or an any-flight positioning leg, is unchecked.
+  const multiLeg = itineraries.filter((it) => it.legs.length > 1);
+  const unchecked = multiLeg.filter((it) => it.schedule !== "same_day").length;
+  const timingNote =
+    multiLeg.length === 0
+      ? ""
+      : unchecked === 0
+        ? `\n\nEach connection leaves at least an hour after the previous leg usually lands, by usual departure times — confirm the day's schedule on ${cfg.verifySite} before booking.`
+        : `\n\n⚠️ ${unchecked === multiLeg.length ? "Connection" : `${unchecked} of ${multiLeg.length} connections'`} timing NOT validated (a leg's time isn't on record, or it's an any-flight leg) — verify those legs connect same-day on ${cfg.verifySite}. The others leave at least an hour after the previous leg usually lands.`;
 
   const hasDirect = itineraries.some((it) => it.via.length === 0);
   const baselineSection = baselineLine && !hasDirect ? `${baselineLine}\n\n` : "";
@@ -1955,7 +1974,7 @@ ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")
 
 ${baselineSection}${sections.join("\n\n---\n\n")}${timingNote}
 
-**Ranking**: by coverage ratio (expected Starlink hours / total hours), with a small penalty per stop. Connections are limited to ${ENFORCE_ITINERARY_TIME_BUDGET ? "a modest time premium over the nonstop (1h allowed per layover)" : "the geographic detour bound"}. "~1.8h Starlink / ~7h flying (26%)" = 26% of flight time expected on Starlink.`;
+**Ranking**: by coverage ratio (expected Starlink hours / total hours), with a small penalty per stop. Connections are limited to ${ENFORCE_ITINERARY_TIME_BUDGET ? "a modest time premium over the nonstop (real layovers counted where times are known, else 1h per layover)" : "the geographic detour bound"}. "~1.8h Starlink / ~7h flying (26%)" = 26% of flight time expected on Starlink.`;
 
   return textResult(text);
 }
@@ -2460,7 +2479,7 @@ function handleInitialize(
     },
     instructions: `${scopeTitle(scope)} Starlink tracker. ${scopeNotice} ${overrideHint}
 
-${fleetParagraph}People who install this connector care about Starlink hours, but not at any cost. When presenting connections, show each option's total time and stops next to the nonstop, and recommend a connection only when the extra time is modest for the Starlink gained. Compare coverage ratio (expected Starlink hours / total hours), not leg percentages. Connections are built from route history, not same-day schedules — say they should be confirmed on the airline's site before booking.
+${fleetParagraph}People who install this connector care about Starlink hours, but not at any cost. When presenting connections, show each option's total time and stops next to the nonstop, and recommend a connection only when the extra time is modest for the Starlink gained. Compare coverage ratio (expected Starlink hours / total hours), not leg percentages. Connections are picked from each flight's usual departure times (route history, not the day's published schedule) — say they should be confirmed on the airline's site before booking.
 
 Tool selection:
 • Routing/tradeoff → plan_starlink_itinerary (${planner ? "multi-stop, coverage ratio" : scope === "ALL" ? "per-airline nonstop comparison" : "nonstop odds by aircraft type"})
