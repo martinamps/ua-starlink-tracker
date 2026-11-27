@@ -160,7 +160,7 @@ import {
   routeBoardDateOk,
 } from "../api/route-flights";
 import { clientScriptResponse } from "../client/bundle";
-import { datePassed, renderFlightAnswer } from "../client/flight-answer";
+import { datePassed, forecastNote, renderFlightAnswer } from "../client/flight-answer";
 import AircraftTypePage from "../components/aircraft-type-page";
 import {
   AirlineDetailPage,
@@ -3767,9 +3767,11 @@ function flightMetaAnswer(
  * the answer card's headline, the sentence the page, its share picture and
  * the browser re-check all print. A link shared in a message, or fetched by
  * an assistant for someone asking about that day, shows these lines, so they
- * must not offer odds where the page gives a yes or no. Null where the date
- * has no answer of its own (an error, or a date already over at the
- * airport): the flight's undated lines stand. */
+ * must not offer odds where the page gives a yes or no. A page scoped to one
+ * leg names that leg in its title, as the undated leg page does: two legs of
+ * one number can answer yes and no on the same day. Null where the date has
+ * no answer of its own (an error, or a date already over at the airport):
+ * the flight's undated lines stand. */
 export function datedPageLines(
   site: SiteConfig,
   facts: FlightFacts,
@@ -3781,24 +3783,38 @@ export function datedPageLines(
   const answer = renderFlightAnswer(dated.body, answerCtx);
   const forecast =
     answer.tone === "likely" || answer.tone === "maybe" || answer.tone === "unlikely";
+  // The card's own caveat, so the preview never promises what the card doesn't.
   const after = answer.firm
     ? " Aircraft can be swapped before departure."
     : forecast
-      ? " A firm answer comes once the aircraft is assigned, about 2 days before departure."
+      ? ` ${forecastNote(dated.body, answerCtx)}`
       : "";
   const day = monthDay(dated.date, answerCtx.nowSec);
   // The template inserts meta values as they are, and the headline carries a
   // tail number read from outside feeds: nothing in it may close the attribute
-  // or open a tag. An apostrophe ("doesn't") is safe in both places.
+  // or open a tag. An apostrophe ("doesn't") is safe in both places. The
+  // description is cut to length first, so the cut never splits an entity.
   const safe = (s: string) =>
     s.replace(
       /[&"<>]/g,
       (c) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[c] as string
     );
   return {
-    title: safe(`Does ${dated.flightNumber} on ${day} Have Starlink Wi-Fi?`),
-    description: safe(`${answer.headline}.${after}`),
+    title: safe(
+      `Does ${dated.flightNumber}${datedLegLabel(facts, dated.leg)} on ${day} Have Starlink Wi-Fi?`
+    ),
+    description: safe(clampMetaDescription(`${answer.headline}.${after}`)),
   };
+}
+
+/** The asked leg as a title names it: the flight's own route row when it flies
+ * that leg (buildFlightFacts puts it first), else the parsed airports. */
+function datedLegLabel(facts: FlightFacts, leg: LegQuery | undefined): string {
+  if (!leg) return "";
+  const route = facts.routes[0];
+  if (route && onLeg(route, leg)) return ` (${route.departure_airport} → ${route.arrival_airport})`;
+  if (leg.origin && leg.destination) return ` (${leg.origin} → ${leg.destination})`;
+  return leg.origin ? ` (from ${leg.origin})` : leg.destination ? ` (to ${leg.destination})` : "";
 }
 
 function flightPageMeta(

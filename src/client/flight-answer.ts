@@ -301,6 +301,16 @@ function degradedNote(message: string | undefined): string | null {
     : null;
 }
 
+/** The sentence a forecast card prints after its basis: a degraded lookup's
+ * notice, else the swap caveat when an aircraft is already named, else when a
+ * firm answer comes. A dated page's meta description reuses it word for word. */
+export function forecastNote(body: CheckFlightBody, ctx: AnswerContext): string {
+  return (
+    degradedNote(body.message) ??
+    (body.assignment?.tail_number ? CHANGE_NOTE : timingNote(ctx, ctx.airlineName))
+  );
+}
+
 function timingNote(ctx: AnswerContext, airlineName: string): string {
   if (ctx.daysOut > 2) {
     return `${airlineName} assigns aircraft about 2 days before departure. Check again then for a firm answer.`;
@@ -342,9 +352,7 @@ function countedAnswer(
       : `Not yet for ${on}, by ${whose}`;
   const tone: AnswerTone = every ? "unknown" : probTier(0);
   const said = capitalize((body.message ?? "").replace(/^~\d+% Starlink probability: /, ""));
-  const note =
-    degradedNote(body.message) ??
-    (body.assignment?.tail_number ? CHANGE_NOTE : timingNote(ctx, ctx.airlineName));
+  const note = forecastNote(body, ctx);
   const html = card(
     tone,
     headline,
@@ -491,9 +499,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
         ? `Based on the aircraft on ${fmt(n)} recent ${fn} flights.`
         : `We haven't seen ${fn} yet, so this is our estimate for flights like it.`
       : capitalize((body.message ?? "").replace(/^~\d+% Starlink probability: /, ""));
-  const note =
-    degradedNote(body.message) ??
-    (body.assignment?.tail_number ? CHANGE_NOTE : timingNote(ctx, ctx.airlineName));
+  const note = forecastNote(body, ctx);
   // A type rule's headline is the whole answer; the API's sentence would repeat it.
   const detail = typeRule
     ? ""

@@ -128,7 +128,9 @@ describe("a dated page's title and description give that date's answer", () => {
     const p = await page(`/check-flight/UA100/${isoDay(now + 12 * DAY)}`);
     expect(p.status).toBe(200);
     expect(p.description).toMatch(/chance UA100 on \w{3} \d{1,2} has Starlink\./);
-    expect(p.description).toContain("A firm answer comes once the aircraft is assigned");
+    expect(p.description).toContain(
+      "United Airlines assigns aircraft about 2 days before departure. Check again then for a firm answer."
+    );
     expect(p.title).toMatch(/^Does UA100 on \w{3} \d{1,2} Have Starlink Wi-Fi\?$/);
   });
 
@@ -224,10 +226,67 @@ describe("each kind of dated answer, line by line", () => {
         )
       );
       expect(lines?.description).toMatch(
-        /chance UA100 on \w{3} \d{1,2} has Starlink\. A firm answer/
+        /chance UA100 on \w{3} \d{1,2} has Starlink\. United Airlines assigns aircraft about 2 days before departure\. Check again then for a firm answer\.$/
       );
       expect(lines?.description).not.toMatch(/^Yes/);
     }
+  });
+
+  test("a forecast's caveat is the card's own: a named aircraft, or a lookup that failed", () => {
+    const prediction = { probability: 0.41, n_observations: 30 };
+    const assigned = datedPageLines(
+      SITE,
+      facts(),
+      dated({
+        hasStarlink: null,
+        confidence: "predicted",
+        prediction,
+        assignment: { tail_number: "N4VIA" },
+      })
+    );
+    expect(assigned?.description).toMatch(
+      /has Starlink\. Aircraft can be swapped before departure\.$/
+    );
+    const degraded = datedPageLines(
+      SITE,
+      facts(),
+      dated({
+        hasStarlink: null,
+        confidence: "predicted",
+        prediction,
+        message: "We couldn't confirm the aircraft assignment right now — try again shortly.",
+      })
+    );
+    expect(degraded?.description).toMatch(
+      /has Starlink\. We couldn't confirm the aircraft assignment just now\. Try again shortly\.$/
+    );
+    for (const lines of [assigned, degraded]) {
+      expect(lines?.description).not.toContain("about 2 days before departure");
+    }
+  });
+
+  test("a leg-scoped date names its leg; the plain date doesn't", () => {
+    const routes = [
+      { departure_airport: "SFO", arrival_airport: "IAH" },
+      { departure_airport: "SBA", arrival_airport: "SFO" },
+    ] as FlightFacts["routes"];
+    const body = { hasStarlink: true, confidence: "verified", flights: [{ tail_number: "N1VER" }] };
+    const scoped = datedPageLines(SITE, facts({ routes }), {
+      ...dated(body),
+      leg: { origin: "SFO", destination: "IAH" },
+    });
+    expect(scoped?.title).toMatch(
+      /^Does UA100 \(SFO → IAH\) on \w{3} \d{1,2} Have Starlink Wi-Fi\?$/
+    );
+    expect(scoped?.description).toMatch(/^Yes — UA100 on \w{3} \d{1,2} has Starlink \(N1VER/);
+    // A leg the flight's routes don't lead with is named from the asked airports.
+    const elsewhere = datedPageLines(SITE, facts({ routes }), {
+      ...dated(body),
+      leg: { origin: "ORD" },
+    });
+    expect(elsewhere?.title).toMatch(/^Does UA100 \(from ORD\) on /);
+    const plain = datedPageLines(SITE, facts({ routes }), dated(body));
+    expect(plain?.title).toMatch(/^Does UA100 on \w{3} \d{1,2} Have Starlink Wi-Fi\?$/);
   });
 
   test("an error, a passed date, or no date: no lines of its own", () => {
