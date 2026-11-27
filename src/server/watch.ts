@@ -82,7 +82,7 @@ interface WatchLeg {
   arrUnix: number | null;
 }
 
-type VerdictWithWindow = Exclude<
+export type VerdictWithWindow = Exclude<
   FlightVerdict,
   { kind: "invalid_date" } | { kind: "invalid_flight_number" }
 >;

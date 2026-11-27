@@ -68,6 +68,7 @@ import {
   isKnownFlightNumber,
   logResolvedAssignments,
   noteUnreadAircraft,
+  tailStarlinkFlag,
   withdrawUnreturnedSightings,
 } from "./assignment-log";
 import {
@@ -438,6 +439,9 @@ export interface ScopedReader {
   getAirlineTypeCount(family: string): AirlineTypeCount | null;
   /** Aircraft of the family this site lists as equipped; 0 on the hub. */
   getNamedOfType(family: string): number;
+  /** A logged tail's Starlink flag today (1/0/null), by the rule that fills
+   * the log's own column; `airline` is the logging row's. */
+  getTailStarlinkFlag(tail: string, airline: string): number | null;
   /** The same rows for a past date, read from the year-long flown record too. */
   getFlownAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
   /** A route, a scheduled leg or a logged assignment exists under one of the spellings. */
@@ -710,6 +714,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       getListedSightings(db, withOperatingPartners(airlines), v, s, e),
     getAirlineTypeCount: (family) => (scope === "ALL" ? null : airlineTypeCount(db, scope, family)),
     getNamedOfType: (family) => (scope === "ALL" ? 0 : namedOfType(db, scope, family)),
+    getTailStarlinkFlag: (tail, airline) => tailStarlinkFlag(db, tail, airline),
     getFlownAssignmentHistory: (v, d) => getFlownAssignmentHistory(db, airlines, v, d),
     isKnownFlightNumber: (v) => isKnownFlightNumber(db, airlines, v),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),

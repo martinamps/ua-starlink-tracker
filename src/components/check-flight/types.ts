@@ -131,4 +131,24 @@ export interface DatedAnswer {
   date: string;
   daysOut: number;
   body: CheckFlightBody;
+  /** A change of aircraft on the answered departure, from our own log. */
+  swap?: PlaneSwap | null;
+}
+
+/** "gained"/"lost" when one side is known to have Starlink and the other known
+ * not to; "same" when both are known alike; "unknown" when either isn't known. */
+export type SwapStarlinkChange = "gained" | "lost" | "same" | "unknown";
+
+export interface PlaneSwap {
+  /** The tail on the departure before the one the answer names. */
+  from: string;
+  to: string;
+  /** When we first logged `to` on the departure (unix seconds). */
+  seenAt: number;
+  /** IANA zone of the departure airport; null renders UTC. */
+  zone: string | null;
+  /** Whether each side has Starlink: `to` as the answer card says it. */
+  toStarlink: boolean;
+  fromStarlink: boolean | null;
+  change: SwapStarlinkChange;
 }

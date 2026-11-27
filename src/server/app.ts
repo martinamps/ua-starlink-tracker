@@ -35,6 +35,7 @@ import { CALL_POLICY } from "../airlines/call-policy";
 import { type HubHomeLinks, allFaqEntries, getContent } from "../airlines/content";
 import {
   CANONICAL_FLIGHT_PERMALINK,
+  buildAirlineFlightNumberVariants,
   buildFlightLookupVariants,
   canonicalFlightFor,
   canonicalFlightInput,
@@ -338,6 +339,7 @@ import {
   isPassengerVerifyAudience,
   passengerVerifyEnabled,
 } from "./passenger-detect";
+import { planeSwapFor } from "./plane-swap";
 import {
   bareDigitsFlight,
   checkPageFor,
@@ -3773,11 +3775,16 @@ async function datedAnswer(
     ) {
       return undefined;
     }
+    const history = reader.getAssignmentHistory(
+      buildAirlineFlightNumberVariants(cfg, flightNumber),
+      date
+    );
     return {
       flightNumber,
       date,
       daysOut: verdict.window.daysOut,
       body: checkFlightBody(cfg, reader, verdict, date, {}) as DatedAnswer["body"],
+      swap: planeSwapFor(reader, verdict, history),
     };
   } catch (err) {
     logError(`Dated answer failed for ${flightNumber} ${date}`, err);
