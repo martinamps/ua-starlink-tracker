@@ -377,6 +377,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   BDA: "Atlantic/Bermuda",
   BGI: "America/Barbados",
   ANU: "America/Antigua",
+  SKB: "America/St_Kitts",
   BON: "America/Kralendijk",
   PLS: "America/Grand_Turk",
   POS: "America/Port_of_Spain",
