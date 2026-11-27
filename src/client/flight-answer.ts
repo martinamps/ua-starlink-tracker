@@ -194,10 +194,50 @@ function flightRows(f: WireFlight, ctx: AnswerContext): string {
   return ` <dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
 }
 
-function liveTvLine(f: WireFlight, ctx: AnswerContext): string {
+function liveTvLine(f: WireFlight, ctx: AnswerContext, leg = "", link = true): string {
   if (!ctx.liveTv) return "";
   const tier = seatbackLiveTv(f.fleet_type, f.aircraft_type);
-  return ` <p class="mt-3 text-sm text-secondary">${esc(ctx.liveTv[tier])} <a href="/live-tv" class="text-accent hover:underline">Which planes have live TV</a></p>`;
+  const more = link
+    ? ' <a href="/live-tv" class="text-accent hover:underline">Which planes have live TV</a>'
+    : "";
+  return ` <p class="mt-3 text-sm text-secondary">${esc(leg)}${esc(ctx.liveTv[tier])}${more}</p>`;
+}
+
+const legLabel = (f: WireFlight) => {
+  const dep = toIata(f.departure_airport);
+  const arr = toIata(f.arrival_airport);
+  return dep && arr ? `${dep} → ${arr}` : null;
+};
+
+/**
+ * The aircraft a yes names. A number can fly two legs in a day on two planes,
+ * and a traveller is on one of them: each leg then carries its own plane, in
+ * departure order. One plane, on one leg or on all of them, is named alone.
+ */
+function yesPlanes(flights: WireFlight[]): string | null {
+  const tails = new Set(flights.map((f) => f.tail_number).filter(Boolean));
+  if (tails.size < 2) return flights[0]?.tail_number ?? null;
+  return flights
+    .filter((f) => f.tail_number)
+    .map((f) => {
+      const leg = legLabel(f);
+      return leg ? `${leg} on ${f.tail_number}` : f.tail_number;
+    })
+    .join(", ");
+}
+
+/** Live TV goes by aircraft type: legs on types that differ each get their own line. */
+function liveTvLines(flights: WireFlight[], ctx: AnswerContext): string {
+  const first = flights[0] ?? {};
+  if (!ctx.liveTv) return "";
+  const tier = (f: WireFlight) => seatbackLiveTv(f.fleet_type, f.aircraft_type);
+  const labelled = flights.filter((f) => legLabel(f));
+  if (labelled.length < 2 || labelled.every((f) => tier(f) === tier(labelled[0]))) {
+    return liveTvLine(first, ctx);
+  }
+  return labelled
+    .map((f, i) => liveTvLine(f, ctx, `${legLabel(f)}: `, i === labelled.length - 1))
+    .join("");
 }
 
 function flightAwareLink(f: WireFlight, ctx: AnswerContext): string {
@@ -383,12 +423,12 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const flights = body.flights ?? [];
     const first = flights[0] ?? {};
     const verified = body.confidence !== "likely";
-    const headline = `Yes — ${on} has Starlink (${[first.tail_number, verified ? "verified" : (ctx.listedStatus ?? "listed, not yet verified")].filter(Boolean).join(", ")})`;
+    const headline = `Yes — ${on} has Starlink (${[yesPlanes(flights), verified ? "verified" : (ctx.listedStatus ?? "listed, not yet verified")].filter(Boolean).join(", ")})`;
     const legs = flights.map((f) => flightRows(f, ctx)).join("");
     const html = card(
       "yes",
       headline,
-      `${legs}${body.message ? ` <p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLine(first, ctx)}${flightAwareLink(first, ctx)}${swapNote(ctx)}`
+      `${legs}${body.message ? ` <p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLines(flights, ctx)}${flightAwareLink(first, ctx)}${swapNote(ctx)}`
     );
     return { tone: "yes", headline, html, firm: true };
   }
