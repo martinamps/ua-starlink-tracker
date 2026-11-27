@@ -43,7 +43,7 @@ Community tail lists are no longer imported: QR rides its type rule + schedule i
 
 **Routes:** exact entries in `createApp(db).routes`, prefixes in `prefixRoutes` (`src/server/app.ts`; each entry declares its methods and feature flag). Pages `/`, `/fleet`, `/fleet/{type}`, `/check-flight[/…]`, `/route-planner[/…]`, `/routes`, `/airlines[/…]`, `/compare[/…]`, `/newly-equipped`, `/methodology`, `/timeline`, `/how-to-check`, `/is-starlink-free`, `/live-tv`, `/install-rate`, `/embed`, `/mcp` · APIs `/api/data`, `/api/fleet-summary`, `/api/routes`, `/api/check-flight`, `/api/check-any-flight`, `/api/compare-route`, `/api/predict-flight`, `/api/plan-route`, `/api/mismatches`, `/api/fleet-discovery`, `/api/passenger-probe` · feeds `/feed.xml`, `/cal/…` (.ics), `/badge.svg`, `/data/starlink-tails.csv`, `/sitemap.xml`, `/llms.txt`, `/robots.txt`. `app.routeTags` is the `route` metric tag budget (docs/OBSERVABILITY.md).
 
-**MCP:** stateless Streamable HTTP at `/mcp` exposing 7 tools (`check_flight`, `predict_flight_starlink`, `plan_starlink_itinerary`, `predict_route_starlink`, `search_starlink_flights`, `get_fleet_stats`, `list_starlink_aircraft`). See `src/api/mcp-server.ts`. Flight and route answers end with one line linking the live page that answers the same question, tagged `utm_source=mcp` (counted as `visit_source:assistant`); `src/api/mcp-live-page.ts` adds it only where that page renders and indexes.
+**MCP:** stateless Streamable HTTP at `/mcp` exposing 7 tools (`check_flight`, `predict_flight_starlink`, `plan_starlink_itinerary`, `predict_route_starlink`, `search_starlink_flights`, `get_fleet_stats`, `list_starlink_aircraft`). See `src/api/mcp-server.ts`.
 
 ## Public contracts — do not break
 
