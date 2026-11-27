@@ -1,13 +1,14 @@
 import { Database } from "bun:sqlite";
 /**
- * The fleet pages as a crawler that doesn't render, or a reader that ignores
+ * The site's pages as a crawler that doesn't render, or a reader that ignores
  * layout, takes them: the markup with its tags dropped. Wherever two pieces
  * of text meet across an element boundary with no space, they run together
- * there ("72%0 being installedMainline narrowbody", "CRJ700Seats70"), though
- * the page draws them apart. Every block of /fleet and of each /fleet/{type}
- * page is rendered, on a copy of the snapshot given the data the snapshot
- * lacks (the install pipeline, flights in the air, filings), so none of them
- * can regress unseen.
+ * there ("72%0 being installedMainline narrowbody", "CRJ700Seats70",
+ * "No flights scheduledN37502"), though the page draws them apart. Every
+ * block of /fleet and each /fleet/{type} page, every host's homepage, and the
+ * flight, route and tail pages they link are rendered, on a copy of the
+ * snapshot given the data the snapshot lacks (the install pipeline, flights in
+ * the air, filings), so none of them can regress unseen.
  */
 import { beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
@@ -114,6 +115,14 @@ function fullFleetDb(): Database {
          arrival_airport, departure_time, arrival_time, last_updated, airline)
        VALUES (?, ?, 'DEN', 'ORD', ?, ?, ?, 'UA')`
     ).run(tail, `UA${4100 + i}`, now - 1800 + i * 900, now + 3600 + i * 900, now);
+    // Later legs give the homepage row every pill and its "+N" button.
+    for (let leg = 1; leg < 7; leg++) {
+      db.query(
+        `INSERT OR REPLACE INTO upcoming_flights (tail_number, flight_number, departure_airport,
+           arrival_airport, departure_time, arrival_time, last_updated, airline)
+         VALUES (?, ?, 'ORD', 'DEN', ?, ?, ?, 'UA')`
+      ).run(tail, `UA${4200 + i * 10 + leg}`, now + leg * 14400, now + leg * 14400 + 9000, now);
+    }
   });
   return db;
 }
@@ -122,6 +131,25 @@ let app: ReturnType<typeof createApp>;
 beforeAll(() => {
   app = createApp(fullFleetDb());
 });
+
+/** The same-host pages a body links whose path matches. */
+function linked(html: string, path: RegExp): string[] {
+  return [
+    ...new Set(
+      [...html.matchAll(/href="(\/[^"#?]*)"/g)].map((m) => m[1]).filter((p) => path.test(p))
+    ),
+  ];
+}
+
+async function expectApart(host: string, path: string, status = 200) {
+  const res = await bodyOf(app, path, host);
+  expect(res.status, path).toBe(status);
+  expect(joinedWords(res.text), path).toEqual([]);
+  return res.text;
+}
+
+const isoDay = (offsetDays: number) =>
+  new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
 
 describe("fleet pages read as plain text with every word apart", () => {
   test("the rule sees a join across tags and passes a spaced or inline one", () => {
@@ -172,5 +200,62 @@ describe("fleet pages read as plain text with every word apart", () => {
         expect(joinedWords(text), slug).toEqual([]);
       }
     });
+  }
+});
+
+describe("home, flight, route and tail pages read as plain text with every word apart", () => {
+  for (const site of Object.values(SITES)) {
+    const host = site.canonicalHost;
+
+    test(`${host}/`, async () => {
+      const text = await expectApart(host, "/");
+      if (site.features.checkFlightPage) expect(text).toContain("Does your flight have Starlink?");
+      if (site.scope === "UA") {
+        for (const block of [
+          'id="aircraft-search"',
+          "flight-pill",
+          "expand-flights",
+          "Upcoming flights (UTC)",
+          "Starlink departures by airport",
+          "Popular routes",
+          "Popular flights",
+          "More questions",
+        ]) {
+          expect(text).toContain(block);
+        }
+      }
+    });
+
+    if (site.features.checkFlightPage) {
+      test(`${host}/check-flight, and each flight page the site links`, async () => {
+        const home = await expectApart(host, "/");
+        const generic = await expectApart(host, "/check-flight");
+        const flights = linked(`${home}${generic}`, /^\/check-flight\/[A-Z0-9]+$/);
+        expect(flights.length).toBeGreaterThan(0);
+        for (const path of flights) await expectApart(host, path);
+        // A dated answer: today's assigned aircraft, and odds further out.
+        for (const day of [0, 5]) await expectApart(host, `${flights[0]}/${isoDay(day)}`);
+        await expectApart(host, "/check-flight/ZZ12", 404);
+      });
+    }
+
+    if (site.features.routePlannerPage) {
+      test(`${host}/route-planner, and each route it links`, async () => {
+        const planner = await expectApart(host, "/route-planner");
+        expect(planner).toContain('id="route-form"');
+        const routes = linked(planner, /^\/route-planner\/[A-Z]{3}\/[A-Z]{3}$/);
+        expect(routes.length).toBeGreaterThan(0);
+        for (const path of routes) await expectApart(host, path);
+      });
+    }
+
+    if (site.features.tailPages) {
+      test(`${host}/fleet/{tail}, each tail the homepage links`, async () => {
+        const home = await expectApart(host, "/");
+        const tails = linked(home, /^\/fleet\/N[A-Z0-9]+$/);
+        expect(tails.length).toBeGreaterThan(0);
+        for (const path of tails) await expectApart(host, path);
+      });
+    }
   }
 });

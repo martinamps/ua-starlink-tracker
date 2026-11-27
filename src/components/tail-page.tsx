@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { SiteConfig } from "../airlines/registry";
 import type { TailFact, TailFlightRow, TailPageModel } from "../api/tail-page";
 import type { Link } from "./layout";
@@ -31,18 +32,20 @@ function Facts({ facts }: { facts: TailFact[] }) {
   return (
     <dl className="space-y-2.5 text-sm">
       {facts.map((f) => (
-        <div key={f.label} className="sm:flex sm:gap-4">
-          <dt className="text-muted sm:w-44 sm:shrink-0">{f.label}</dt>
-          <dd className="min-w-0 text-primary text-pretty">
-            {f.href ? (
-              <a href={f.href} className={LINK}>
-                {f.value}
-              </a>
-            ) : (
-              f.value
-            )}
-          </dd>
-        </div>
+        <Fragment key={f.label}>
+          <div className="sm:flex sm:gap-4">
+            <dt className="text-muted sm:w-44 sm:shrink-0">{f.label}</dt>{" "}
+            <dd className="min-w-0 text-primary text-pretty">
+              {f.href ? (
+                <a href={f.href} className={LINK}>
+                  {f.value}
+                </a>
+              ) : (
+                f.value
+              )}
+            </dd>
+          </div>{" "}
+        </Fragment>
       ))}
     </dl>
   );
@@ -62,7 +65,7 @@ function Flights({ rows }: { rows: TailFlightRow[] }) {
         {rows.map((f) => (
           <tr key={`${f.flight_number}-${f.departure_time}`} className="align-top">
             <Td className="pr-3">
-              <div className="whitespace-nowrap text-primary">{f.time}</div>
+              <div className="whitespace-nowrap text-primary">{f.time}</div>{" "}
               <div className="whitespace-nowrap text-xs text-muted">{f.day}</div>
             </Td>
             <Td className="pr-3">
@@ -114,14 +117,14 @@ export default function TailPage({ site, model, wayOn, pageLinks, currentPath }:
           className={`font-display text-4xl leading-none ${m.tone === "neutral" ? "text-primary" : TONE_TEXT[m.tone]}`}
         >
           {m.verdict}
-        </p>
-        <p className="mt-3 text-base text-primary text-pretty">{m.answer}</p>
+        </p>{" "}
+        <p className="mt-3 text-base text-primary text-pretty">{m.answer}</p>{" "}
         {m.note && <p className="mt-1.5 text-sm text-secondary text-pretty">{m.note}</p>}
       </Panel>
 
       {m.evidence.length > 0 && (
         <Section id="evidence" title="How we know">
-          <Facts facts={m.evidence} />
+          <Facts facts={m.evidence} />{" "}
           <p className="mt-4 text-xs text-muted text-pretty">
             Dates are when this tracker saw each thing, which can be later than the day it happened.
             {site.features.methodologyPage && (
@@ -138,7 +141,7 @@ export default function TailPage({ site, model, wayOn, pageLinks, currentPath }:
 
       {m.plane.length > 0 && (
         <Section id="plane" title="The plane">
-          <Facts facts={m.plane} />
+          <Facts facts={m.plane} />{" "}
           {m.faaRead && (
             <p className="mt-4 text-xs text-muted text-pretty">
               Model, year, serial, owner and Mode S code are from the FAA aircraft registry, read{" "}
@@ -176,17 +179,19 @@ export default function TailPage({ site, model, wayOn, pageLinks, currentPath }:
         >
           <ul className="flex flex-wrap gap-2">
             {departures.airports.map((a) => (
-              <li key={a.airport}>
-                {a.href ? (
-                  <Chip href={a.href}>
-                    {a.airport} {fmt(a.departures)}
-                  </Chip>
-                ) : (
-                  <span className="inline-block rounded border border-subtle bg-surface-elevated px-2.5 py-1 font-mono text-sm text-secondary">
-                    {a.airport} {fmt(a.departures)}
-                  </span>
-                )}
-              </li>
+              <Fragment key={a.airport}>
+                <li>
+                  {a.href ? (
+                    <Chip href={a.href}>
+                      {a.airport} {fmt(a.departures)}
+                    </Chip>
+                  ) : (
+                    <span className="inline-block rounded border border-subtle bg-surface-elevated px-2.5 py-1 font-mono text-sm text-secondary">
+                      {a.airport} {fmt(a.departures)}
+                    </span>
+                  )}
+                </li>{" "}
+              </Fragment>
             ))}
           </ul>
         </Section>
@@ -196,11 +201,13 @@ export default function TailPage({ site, model, wayOn, pageLinks, currentPath }:
         <Eyebrow>Next</Eyebrow>
         <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
           {wayOn.map((l) => (
-            <li key={l.href}>
-              <a href={l.href} className={LINK}>
-                {l.label}
-              </a>
-            </li>
+            <Fragment key={l.href}>
+              <li>
+                <a href={l.href} className={LINK}>
+                  {l.label}
+                </a>
+              </li>{" "}
+            </Fragment>
           ))}
           <li>
             <a

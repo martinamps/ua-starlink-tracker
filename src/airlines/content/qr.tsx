@@ -77,7 +77,7 @@ const QRHero = ({ stats, statSentence }: HeroProps) => {
   ].filter((l) => l !== null);
   return (
     <div className={SECTION_WIDE}>
-      {statSentence && <div className="mb-3">{statSentence}</div>}
+      {statSentence && <div className="mb-3">{statSentence}</div>}{" "}
       <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-subtle bg-subtle sm:grid-cols-2">
         <div className="bg-surface p-5 text-center">
           <Eyebrow className="">{BY_TYPE_SUM_LABEL}</Eyebrow>
@@ -89,15 +89,15 @@ const QRHero = ({ stats, statSentence }: HeroProps) => {
             Not checked plane by plane.
             <OwnFigure />
           </p>
-        </div>
+        </div>{" "}
         <div className="bg-surface p-5 text-center">
           <Eyebrow className="">Status</Eyebrow>
           <div className="font-display text-2xl text-primary mt-2">
             {s.done.length > 0 ? `${listedTypes(s.done)} done` : "Installing"}
-          </div>
+          </div>{" "}
           <div className="text-xs text-secondary mt-1">{rest.join(" · ")}</div>
         </div>
-      </div>
+      </div>{" "}
       <NewestReport />
     </div>
   );

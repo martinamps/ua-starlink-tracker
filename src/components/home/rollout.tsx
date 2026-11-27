@@ -2,6 +2,7 @@
  * The airline homepage's rollout panel: one headline number, one stacked bar
  * that splits it by fleet segment, and a 12-week install sparkline.
  */
+import { Fragment } from "react";
 import type { ContentStats } from "../../airlines/content";
 import {
   BY_TYPE_TAB_NOTE,
@@ -84,7 +85,7 @@ function WeeklySparkline({ values }: { values: number[] }) {
       <Sparkline
         values={values}
         label={`Aircraft added per week, last ${values.length} weeks: ${values.join(", ")}`}
-      />
+      />{" "}
       <figcaption className="mt-1 text-xs text-muted">
         Added per week, last {values.length} weeks ·{" "}
         <span className="tabular-nums">{fmt(last)}</span> this week so far
@@ -138,7 +139,7 @@ export function RolloutPanel({
             <span className="text-xl text-secondary">
               of {fmt(lead.total)} {noun}
             </span>
-          </p>
+          </p>{" "}
           {lead.own ? (
             <p className="mt-1 text-sm text-secondary">
               have Starlink, by {chartLink} {ownCountAsOf(lead.own)}
@@ -152,10 +153,10 @@ export function RolloutPanel({
               )}
               have Starlink{added}
             </p>
-          )}
+          )}{" "}
           {parts && !lead.own && (
             <p className="mt-1 text-sm text-secondary text-pretty">That is {parts.text}.</p>
-          )}
+          )}{" "}
           {chart && airline && (
             <p className="mt-1 text-sm text-secondary text-pretty">
               {lead.own && parts ? (
@@ -179,27 +180,29 @@ export function RolloutPanel({
                 .join(" ")}
             </p>
           )}
-        </div>
+        </div>{" "}
         {weekly && <WeeklySparkline values={weekly} />}
-      </div>
+      </div>{" "}
       <div className="mt-5">
         {chart && (
           <p className="mb-2 text-xs text-muted">
             {parts ? "On our fleet list" : "Named by tail"}: {fmt(n)} of {fmt(total)}
             {parts ? "" : " on our fleet list"}
           </p>
-        )}
-        <StackedBar segments={segments} total={total} />
+        )}{" "}
+        <StackedBar segments={segments} total={total} />{" "}
         <ul className="mt-3 flex flex-col gap-1 text-sm text-secondary sm:flex-row sm:flex-wrap sm:gap-x-6">
           {segments.map((s, i) => (
-            <li key={s.label} className="flex items-center gap-2">
-              <span
-                className={`inline-block h-2.5 w-2.5 rounded-sm ${SEGMENT_FILL[i % SEGMENT_FILL.length]}`}
-                aria-hidden="true"
-              />
-              {s.label}: <StatInline n={s.n} /> of {fmt(s.total)}
-              {s.byType ? `, ${BY_TYPE_TAB_NOTE}` : ` (${pct(s.n, s.total)})`}
-            </li>
+            <Fragment key={s.label}>
+              <li className="flex items-center gap-2">
+                <span
+                  className={`inline-block h-2.5 w-2.5 rounded-sm ${SEGMENT_FILL[i % SEGMENT_FILL.length]}`}
+                  aria-hidden="true"
+                />
+                {s.label}: <StatInline n={s.n} /> of {fmt(s.total)}
+                {s.byType ? `, ${BY_TYPE_TAB_NOTE}` : ` (${pct(s.n, s.total)})`}
+              </li>{" "}
+            </Fragment>
           ))}
           <li className="flex items-center gap-2 text-muted">
             <span
@@ -238,27 +241,29 @@ export function AirportBars({
       {top.map((r) => {
         const place = airportPlaceName(r.airport);
         return (
-          <li key={r.airport} className="py-1.5 text-sm">
-            <div className="flex items-baseline gap-2">
-              {linked && ROUTE_AIRPORT_RE.test(r.airport) ? (
-                <a
-                  href={`/routes/${r.airport}`}
-                  className="font-mono text-primary hover:text-accent transition-colors"
-                >
-                  {r.airport}
-                </a>
-              ) : (
-                <span className="font-mono text-primary">{r.airport}</span>
-              )}
-              {place && <span className="min-w-0 text-xs text-secondary">{place}</span>}
-              <span className="ml-auto shrink-0 text-secondary tabular-nums">{fmt(r.count)}</span>
-            </div>
-            <Meter
-              share={max > 0 ? r.count / max : 0}
-              label={`${r.airport}: ${fmt(r.count)} Starlink departures`}
-              className="mt-1.5"
-            />
-          </li>
+          <Fragment key={r.airport}>
+            <li className="py-1.5 text-sm">
+              <div className="flex items-baseline gap-2">
+                {linked && ROUTE_AIRPORT_RE.test(r.airport) ? (
+                  <a
+                    href={`/routes/${r.airport}`}
+                    className="font-mono text-primary hover:text-accent transition-colors"
+                  >
+                    {r.airport}
+                  </a>
+                ) : (
+                  <span className="font-mono text-primary">{r.airport}</span>
+                )}{" "}
+                {place && <span className="min-w-0 text-xs text-secondary">{place}</span>}{" "}
+                <span className="ml-auto shrink-0 text-secondary tabular-nums">{fmt(r.count)}</span>
+              </div>{" "}
+              <Meter
+                share={max > 0 ? r.count / max : 0}
+                label={`${r.airport}: ${fmt(r.count)} Starlink departures`}
+                className="mt-1.5"
+              />
+            </li>{" "}
+          </Fragment>
         );
       })}
     </ol>

@@ -22,10 +22,10 @@ const HAHero = ({ stats, statSentence }: HeroProps) => {
   const { starlinkCount } = stats;
   return (
     <div className={`${SECTION_WIDE} grid grid-cols-1 gap-4 md:grid-cols-3`}>
-      {statSentence && <div className="md:col-span-3">{statSentence}</div>}
+      {statSentence && <div className="md:col-span-3">{statSentence}</div>}{" "}
       <Panel className="md:col-span-1 flex flex-col items-center justify-center text-center">
-        <div className="font-display text-lg text-primary">Airbus fleet complete</div>
-        <div className="text-xs text-muted mt-1">September 2024</div>
+        <div className="font-display text-lg text-primary">Airbus fleet complete</div>{" "}
+        <div className="text-xs text-muted mt-1">September 2024</div>{" "}
         <div className="mt-3 text-sm text-secondary">
           <StatInline n={starlinkCount} /> Airbus aircraft on our fleet list, counted by aircraft
           type

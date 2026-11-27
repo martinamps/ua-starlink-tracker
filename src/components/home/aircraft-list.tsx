@@ -3,6 +3,7 @@
  * tail's upcoming flights as pills. The list is server-rendered and capped;
  * src/client/aircraft-list.ts filters the rendered rows in place.
  */
+import { Fragment } from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
 import { ensureAirlinePrefix, isFlightZero } from "../../airlines/flight-number";
@@ -116,25 +117,26 @@ function FlightPills({
         // up the column header names the zone, so the pill drops it.
         const clock = formatPillTime(flight.departure_time);
         return (
-          <a
-            // biome-ignore lint/suspicious/noArrayIndexKey: a tail can fly one number twice
-            key={idx}
-            href={href ?? `https://www.flightaware.com/live/flight/${flight.flight_number}`}
-            {...(href ? {} : { target: "_blank", rel: "nofollow noopener noreferrer" as const })}
-            data-flight-tooltip={tooltip}
-            // The visible text is an airport pair and a clock; the label restates
-            // it with the flight number for screen readers (WCAG 2.5.3).
-            aria-label={`Flight ${tooltip}, ${dep} to ${arr}, departs ${clock} UTC`}
-            className={`flight-pill ${visibility}`}
-          >
-            <span className="text-accent font-medium">{dep}</span>
-            <span className="text-muted">→</span>
-            <span className="text-accent font-medium">{arr}</span>
-            <span className="text-muted text-[10px]">
-              {clock}
-              <span className="md:hidden"> UTC</span>
-            </span>
-          </a>
+          // biome-ignore lint/suspicious/noArrayIndexKey: a tail can fly one number twice
+          <Fragment key={idx}>
+            <a
+              href={href ?? `https://www.flightaware.com/live/flight/${flight.flight_number}`}
+              {...(href ? {} : { target: "_blank", rel: "nofollow noopener noreferrer" as const })}
+              data-flight-tooltip={tooltip}
+              // The visible text is an airport pair and a clock; the label restates
+              // it with the flight number for screen readers (WCAG 2.5.3).
+              aria-label={`Flight ${tooltip}, ${dep} to ${arr}, departs ${clock} UTC`}
+              className={`flight-pill ${visibility}`}
+            >
+              <span className="text-accent font-medium">{dep}</span>{" "}
+              <span className="text-muted">→</span>{" "}
+              <span className="text-accent font-medium">{arr}</span>{" "}
+              <span className="text-muted text-[10px]">
+                {clock}
+                <span className="md:hidden"> UTC</span>
+              </span>
+            </a>{" "}
+          </Fragment>
         );
       })}
       {mobileRemaining > 0 && (
@@ -313,7 +315,7 @@ export function AircraftList({
                 />
               </svg>
             </button>
-          </div>
+          </div>{" "}
           <div
             id="search-count"
             aria-live="polite"
@@ -321,7 +323,7 @@ export function AircraftList({
             className="hidden sm:flex items-center text-xs font-mono text-muted whitespace-nowrap"
           >
             {countLabel || null}
-          </div>
+          </div>{" "}
           <div className="flex gap-1.5 sm:gap-2">
             <button
               type="button"
@@ -333,34 +335,33 @@ export function AircraftList({
             >
               ALL
               {mixed ? null : <span className="hidden sm:inline"> ({fmt(aircraft.length)})</span>}
-            </button>
+            </button>{" "}
             {content.subfleetFilters.length > 1 &&
               content.subfleetFilters.map((card) => (
-                <button
-                  key={card.key}
-                  type="button"
-                  id={`filter-${card.key}`}
-                  className={`${FILTER_BUTTON} ${FILTER_INACTIVE}`}
-                  aria-pressed="false"
-                  data-filter={card.key}
-                >
-                  {card.label.toUpperCase()}{" "}
-                  <span className="hidden sm:inline">
-                    ({fmt(subfleetCount(card.key))}
-                    {byTypeKeys.has(card.key) ? ` ${BY_TYPE_TAB_NOTE}` : ""})
-                  </span>
-                </button>
+                <Fragment key={card.key}>
+                  <button
+                    type="button"
+                    id={`filter-${card.key}`}
+                    className={`${FILTER_BUTTON} ${FILTER_INACTIVE}`}
+                    aria-pressed="false"
+                    data-filter={card.key}
+                  >
+                    {card.label.toUpperCase()}{" "}
+                    <span className="hidden sm:inline">
+                      ({fmt(subfleetCount(card.key))}
+                      {byTypeKeys.has(card.key) ? ` ${BY_TYPE_TAB_NOTE}` : ""})
+                    </span>
+                  </button>{" "}
+                </Fragment>
               ))}
           </div>
         </div>
-      </div>
+      </div>{" "}
       <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-2.5 border-b border-subtle bg-surface-elevated/50 text-xs font-mono text-muted uppercase tracking-widest">
-        <div className="col-span-3">Aircraft</div>
-        <div className="col-span-2">Type</div>
-        <div className="col-span-3">Operator</div>
+        <div className="col-span-3">Aircraft</div> <div className="col-span-2">Type</div>{" "}
+        <div className="col-span-3">Operator</div>{" "}
         <div className="col-span-4">Upcoming flights (UTC)</div>
-      </div>
-
+      </div>{" "}
       <div className="overflow-auto" style={{ maxHeight: "65vh" }}>
         {aircraft.length === 0 ? (
           <div className="p-12 text-center text-muted font-mono">
@@ -374,74 +375,72 @@ export function AircraftList({
               const flights = flightsByTail[plane.TailNumber] || [];
               const index = searchIndex(flights, AIRLINES[airline]);
               return (
-                <div
-                  key={plane.TailNumber || idx}
-                  className="js-aircraft-row group px-4 md:px-6 py-4 hover:bg-surface-elevated transition-all duration-200 cursor-default border-l-2 border-transparent hover:border-accent"
-                  data-tail={plane.TailNumber.toLowerCase()}
-                  data-aircraft={`${plane.Aircraft} ${aircraftName(plane.Aircraft)}`.toLowerCase()}
-                  data-operator={(plane.OperatedBy || "").toLowerCase()}
-                  data-fleet={plane.fleet}
-                  data-airline={airline}
-                  data-airports={index.airports}
-                  data-routes={index.routes}
-                  data-flights={index.flights}
-                >
-                  <div className="md:grid md:grid-cols-12 md:gap-4 md:items-center">
-                    <div className="md:col-span-3 flex items-start md:items-center justify-between md:justify-start gap-3 mb-3 md:mb-0">
-                      <div className="flex items-center gap-3">
-                        <div className="status-dot flex-shrink-0" />
-                        <div>
-                          <div className="font-mono text-base md:text-sm font-bold md:font-semibold text-primary group-hover:text-accent transition-colors">
-                            {tailPages && airline === permalinkAirline?.code ? (
-                              <a href={`/fleet/${plane.TailNumber}`} className="hover:underline">
-                                {plane.TailNumber}
-                              </a>
-                            ) : (
-                              plane.TailNumber
+                <Fragment key={plane.TailNumber || idx}>
+                  <div
+                    className="js-aircraft-row group px-4 md:px-6 py-4 hover:bg-surface-elevated transition-all duration-200 cursor-default border-l-2 border-transparent hover:border-accent"
+                    data-tail={plane.TailNumber.toLowerCase()}
+                    data-aircraft={`${plane.Aircraft} ${aircraftName(plane.Aircraft)}`.toLowerCase()}
+                    data-operator={(plane.OperatedBy || "").toLowerCase()}
+                    data-fleet={plane.fleet}
+                    data-airline={airline}
+                    data-airports={index.airports}
+                    data-routes={index.routes}
+                    data-flights={index.flights}
+                  >
+                    <div className="md:grid md:grid-cols-12 md:gap-4 md:items-center">
+                      <div className="md:col-span-3 flex items-start md:items-center justify-between md:justify-start gap-3 mb-3 md:mb-0">
+                        <div className="flex items-center gap-3">
+                          <div className="status-dot flex-shrink-0" />{" "}
+                          <div>
+                            <div className="font-mono text-base md:text-sm font-bold md:font-semibold text-primary group-hover:text-accent transition-colors">
+                              {tailPages && airline === permalinkAirline?.code ? (
+                                <a href={`/fleet/${plane.TailNumber}`} className="hover:underline">
+                                  {plane.TailNumber}
+                                </a>
+                              ) : (
+                                plane.TailNumber
+                              )}
+                            </div>{" "}
+                            <div className="md:hidden font-mono text-xs text-secondary">
+                              {aircraftName(plane.Aircraft)}
+                            </div>{" "}
+                            {badge && (
+                              <div className="hidden md:block text-xs font-mono text-muted uppercase">
+                                {badge}
+                              </div>
                             )}
                           </div>
-                          <div className="md:hidden font-mono text-xs text-secondary">
-                            {aircraftName(plane.Aircraft)}
+                        </div>{" "}
+                        {badge && (
+                          <div className="md:hidden text-xs font-mono text-accent uppercase">
+                            {badge}
                           </div>
-                          {badge && (
-                            <div className="hidden md:block text-xs font-mono text-muted uppercase">
-                              {badge}
-                            </div>
-                          )}
-                        </div>
+                        )}
+                      </div>{" "}
+                      <div className="hidden md:block md:col-span-2">
+                        <span className="font-mono text-sm text-secondary">
+                          {aircraftName(plane.Aircraft)}
+                        </span>
+                      </div>{" "}
+                      <div className="md:col-span-3 text-xs md:text-sm text-muted mb-3 md:mb-0 pl-5 md:pl-0">
+                        {badge && plane.OperatedBy === AIRLINES[airline]?.name
+                          ? null
+                          : operatorName(plane.OperatedBy) || "—"}
+                      </div>{" "}
+                      <div className="md:col-span-4 pt-3 md:pt-0 border-t md:border-t-0 border-subtle">
+                        <FlightPills
+                          tailNumber={plane.TailNumber}
+                          flights={flights}
+                          permalink={permalink}
+                        />
                       </div>
-                      {badge && (
-                        <div className="md:hidden text-xs font-mono text-accent uppercase">
-                          {badge}
-                        </div>
-                      )}
                     </div>
-
-                    <div className="hidden md:block md:col-span-2">
-                      <span className="font-mono text-sm text-secondary">
-                        {aircraftName(plane.Aircraft)}
-                      </span>
-                    </div>
-
-                    <div className="md:col-span-3 text-xs md:text-sm text-muted mb-3 md:mb-0 pl-5 md:pl-0">
-                      {badge && plane.OperatedBy === AIRLINES[airline]?.name
-                        ? null
-                        : operatorName(plane.OperatedBy) || "—"}
-                    </div>
-
-                    <div className="md:col-span-4 pt-3 md:pt-0 border-t md:border-t-0 border-subtle">
-                      <FlightPills
-                        tailNumber={plane.TailNumber}
-                        flights={flights}
-                        permalink={permalink}
-                      />
-                    </div>
-                  </div>
-                </div>
+                  </div>{" "}
+                </Fragment>
               );
             })}
             <div id="list-empty" hidden className="px-4 md:px-6 py-10 text-center text-sm">
-              <p className="text-secondary">No aircraft match.</p>
+              <p className="text-secondary">No aircraft match.</p>{" "}
               {showFleetLink && (
                 <p className="mt-1 text-muted">
                   <a
@@ -457,7 +456,7 @@ export function AircraftList({
             </div>
           </div>
         )}
-      </div>
+      </div>{" "}
       {/* A paragraph, so index.html's rule underlines the accent link in it. */}
       {capped && (
         <p
@@ -477,7 +476,7 @@ export function AircraftList({
             </>
           )}
         </p>
-      )}
+      )}{" "}
       {shown.length > 0 && (
         <SkipTarget id="aircraft-list-end">End of the aircraft list.</SkipTarget>
       )}

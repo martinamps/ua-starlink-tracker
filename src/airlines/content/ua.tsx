@@ -247,7 +247,7 @@ export const content: AirlineContent = {
                   methodology page
                 </a>{" "}
                 has the details.
-              </p>
+              </p>{" "}
               <p className="mt-2">
                 Thanks to the{" "}
                 <a
