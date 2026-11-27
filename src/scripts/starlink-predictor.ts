@@ -50,6 +50,7 @@ import {
 import { formatFactDate } from "../airlines/rollout-facts";
 import { type StatementAnswer, statementAnswer } from "../airlines/statement-rule";
 import {
+  approxShare,
   bandLabel,
   capitalize,
   zonedClock,
@@ -1949,14 +1950,14 @@ export function describeCarrierPrediction(
     );
   }
   const { sf, pen } = answer;
-  const pct = (pen.pct * 100).toFixed(0);
+  // The fleet page's percent for the same counts: a share, rounded down.
+  const lead = `${approxShare(pen.pct)} Starlink probability`;
   if (answer.aircraft) {
     const said = answer.aircraft.sentence;
-    return `~${pct}% Starlink probability: ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
+    return `${lead}: ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
   }
   // bandLabel drops the label's parentheses, so the hint is the only parenthetical.
   const band = `${bandLabel(sf.label)} aircraft${sf.flightNumberHint ? ` (${sf.flightNumberHint})` : ""}`;
-  const lead = `~${pct}% Starlink probability`;
   // A band that settles the answer gets no airline-wide rollout note: a
   // Hawaiian A330 flight has nothing to do with Alaska's 737s.
   if (pen.synthetic) {

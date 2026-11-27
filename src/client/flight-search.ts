@@ -8,7 +8,7 @@ import {
   canonicalFlightFor,
   canonicalFlightInput,
 } from "../airlines/flight-input";
-import { probLabel } from "../components/ui/format";
+import { probLabel, shareLabel } from "../components/ui/format";
 import { esc } from "./esc";
 import { shareControlHtml } from "./share";
 
@@ -93,6 +93,13 @@ export function airlineInfoHtml(info: AirlineInfo): string {
   ].join("");
 }
 
+/** A number with no flight history behind it is a share of aircraft, and
+ * rounds down as the sentence beside it does: a subfleet's share ("type"), or
+ * the estimate for a flight number never seen, which this body marks only in
+ * its sentence. */
+const fleetFigure = (d: CheckAnyBody) =>
+  d.confidence === "type" || /No history for \S+ yet/.test(d.reason ?? "");
+
 export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
   if (d.error) {
     return `<span class="text-warn">${esc(d.error)}</span>${d.airline_info ? airlineInfoHtml(d.airline_info) : ""}`;
@@ -119,7 +126,7 @@ export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
           : p !== null && d.basis
             ? [`≥${Math.floor(p * 100)}% Starlink`, "text-accent"]
             : p !== null
-              ? [`${probLabel(p)} Starlink`, "text-accent"]
+              ? [`${fleetFigure(d) ? shareLabel(p) : probLabel(p)} Starlink`, "text-accent"]
               : d.confidence === "type"
                 ? ["Depends on aircraft", "text-muted"]
                 : ["Unknown", "text-muted"];

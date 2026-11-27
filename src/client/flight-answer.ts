@@ -11,11 +11,11 @@ import { aircraftName } from "../airlines/aircraft-families";
 import {
   ageLabel,
   capitalize,
+  flightLabel,
+  flightPhrase,
   flightShare,
   fmt,
   monthDay,
-  probLabel,
-  probPhrase,
   probTier,
   wholeDates,
   zonedDeparture,
@@ -505,13 +505,17 @@ function card(answer: AnswerTone, headline: string, body: string): string {
   return `<div class="rounded-lg border p-5 ${TONE_CARD[tone] ?? NEUTRAL_CARD}" data-tone="${answer}"><h2 class="font-display text-xl ${headlineClass(tone)} text-balance">${wholeDates(esc(headline))}</h2> ${body}</div>`;
 }
 
-function probabilityBar(p: number, answer: AnswerTone): string {
+/** The API's lead on a subfleet answer, "~4% Starlink probability: ", which
+ * the card's headline already says. The share's edges take no "~". */
+const SHARE_LEAD = /^(?:~\d+|<1|>99)% Starlink probability: /;
+
+function probabilityBar(p: number, answer: AnswerTone, tracked = 1): string {
   return meterHtml(p, {
     color: toneColor(ANSWER_TONE[answer]),
     size: "md",
     className: "mt-3",
     bg: "bg-base",
-    label: `${probLabel(p)} chance of Starlink`,
+    label: `${flightLabel(p, tracked)} chance of Starlink`,
   });
 }
 
@@ -572,7 +576,7 @@ function countedAnswer(
       ? `Not yet for ${on} — ${whose} has no ${c.aircraft} connected`
       : `Not yet for ${on}, by ${whose}`;
   const tone: AnswerTone = every ? "unknown" : probTier(0);
-  const said = capitalize((body.message ?? "").replace(/^~\d+% Starlink probability: /, ""));
+  const said = capitalize((body.message ?? "").replace(SHARE_LEAD, ""));
   const note = forecastNote(body, ctx);
   const html = card(
     tone,
@@ -735,24 +739,24 @@ function answerCard(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
   }
 
   // A type rule is a yes for every aircraft that can fly the number, not a forecast.
+  const n = pred.n_observations ?? 0;
   const typeRule = body.confidence === "type" && pred.probability >= 1 && !body.airline_count;
   const tone: AnswerTone = typeRule ? "yes" : probTier(pred.probability);
   const headline = typeRule
     ? `Yes — every aircraft that flies ${fn} has Starlink`
-    : `${capitalize(probPhrase(pred.probability))} chance ${on} has Starlink`;
-  const n = pred.n_observations ?? 0;
+    : `${capitalize(flightPhrase(pred.probability, n))} chance ${on} has Starlink`;
   // The headline already gives the number, so the API's "~N% Starlink probability:" lead goes.
   const basis =
     body.confidence === "predicted"
       ? n > 0
         ? `Based on the aircraft on ${fmt(n)} recent ${fn} flights.`
         : `We haven't seen ${fn} yet, so this is our estimate for flights like it.`
-      : capitalize((body.message ?? "").replace(/^~\d+% Starlink probability: /, ""));
+      : capitalize((body.message ?? "").replace(SHARE_LEAD, ""));
   const note = forecastNote(body, ctx);
   // A type rule's headline is the whole answer; the API's sentence would repeat it.
   const detail = typeRule
     ? ""
-    : `${probabilityBar(pred.probability, tone)} <p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>`;
+    : `${probabilityBar(pred.probability, tone, n)} <p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>`;
   const html = card(tone, headline, `${detail}${watchRow(ctx, false)}`);
   return { tone, headline, html, firm: false };
 }

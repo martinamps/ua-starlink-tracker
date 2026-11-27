@@ -13,6 +13,7 @@ import { aircraftName } from "../airlines/aircraft-families";
 import type { AirlineConfig } from "../airlines/registry";
 import { recentFlights } from "../components/route-flights-copy";
 import {
+  approxShare,
   probLabel,
   zonedClock,
   zonedDeparture,
@@ -262,7 +263,7 @@ function legOdds(
     confidence: s.confidence,
     basis: "aircraft_type",
     enough_history: s.probability !== null,
-    odds_label: s.probability === null ? "Depends on aircraft" : `~${probLabel(s.probability)}`,
+    odds_label: s.probability === null ? "Depends on aircraft" : approxShare(s.probability),
     aircraft: null,
   };
 }

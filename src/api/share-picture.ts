@@ -14,7 +14,7 @@ import { type FlightAnswer, datePassed, renderFlightAnswer } from "../client/fli
 import { answerContext } from "../components/check-flight-page";
 import type { DatedAnswer, FlightFacts } from "../components/check-flight/types";
 import { usualAnswer } from "../components/check-flight/usual";
-import { fmt, probLabel, shortDate } from "../components/ui/format";
+import { flightLabel, fmt, shortDate } from "../components/ui/format";
 import { PROB_TIER_TONE, type Tone } from "../components/ui/tone-classes";
 import type { ShareCard } from "../share/card";
 import { isRealIsoDate } from "../utils/airport-tz";
@@ -121,7 +121,7 @@ function datedFlightShareAnswer(
         ? legs[0]
         : `${legs.length} legs`
       : typeof p === "number"
-        ? probLabel(p)
+        ? flightLabel(p, dated.body.prediction?.n_observations)
         : null);
   if (figure === null) return null;
   return {

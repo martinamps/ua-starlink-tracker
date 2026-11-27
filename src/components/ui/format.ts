@@ -32,6 +32,56 @@ export function pct(n: number, total: number): string {
   return `${whole}%`;
 }
 
+/** pctWhole for a share that arrives as a ratio with no counts beside it (a
+ * subfleet's share inside a flight answer, a rule-set band). The nudge undoes
+ * the division: 29 / 100 * 100 is 28.999…, and no real share sits that close
+ * under a whole number. */
+export function shareWhole(p: number): number {
+  if (!(p > 0)) return 0;
+  if (p >= 1) return 100;
+  return Math.floor(p * 100 + 1e-9);
+}
+
+/** pct() for a share given as a ratio: the same number and the same edges, so
+ * a flight answered by its subfleet's share prints the fleet page's percent. */
+export function shareLabel(p: number): string {
+  if (p >= 1) return "100%";
+  if (!(p > 0)) return "0%";
+  const whole = shareWhole(p);
+  if (whole >= 99 && p * 100 - 99 > 1e-9) return ">99%";
+  if (whole === 0) return "<1%";
+  return `${whole}%`;
+}
+
+const inWords = (label: string, exact: boolean) =>
+  label.startsWith(">")
+    ? `over ${label.slice(1)}`
+    : label.startsWith("<")
+      ? `under ${label.slice(1)}`
+      : exact
+        ? label
+        : `about ${label}`;
+
+/** shareLabel in words, for prose: "about 32%", "over 99%", "under 1%". */
+export const sharePhrase = (p: number) => inWords(shareLabel(p), p >= 1 || !(p > 0));
+
+/** shareLabel with the "~" flight answers lead with: "~32%". "<1%" and ">99%"
+ * are bounds already and take none. */
+export function approxShare(p: number): string {
+  const label = shareLabel(p);
+  return /^\d/.test(label) ? `~${label}` : label;
+}
+
+/** A flight's own number. With history behind it (tracked > 0) it is odds, to
+ * the nearest percent; with none it is the share of the aircraft that fly such
+ * flights, and a share rounds down like every fleet percent on the site. */
+export const flightLabel = (p: number, tracked: number | null | undefined) =>
+  tracked ? probLabel(p) : shareLabel(p);
+
+/** flightLabel in words: "about 74%". */
+export const flightPhrase = (p: number, tracked: number | null | undefined) =>
+  tracked ? probPhrase(p) : sharePhrase(p);
+
 /** A 0..1 probability as a whole percent, clamped. */
 export const probPct = (p: number) => Math.round(Math.max(0, Math.min(1, p)) * 100);
 
@@ -47,12 +97,7 @@ export function probLabel(p: number): string {
 }
 
 /** probLabel in words, for prose: "about 74%", "over 99%", "under 1%". */
-export function probPhrase(p: number): string {
-  const label = probLabel(p);
-  if (label.startsWith(">")) return `over ${label.slice(1)}`;
-  if (label.startsWith("<")) return `under ${label.slice(1)}`;
-  return p > 0 && p < 1 ? `about ${label}` : label;
-}
+export const probPhrase = (p: number) => inWords(probLabel(p), !(p > 0 && p < 1));
 
 /** A flight number's history odds, worded and rounded one way on the page,
  * the card, the APIs and the calendar feed: "about 12% Starlink odds, weighted
@@ -66,7 +111,7 @@ export function flightShare(p: number, fn: string, n?: number): string {
 /** The estimate for a flight number with no history, never called an install
  * rate: the express prior sits far below express penetration on purpose. */
 export function coldShare(p: number, fn: string, group?: string): string {
-  return `No history for ${fn} yet; ${probPhrase(p)} is our estimate for new ${group ? `${group} ` : ""}flight numbers`;
+  return `No history for ${fn} yet; ${sharePhrase(p)} is our estimate for new ${group ? `${group} ` : ""}flight numbers`;
 }
 
 /** A subfleet label for prose: "Mainline (737/787)" → "mainline 737/787",
