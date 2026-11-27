@@ -12,7 +12,9 @@ import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { TITLE_MAX } from "../src/airlines/aircraft-pages";
 import { AIRLINES, SITES } from "../src/airlines/registry";
+import { AIRPORT_INDEX_MIN_DEPARTURES } from "../src/api/airport-board";
 import { buildRouteFlightBoard } from "../src/api/route-flights";
+import { logFlightAssignments } from "../src/database/assignment-log";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp, routeMetaDescription, routeTitle } from "../src/server/app";
 import {
@@ -67,6 +69,31 @@ beforeAll(() => {
   addFlight(db, "N1VER", "UA101", "IAH", now + 9 * HOUR, { arrivalAirport: "DCA" });
   addFlight(db, "N1VER", "UA102", "ORD", now + 15 * HOUR, { arrivalAirport: UNKNOWN });
   addFlight(db, "N1VER", "UA103", "MDW", now + 21 * HOUR, { arrivalAirport: "DEN" });
+  // Enough Starlink departures flown from ORD that its airport page indexes,
+  // so the route page links it (route pages link only indexed airports). The
+  // history window is a few days and logs one flight number once a day, so
+  // three flight numbers to a city no other test reads.
+  for (let i = 0; i < AIRPORT_INDEX_MIN_DEPARTURES; i++) {
+    const departure_time = now - (1 + (i % 4)) * 86400 + (1 + i) * HOUR;
+    logFlightAssignments(
+      db,
+      "UA",
+      "N1VER",
+      [
+        {
+          flight_number: `UA${900 + Math.floor(i / 4)}`,
+          departure_airport: "ORD",
+          arrival_airport: "SFO",
+          departure_time,
+          arrival_time: departure_time + 4 * HOUR,
+        },
+      ],
+      now
+    );
+    db.query(
+      "INSERT INTO departure_log (tail_number, airport, departed_at, airline) VALUES (?, ?, ?, 'UA')"
+    ).run("N1VER", "ORD", departure_time);
+  }
   app = createApp(db);
 });
 
