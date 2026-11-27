@@ -13,7 +13,7 @@
 import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES, SITES } from "../src/airlines/registry";
-import { buildAirportBoard } from "../src/api/airport-board";
+import { airportIndexes, buildAirportBoard } from "../src/api/airport-board";
 import { AIRPORT_RANK_MIN_DEPARTURES, buildAirportRanking } from "../src/api/airport-ranking";
 import {
   getAirportDayCounts,
@@ -329,11 +329,13 @@ describe("buildAirportRanking", () => {
 });
 
 describe("/routes", () => {
-  test("ranks the airports for a dated day, each linked to its page", async () => {
+  test("ranks the airports for a dated day, each linked where its page indexes", async () => {
     const body = await page("/routes");
     const block = sectionOf(body, "Airports with the most Starlink departures");
+    const r = reader();
     for (const airport of ["DEN", "GJT", "SBA", "BOI"]) {
-      expect(block, airport).toContain(`href="/routes/${airport}"`);
+      expect(block, airport).toContain(airport);
+      expect(block.includes(`href="/routes/${airport}"`), airport).toBe(airportIndexes(r, airport));
     }
     expect(body).toContain('id="airports"');
     // The day is named, weekday and date.

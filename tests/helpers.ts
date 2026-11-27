@@ -7,7 +7,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { AIRPORT_INDEX_MIN_DEPARTURES } from "../src/api/airport-board";
 import { handleMcpRequest } from "../src/api/mcp-server";
+import { logFlightAssignments } from "../src/database/assignment-log";
 import { migrate, setupTables } from "../src/database/database";
 import type { Scope, ScopedReader } from "../src/database/reader";
 import type { predictFlight } from "../src/scripts/starlink-predictor";
@@ -292,6 +294,42 @@ export function addFlight(
     lastUpdated,
     airline
   );
+}
+
+/**
+ * Enough Starlink departures flown from `origin` in the history span for its
+ * airport page to index (and so be linked): `tail` must be a Starlink plane.
+ * Spread over two to five days back, so no local "today" count moves.
+ */
+export function addIndexingHistory(
+  db: Database,
+  tail: string,
+  origin: string,
+  destination: string,
+  now: number,
+  airline = "UA"
+): void {
+  for (let i = 0; i < AIRPORT_INDEX_MIN_DEPARTURES; i++) {
+    const departure_time = now - (2 + (i % 4)) * 86400 + i * 600;
+    logFlightAssignments(
+      db,
+      airline,
+      tail,
+      [
+        {
+          flight_number: `${airline}${7000 + i}`,
+          departure_airport: origin,
+          arrival_airport: destination,
+          departure_time,
+          arrival_time: departure_time + 2 * 3600,
+        },
+      ],
+      now
+    );
+    db.query(
+      "INSERT INTO departure_log (tail_number, airport, departed_at, airline) VALUES (?, ?, ?, ?)"
+    ).run(tail, origin, departure_time, airline);
+  }
 }
 
 export function addQatarRow(

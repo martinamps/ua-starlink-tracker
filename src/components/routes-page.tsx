@@ -161,6 +161,8 @@ interface RoutesPageProps {
   updatedAt?: string | null;
   network?: RouteNetwork;
   basemapHref?: string;
+  /** An airport's page where it indexes, else null (plain text). */
+  airportHref?: (airport: string) => string | null;
 }
 
 export default function RoutesPage({
@@ -174,6 +176,7 @@ export default function RoutesPage({
   currentPath,
   network,
   basemapHref,
+  airportHref,
 }: RoutesPageProps) {
   const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
   const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
@@ -199,7 +202,7 @@ export default function RoutesPage({
           basemapHref={basemapHref}
           windowLabel={schedule.windowLabel}
           updatedAt={updatedAt}
-          airportLinks={site.features.airportPages}
+          airportHref={airportHref}
           airlineLabel={shortName ? `${shortName} ` : ""}
         />
       )}
@@ -220,13 +223,17 @@ export default function RoutesPage({
             </Panel>
           </div>
           {ranking && ranking.rows.length > 0 ? (
-            <AirportRankingPanel ranking={ranking} updatedAt={updatedAt} />
+            <AirportRankingPanel
+              ranking={ranking}
+              updatedAt={updatedAt}
+              airportHref={airportHref}
+            />
           ) : airports && airports.rows.length > 0 ? (
             <div className="min-w-0">
               <SectionTitle>Busiest airports</SectionTitle>
               <p className="mt-1 text-sm text-secondary">By departure airport.</p>
               <Panel pad="sm" className="mt-4">
-                <AirportBars rows={airports.rows} columns={1} linked={site.features.airportPages} />
+                <AirportBars rows={airports.rows} columns={1} airportHref={airportHref} />
               </Panel>
             </div>
           ) : null}
