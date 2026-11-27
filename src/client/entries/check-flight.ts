@@ -12,7 +12,7 @@ import {
 } from "../flight-answer";
 import { wireFlightSearchForms } from "../flight-search";
 import { onReady } from "../ready";
-import { type Seen, browserStore, rememberCheck } from "../recent-checks";
+import { type Shown, browserStore, rememberCheck } from "../recent-checks";
 import { wireShareControls } from "../share";
 
 interface CheckFlightConfig extends Omit<AnswerContext, "zoneFor" | "nowSec"> {
@@ -23,11 +23,11 @@ interface CheckFlightConfig extends Omit<AnswerContext, "zoneFor" | "nowSec"> {
   leg?: { origin?: string; destination?: string };
   /** What the served answer said, for the homepage's "Your flights"; absent
    * for an answer not worth coming back to (an error, a date already over). */
-  seen?: Seen;
+  seen?: Shown;
 }
 
 /** Keep this flight, and what its answer just said, in this browser. */
-function remember(config: CheckFlightConfig, seen: Seen): void {
+function remember(config: CheckFlightConfig, shown: Shown): void {
   const keep = () =>
     rememberCheck(
       browserStore(),
@@ -36,7 +36,8 @@ function remember(config: CheckFlightConfig, seen: Seen): void {
         d: config.date,
         o: config.leg?.origin,
         a: config.leg?.destination,
-        seen,
+        h: shown.headline,
+        seen: { tone: shown.tone, firm: shown.firm, tails: shown.tails },
       },
       Math.floor(Date.now() / 1000)
     );
@@ -74,7 +75,12 @@ function refreshAnswer(config: CheckFlightConfig): void {
       const answer = renderFlightAnswer(body, ctx);
       target.innerHTML = answer.html;
       if (config.seen) {
-        remember(config, { tone: answer.tone, firm: answer.firm, tails: answerTails(body) });
+        remember(config, {
+          tone: answer.tone,
+          firm: answer.firm,
+          tails: answerTails(body),
+          headline: answer.headline,
+        });
       }
     })
     .catch(() => {})

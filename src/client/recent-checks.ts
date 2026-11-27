@@ -16,6 +16,11 @@
  * newly assigned, a different aircraft, or a firm answer that moved. A forecast
  * that drifts, and a firm answer that is missing today (a lookup that failed
  * reads the same), get no note.
+ *
+ * A row is drawn before its answer is in. The browser keeps the words each
+ * answer last had, and the waiting row holds exactly their room, unseen, so an
+ * answer that has not changed arrives without moving anything. One that has
+ * changed is held until the others are in, so the list moves once.
  */
 import { canonicalFlightInput } from "../airlines/flight-input";
 import { EYEBROW_TEXT, PANEL_PAD, SURFACE } from "../components/ui/box-classes";
@@ -40,6 +45,11 @@ export interface Seen {
   tails: string[];
 }
 
+/** An answer as a flight's page or its row prints it: `Seen`, and its words. */
+export interface Shown extends Seen {
+  headline: string;
+}
+
 export interface RecentCheck {
   /** Flight number, canonical: "UA1932". */
   f: string;
@@ -50,6 +60,11 @@ export interface RecentCheck {
   a?: string;
   /** Hub only: the aircraft type typed for an airline answered by type. */
   t?: string;
+  /** The answer's words when last shown. Never printed: a waiting row holds
+   * their room (see the file header). */
+  h?: string;
+  /** Hub only: the airline that answer named, whose site its link opens. */
+  k?: string;
   seen: Seen;
   /** When `seen` was shown (unix seconds). */
   at: number;
@@ -72,6 +87,8 @@ const AIRPORT_RE = /^[A-Z]{3}$/;
 const TAIL_RE = /^[A-Z0-9-]{2,8}$/;
 const MAX_TAILS = 6;
 const MAX_TYPE_LENGTH = 40;
+const MAX_WORDS_LENGTH = 400;
+const MAX_AIRLINE_LENGTH = 40;
 
 const isSeen = (v: unknown): v is Seen => {
   const s = v as Seen | null;
@@ -95,8 +112,12 @@ function validCheck(v: unknown): RecentCheck | null {
   for (const code of [c.o, c.a]) {
     if (code !== undefined && (typeof code !== "string" || !AIRPORT_RE.test(code))) return null;
   }
-  if (c.t !== undefined && (typeof c.t !== "string" || !c.t || c.t.length > MAX_TYPE_LENGTH)) {
-    return null;
+  for (const [text, max] of [
+    [c.t, MAX_TYPE_LENGTH],
+    [c.h, MAX_WORDS_LENGTH],
+    [c.k, MAX_AIRLINE_LENGTH],
+  ] as const) {
+    if (text !== undefined && (typeof text !== "string" || !text || text.length > max)) return null;
   }
   if (!isSeen(c.seen) || typeof c.at !== "number" || !Number.isFinite(c.at)) return null;
   return {
@@ -105,6 +126,8 @@ function validCheck(v: unknown): RecentCheck | null {
     ...(c.o ? { o: c.o } : {}),
     ...(c.a ? { a: c.a } : {}),
     ...(c.t ? { t: c.t } : {}),
+    ...(c.h ? { h: c.h } : {}),
+    ...(c.k ? { k: c.k } : {}),
     seen: { tone: c.seen.tone, firm: c.seen.firm, tails: [...c.seen.tails] },
     at: c.at,
   };
@@ -232,8 +255,15 @@ export function changeNote(prev: Seen, now: Seen, when: string, hub = false): st
     prev.tails.length > 0 && now.tails.length > 0 && prev.tails.join() !== now.tails.join();
   const moved = prev.tone !== now.tone;
   if (!swapped && !moved) return null;
+  // More or fewer aircraft named is a leg added, dropped or answered
+  // differently, which is not a plane changed: only the names are certain.
+  const sameCount = prev.tails.length === now.tails.length;
   const said = [
-    ...(swapped ? [`the plane was ${planes(prev.tails)}, now ${planes(now.tails)}`] : []),
+    ...(swapped
+      ? [
+          `${sameCount ? "the plane was" : "the answer named"} ${planes(prev.tails)}, now ${planes(now.tails)}`,
+        ]
+      : []),
     ...(moved && WAS[prev.tone] ? [WAS[prev.tone]] : []),
   ];
   if (said.length === 0) return null;
@@ -241,6 +271,19 @@ export function changeNote(prev: Seen, now: Seen, when: string, hub = false): st
 }
 
 /** What a hub answer said, for the note: yes, no or open, and the aircraft where it names them. */
+const UNESCAPED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" };
+
+/** A hub answer's line as the words a reader sees, and the airline it named. */
+export function hubWords(d: CheckAnyBody): Pick<RecentCheck, "h" | "k"> {
+  const words = checkAnyHtml(d, false)
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(amp|lt|gt|quot|#39);/g, (_, name: string) => UNESCAPED[name]);
+  return {
+    h: words && words.length <= MAX_WORDS_LENGTH ? words : undefined,
+    k: d.airline && d.airline.length <= MAX_AIRLINE_LENGTH ? d.airline : undefined,
+  };
+}
+
 export function hubSeen(d: {
   hasStarlink?: boolean | null;
   flights?: unknown;
@@ -279,6 +322,7 @@ export function rememberHubCheck(
       o: code("origin"),
       a: code("destination"),
       t: asked.get("aircraft_type")?.trim() || undefined,
+      ...hubWords(answer),
       seen: hubSeen(answer),
     },
     nowSec
@@ -288,8 +332,7 @@ export function rememberHubCheck(
 // --- The homepage list -----------------------------------------------------
 
 /** An airline site's answer for one row (GET /static/recent/…, app.ts). */
-export interface RowAnswer extends Seen {
-  headline: string;
+export interface RowAnswer extends Shown {
   /** The date is over at the flight's own airport. */
   passed: boolean;
 }
@@ -315,14 +358,35 @@ function answerPath(c: RecentCheck): string {
   return `${["", "check-flight", encodeURIComponent(c.f), encodeURIComponent(c.d)].join("/")}${query ? `?${query}` : ""}`;
 }
 
+/** The headline's type, for the answer and for the room held for it. */
+const HEADLINE_TYPE = "font-display text-base text-balance";
+
+/**
+ * A waiting row's answer: "Checking…" over the words the answer last had,
+ * unseen and unread, in the answer's own markup so they take the room it will.
+ * A row kept before those words were (none are, bar a hand-edited list) waits
+ * on two plain lines.
+ */
+function waitingHtml(c: RecentCheck, hub: boolean, pages: CheckPages): string {
+  if (!c.h) return "<span data-recent-wait>Checking…</span>";
+  const held = hub
+    ? `<span aria-hidden="true" class="invisible block">${esc(c.h)}${checkPageLink({ airline: c.k }, pages, c.f, c.d)}</span>`
+    : `<span aria-hidden="true" class="invisible ${HEADLINE_TYPE}">${wholeDates(esc(c.h))}</span>`;
+  return `<span data-recent-wait class="absolute inset-x-0 top-0">Checking…</span>${held}`;
+}
+
 /**
  * One row, before its answer is in. On an airline site the row is a link to
  * the flight's page; the hub has no such page, so its answer brings its own
- * link to the airline's site. Two lines are held for the answer so the rows
- * below don't move when it arrives.
+ * link to the airline's site.
  */
-export function recentRowHtml(c: RecentCheck, nowSec: number, hub: boolean): string {
-  const inner = `<span class="block font-mono text-xs text-muted">${wholeDates(idLine(c, nowSec))}</span> <span data-recent-answer class="mt-1 block min-h-10 text-sm leading-5 text-secondary">Checking…</span>`;
+export function recentRowHtml(
+  c: RecentCheck,
+  nowSec: number,
+  hub: boolean,
+  pages: CheckPages = {}
+): string {
+  const inner = `<span class="block font-mono text-xs text-muted">${wholeDates(idLine(c, nowSec))}</span> <span data-recent-answer class="relative mt-1 block min-h-10 text-sm leading-5 text-secondary">${waitingHtml(c, hub, pages)}</span>`;
   const main = hub
     ? `<div class="min-w-0 flex-1 py-3">${inner}</div>`
     : `<a href="${esc(answerPath(c))}" rel="nofollow" data-recent-open class="group block min-w-0 flex-1 rounded py-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50">${inner}</a>`;
@@ -330,9 +394,14 @@ export function recentRowHtml(c: RecentCheck, nowSec: number, hub: boolean): str
 }
 
 /** The whole list. Nothing is drawn for an empty one: the caller draws no section. */
-export function recentSectionHtml(list: RecentCheck[], nowSec: number, hub: boolean): string {
+export function recentSectionHtml(
+  list: RecentCheck[],
+  nowSec: number,
+  hub: boolean,
+  pages: CheckPages = {}
+): string {
   const rows = inShowOrder(list)
-    .map((c) => recentRowHtml(c, nowSec, hub))
+    .map((c) => recentRowHtml(c, nowSec, hub, pages))
     .join(" ");
   return `<div class="${SURFACE} ${PANEL_PAD.sm}"><h2 id="${TITLE_ID}" class="${EYEBROW_TEXT}">Your flights</h2> <ul class="mt-1">${rows}</ul> <p class="mt-1 flex flex-wrap items-center justify-between gap-x-3 border-t border-subtle pt-2 text-xs text-muted"><span>Kept in this browser only.</span> <button type="button" data-recent-clear class="-mx-2 min-h-11 rounded px-2 underline ${ROW_ACTION}">Clear all</button></p></div>`;
 }
@@ -347,10 +416,15 @@ export function airlineAnswerHtml(answer: RowAnswer, note: string | null): strin
   const tone = (ANSWER_TONES as readonly string[]).includes(answer.tone)
     ? (answer.tone as AnswerTone)
     : "unknown";
-  return `<span class="font-display text-base text-balance group-hover:underline ${answerHeadlineClass(tone)}">${wholeDates(esc(answer.headline))}</span>${noteHtml(note)}`;
+  return `<span class="${HEADLINE_TYPE} group-hover:underline ${answerHeadlineClass(tone)}">${wholeDates(esc(answer.headline))}</span>${noteHtml(note)}`;
 }
 
-const FAILED = "Couldn't check just now.";
+// True of a lookup that failed once and of a browser that never gets one (the
+// answer needs a request header Safari sends only from 16.4).
+const FAILED = "Couldn't get the answer here.";
+const FAILED_OPEN = `${FAILED} Open the flight's page for it.`;
+/** How long a changed answer waits for the others before the list moves without them. */
+const LATE_MS = 1500;
 
 function isRowAnswer(v: unknown): v is RowAnswer {
   const r = v as RowAnswer | null;
@@ -427,7 +501,7 @@ export function wireRecentChecks(): void {
   section.id = SECTION_ID;
   section.setAttribute("aria-labelledby", TITLE_ID);
   if (!hub) section.className = "relative mx-auto mb-6 w-full max-w-xl";
-  section.innerHTML = recentSectionHtml(list, nowSec, hub);
+  section.innerHTML = recentSectionHtml(list, nowSec, hub, pages);
   place.after.insertAdjacentElement("afterend", section);
   countUse("shown");
 
@@ -457,6 +531,26 @@ export function wireRecentChecks(): void {
     if (target?.closest("[data-recent-open]") && e.isTrusted) countUse("opened");
   });
 
+  // An answer in the words its row holds room for goes in as it arrives. Any
+  // other changes the row's height, so it waits for the rest: the list then
+  // moves once, not row by row.
+  const late: Array<() => void> = [];
+  let lateTimer: ReturnType<typeof setTimeout> | undefined;
+  const showLate = () => {
+    clearTimeout(lateTimer);
+    lateTimer = undefined;
+    for (const draw of late.splice(0)) draw();
+  };
+  const show = (steady: boolean, draw: () => void) => {
+    if (steady) return draw();
+    late.push(draw);
+    lateTimer ??= setTimeout(showLate, LATE_MS);
+  };
+  // Over the held room where there is some, so the row keeps its height.
+  const fail = (out: Element, words: string) => {
+    (out.querySelector("[data-recent-wait]") ?? out).textContent = words;
+  };
+
   const fill = async (c: RecentCheck): Promise<void> => {
     const out = rowOf(c)?.querySelector("[data-recent-answer]");
     if (!out) return;
@@ -464,27 +558,28 @@ export function wireRecentChecks(): void {
     try {
       if (hub) {
         const body = await askHub(c);
-        if (!body) {
-          out.textContent = FAILED;
-          return;
-        }
+        if (!body) return fail(out, FAILED);
+        const note = changeNote(c.seen, hubSeen(body), when, true);
         const link = checkPageLink(body, pages, c.f, c.d).replace("<a ", "<a data-recent-open ");
-        out.innerHTML = `${checkAnyHtml(body, false)}${noteHtml(changeNote(c.seen, hubSeen(body), when, true))}${link}`;
+        const words = hubWords(body);
+        show(!note && !!c.h && words.h === c.h && words.k === c.k, () => {
+          out.innerHTML = `${checkAnyHtml(body, false)}${noteHtml(note)}${link}`;
+        });
         return;
       }
       const answer = await askAirlineSite(c);
-      if (answer?.passed) {
+      if (!answer) return fail(out, FAILED_OPEN);
+      if (answer.passed) {
         forgetCheck(store, checkKey(c));
-        dropRow(rowOf(c));
+        show(false, () => dropRow(rowOf(c)));
         return;
       }
-      if (!answer) {
-        out.textContent = `${FAILED} Open it for the answer.`;
-        return;
-      }
-      out.innerHTML = airlineAnswerHtml(answer, changeNote(c.seen, answer, when));
+      const note = changeNote(c.seen, answer, when);
+      show(!note && answer.headline === c.h, () => {
+        out.innerHTML = airlineAnswerHtml(answer, note);
+      });
     } catch {
-      out.textContent = hub ? FAILED : `${FAILED} Open it for the answer.`;
+      fail(out, hub ? FAILED : FAILED_OPEN);
     }
   };
 
@@ -492,6 +587,7 @@ export function wireRecentChecks(): void {
   // visitor's own few flights, not a batch.
   const run = async () => {
     for (const c of inShowOrder(list)) await fill(c);
+    showLate();
   };
   const start = () => setTimeout(() => void run(), 0);
   if (document.readyState === "complete") start();

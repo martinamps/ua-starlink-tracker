@@ -30,6 +30,7 @@ import {
   currentChecks,
   forgetCheck,
   hubSeen,
+  hubWords,
   inShowOrder,
   overEverywhere,
   readRecent,
@@ -238,6 +239,9 @@ describe("storage that fails", () => {
       { ...good, f: "UA5", seen: { tone: "yes", firm: true, tails: ["<script>"] } },
       { ...good, f: "UA6", seen: { tone: "yes", firm: true, tails: Array(7).fill("N1") } },
       { ...good, f: "UA7", at: "now" },
+      { ...good, f: "UA9", h: "x".repeat(401) },
+      { ...good, f: "UA10", h: 7 },
+      { ...good, f: "UA11", k: "x".repeat(41) },
       { ...good, f: "UA8", at: null },
     ];
     const store = memoryStore(JSON.stringify([...bad, good, good]));
@@ -347,6 +351,19 @@ describe("the change note", () => {
     );
   });
 
+  test("more or fewer aircraft named is not called a plane changed", () => {
+    // A second leg came on record, or left it: the first leg's plane is the same.
+    const one: Seen = { tone: "yes", firm: true, tails: ["N1"] };
+    const two: Seen = { tone: "yes", firm: true, tails: ["N1", "N2"] };
+    expect(changeNote(one, two, WHEN)).toBe(
+      "Changed since you checked on Nov 25: the answer named N1, now N1 and N2."
+    );
+    expect(changeNote(two, { ...one, tone: "partial" }, WHEN)).toBe(
+      "Changed since you checked on Nov 25: the answer named N1 and N2, now N1; the answer was a yes."
+    );
+    expect(changeNote(one, two, WHEN)).not.toContain("plane was");
+  });
+
   test("the hub claims a firm answer, not an assignment it cannot see", () => {
     const open: Seen = { tone: "open", firm: false, tails: [] };
     expect(changeNote(open, hubSeen({ hasStarlink: true }), WHEN, true)).toBe(
@@ -379,7 +396,26 @@ describe("the hub's answers", () => {
     const store = memoryStore();
     const body = { hasStarlink: true, flights: [{ tail_number: "N37529" }] };
     expect(rememberHubCheck(store, form("tracked"), asked(), body, now)).toBe(true);
-    expect(readRecent(store)).toEqual([{ f: "UA1932", d: SOON, seen: yes(), at: now }]);
+    expect(readRecent(store)).toEqual([
+      { f: "UA1932", d: SOON, h: "Starlink ·  · ", seen: yes(), at: now },
+    ]);
+  });
+
+  test("an answer's words are kept as a reader sees them, with the airline it named", () => {
+    const body = {
+      hasStarlink: false,
+      airline: "United Airlines",
+      reason: `Tail N4VIA isn't on our "Starlink" list & <b>never</b> was`,
+    };
+    expect(hubWords(body)).toEqual({
+      h: `No Starlink · United Airlines · Tail N4VIA isn't on our "Starlink" list & <b>never</b> was`,
+      k: "United Airlines",
+    });
+    // Too long to keep is not kept, and never cut: cut words would hold the wrong room.
+    expect(hubWords({ hasStarlink: false, reason: "x".repeat(400) }).h).toBeUndefined();
+    const store = memoryStore();
+    rememberHubCheck(store, form(), asked(), body, now);
+    expect(readRecent(store)[0]).toMatchObject(hubWords(body));
   });
 
   test("the route and aircraft type asked with it are kept with it", () => {
@@ -444,6 +480,39 @@ describe("the list's markup", () => {
 
   test("a hub row has no page of its own to link", () => {
     expect(recentRowHtml(rows[0], now, true)).not.toContain("<a ");
+  });
+
+  test("a waiting row holds the room of the words its answer last had, unseen and unread", () => {
+    const said = 'Yes — UA500 on <img src=x onerror="alert(1)"> has Starlink (N37529, verified)';
+    const html = recentRowHtml({ ...rows[1], h: said }, now, false);
+    const held = html.match(/<span aria-hidden="true" class="invisible ([^"]*)">(.*?)<\/span>/);
+    expect(held?.[2]).toContain("&lt;img");
+    expect(html).not.toContain("<img");
+    // In the answer's own type, so the answer takes the room that was held.
+    const answer = airlineAnswerHtml({ ...yes(), headline: said, passed: false }, null);
+    for (const cls of (held?.[1] ?? "").split(" ")) expect(answer).toContain(cls);
+    expect(answer).toContain(held?.[2] ?? "missing");
+    expect(html).toMatch(/<span data-recent-wait class="absolute [^"]*">Checking…<\/span>/);
+  });
+
+  test("a row with no words kept waits on plain lines", () => {
+    const html = recentRowHtml(rows[1], now, false);
+    expect(html).toContain("<span data-recent-wait>Checking…</span>");
+    expect(html).not.toContain("invisible");
+  });
+
+  test("a hub row holds room for its answer's link to the airline's site too", () => {
+    const pages = {
+      "United Airlines": { url: "https://ua.example/check-flight", site: "ua.example" },
+    };
+    const kept = { ...rows[1], h: "No Starlink · United Airlines · <b>", k: "United Airlines" };
+    const html = recentRowHtml(kept, now, true, pages);
+    expect(html).toContain(
+      '<span aria-hidden="true" class="invisible block">No Starlink · United Airlines · &lt;b&gt;<a href='
+    );
+    expect(html).toContain("See UA500 on ua.example →");
+    // An airline the page has no site for holds no link, whatever the list says.
+    expect(recentRowHtml({ ...kept, k: "Nobody" }, now, true, pages)).not.toContain("<a ");
   });
 
   test("the remove button names its flight for a screen reader", () => {
@@ -543,7 +612,13 @@ describe("a row's answer", () => {
       const config = JSON.parse(
         page.match(/id="check-flight-config"[^>]*>(.*?)<\/script>/s)?.[1] ?? "{}"
       );
-      expect(config.seen).toEqual({ tone: answer.tone, firm: answer.firm, tails: answer.tails });
+      // Its words are kept too: the row holds their room while it waits.
+      expect(config.seen).toEqual({
+        tone: answer.tone,
+        firm: answer.firm,
+        tails: answer.tails,
+        headline: answer.headline,
+      });
     }
   );
 
