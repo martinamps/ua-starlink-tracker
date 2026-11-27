@@ -14,7 +14,8 @@ import {
 } from "../database/database";
 import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { countZombieChildren } from "../observability/zombies";
-import { airportTimezone } from "../utils/airport-tz";
+import { registerAirport } from "../utils/airport-register";
+import { isHandPlacedAirport } from "../utils/airport-tz";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 import { isAirportCode } from "../utils/outside-text";
@@ -342,8 +343,11 @@ function emitCappedFutureShare(db: Database): void {
 }
 
 /**
- * airline -> the codes its upcoming flights carry that neither a hand table
- * nor the register under them holds (airport-register.ts).
+ * airline -> the codes its upcoming flights carry that no hand table holds:
+ * nobody has checked them, so their pages stay out of search
+ * (isHandPlacedAirport). The register under the hand tables
+ * (airport-register.ts) names and times most of them meanwhile; that does
+ * not take a code off this list, or nobody would be told to place it.
  */
 export function unplacedAirportsByAirline(db: Database): Map<string, string[]> {
   const rows = db
@@ -357,37 +361,64 @@ export function unplacedAirportsByAirline(db: Database): Map<string, string[]> {
   for (const { airline, code } of rows) {
     const codes = byAirline.get(airline) ?? [];
     byAirline.set(airline, codes);
-    if (code && !airportTimezone(code)) codes.push(code);
+    if (code && !isHandPlacedAirport(code)) codes.push(code);
   }
   for (const codes of byAirline.values()) codes.sort();
   return byAirline;
 }
 
-let lastUnplacedLogged = "";
+/**
+ * The two log lines' lists, from unplacedAirportsByAirline: codes neither
+ * the hand tables nor the register holds (bare code, UTC), and codes only
+ * the register places (named and timed, unchecked). "" for an empty list.
+ * The feed's own text, so only what has the shape of a code is named.
+ */
+export function unplacedAirportLines(byAirline: ReadonlyMap<string, readonly string[]>): {
+  unknown: string;
+  registerOnly: string;
+} {
+  const unknown: string[] = [];
+  const registerOnly: string[] = [];
+  for (const [airline, codes] of byAirline) {
+    const fromRegister = codes.filter((c) => isAirportCode(c) && registerAirport(c));
+    const neither = codes.filter((c) => !fromRegister.includes(c));
+    const shown = neither.filter(isAirportCode);
+    if (neither.length > 0) {
+      unknown.push(
+        `${airline}: ${shown.join(" ")}${shown.length < neither.length ? " (+ malformed)" : ""}`
+      );
+    }
+    if (fromRegister.length > 0) registerOnly.push(`${airline}: ${fromRegister.join(" ")}`);
+  }
+  return { unknown: unknown.join("; "), registerOnly: registerOnly.join("; ") };
+}
+
+let lastUnknownLogged = "";
+let lastRegisterOnlyLogged = "";
 
 function emitUnplacedAirports(db: Database): void {
   try {
     const byAirline = unplacedAirportsByAirline(db);
-    const named: string[] = [];
     for (const [airline, codes] of byAirline) {
       metrics.gauge(GAUGES.UPCOMING_UNPLACED_AIRPORTS, codes.length, {
         airline: normalizeAirlineTag(airline),
       });
-      // The feed's own text, so only what has the shape of a code is logged.
-      const shown = codes.filter(isAirportCode);
-      if (codes.length > 0) {
-        named.push(
-          `${airline}: ${shown.join(" ")}${shown.length < codes.length ? " (+ malformed)" : ""}`
-        );
-      }
     }
-    const line = named.join("; ");
-    if (line !== lastUnplacedLogged) {
-      lastUnplacedLogged = line;
+    const { unknown, registerOnly } = unplacedAirportLines(byAirline);
+    if (unknown !== lastUnknownLogged) {
+      lastUnknownLogged = unknown;
       info(
-        line
-          ? `Airport codes no table holds, in upcoming flights: ${line}`
+        unknown
+          ? `Airport codes no table holds, in upcoming flights: ${unknown}`
           : "Every upcoming flight's airports are in the tables"
+      );
+    }
+    if (registerOnly !== lastRegisterOnlyLogged) {
+      lastRegisterOnlyLogged = registerOnly;
+      info(
+        registerOnly
+          ? `Airport codes only the register places, in upcoming flights (name unchecked, pages noindex until placed by hand): ${registerOnly}`
+          : "No upcoming flight's airport is placed by the register alone"
       );
     }
   } catch (err) {

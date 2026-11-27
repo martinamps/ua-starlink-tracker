@@ -1,6 +1,6 @@
 /**
  * Written by scripts/build-airport-register.ts; a row is not edited here. To
- * correct an airport, place it in the hand tables (airport-names-table.ts,
+ * correct an airport, place it in the hand tables (airport-names.ts,
  * airport-tz.ts, airport-geo.ts), where an entry always wins over this file.
  *
  * IATA -> [city, the airport's own name or "", latitude, longitude, ISO

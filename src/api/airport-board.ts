@@ -18,7 +18,7 @@ import { countOnLocalDay, nextLocalDay } from "../database/airports";
 import type { ScopedReader } from "../database/reader";
 import { DEPARTURE_WINDOW_HOURS, unixNow } from "../database/sql/windows";
 import { airportWithCode } from "../utils/airport-places";
-import { airportLocalDate, airportTimezone } from "../utils/airport-tz";
+import { airportLocalDate, airportTimezone, isHandPlacedAirport } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { AIRPORT_RANK_MIN_DEPARTURES } from "./airport-ranking";
 
@@ -172,7 +172,7 @@ export function buildAirportBoard(
     tomorrow: tomorrowDate
       ? { date: tomorrowDate, departures: countOnLocalDay(airport, tomorrowDate, departures) }
       : null,
-    indexable: meetsIndexBar(flown?.starlink ?? 0),
+    indexable: meetsIndexBar(airport, flown?.starlink ?? 0),
   };
 }
 
@@ -202,7 +202,13 @@ function todayStanding(
   };
 }
 
-const meetsIndexBar = (starlinkFlown: number) => starlinkFlown >= AIRPORT_INDEX_MIN_DEPARTURES;
+/**
+ * Enough Starlink departures flown, from an airport someone placed by hand:
+ * a page titled with the register's unchecked name, or with a bare code, is
+ * served but not offered to search (isHandPlacedAirport says why).
+ */
+const meetsIndexBar = (airport: string, starlinkFlown: number) =>
+  isHandPlacedAirport(airport) && starlinkFlown >= AIRPORT_INDEX_MIN_DEPARTURES;
 
 /**
  * Does this airport's page index? The page's own rule, read off the memoised
@@ -210,7 +216,7 @@ const meetsIndexBar = (starlinkFlown: number) => starlinkFlown >= AIRPORT_INDEX_
  */
 export function airportIndexes(reader: ScopedReader, airport: string): boolean {
   return (
-    meetsIndexBar(reader.getAirportHistory().airports.get(airport)?.starlink ?? 0) &&
+    meetsIndexBar(airport, reader.getAirportHistory().airports.get(airport)?.starlink ?? 0) &&
     reader.airportHasData(airport)
   );
 }

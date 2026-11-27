@@ -10,6 +10,10 @@
  *  - a hand entry always wins, in names, zones, coordinates and country;
  *  - a code the hand tables lack is answered by the register, all three or
  *    none, and a code neither holds stays unknown everywhere;
+ *  - a page about an airport only the register places is named and timed for
+ *    the visitor but kept out of search and the sitemap, and the log names
+ *    the code, until someone places it by hand: the register's names are
+ *    unchecked, and about one foreign one in six is another place's;
  *  - the register never reaches a browser bundle.
  */
 
@@ -26,7 +30,7 @@ import { boardDek } from "../src/components/route-flights-copy";
 import { buildRouteNetwork } from "../src/components/routes-map/network";
 import { getSitemapRoutes } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
-import { unplacedAirportsByAirline } from "../src/scripts/data-freshness";
+import { unplacedAirportLines, unplacedAirportsByAirline } from "../src/scripts/data-freshness";
 import { type Itinerary, planRoute, unplacedTripEnds } from "../src/scripts/starlink-predictor";
 import { createApp } from "../src/server/app";
 import {
@@ -41,8 +45,13 @@ import * as hand from "../src/utils/airport-names";
 import * as places from "../src/utils/airport-places";
 import { registerAirport } from "../src/utils/airport-register";
 import { AIRPORT_REGISTER } from "../src/utils/airport-register-data";
-import { AIRPORT_TZ, airportTimezone, isPlacedAirportPair } from "../src/utils/airport-tz";
-import { addFlight, addPlane, makeFreshDb, req, utc } from "./helpers";
+import {
+  AIRPORT_TZ,
+  airportTimezone,
+  isHandPlacedAirport,
+  isHandPlacedAirportPair,
+} from "../src/utils/airport-tz";
+import { addFlight, addIndexingHistory, addPlane, makeFreshDb, req, utc } from "./helpers";
 
 const HAND = Object.keys(AIRPORT_TZ);
 const BOTH = HAND.filter((code) => Object.hasOwn(AIRPORT_REGISTER, code));
@@ -161,8 +170,10 @@ describe("a code the hand tables lack", () => {
       expect(airportCoords(code), code).toHaveLength(2);
       expect(airportDistanceMiles("DOH", code), code).toBeGreaterThan(1000);
       expect(places.airportCity(code), code).toBe(places.airportSpokenPlace(code));
-      expect(isPlacedAirportPair("DOH", code), code).toBe(true);
-      expect(isPlacedAirportPair(code.toLowerCase(), "doh"), code).toBe(true);
+      // Named and timed, but nobody checked it: not hand-placed.
+      expect(isHandPlacedAirport(code), code).toBe(false);
+      expect(isHandPlacedAirportPair("DOH", code), code).toBe(false);
+      expect(isHandPlacedAirportPair(code.toLowerCase(), "doh"), code).toBe(false);
     }
     expect(places.routePairLabel("DOH", "ALA")).toBe("Doha (DOH) to Almaty (ALA)");
     expect(places.routePlaceNames("DOH", "ALA")).toBe("Doha to Almaty");
@@ -225,12 +236,71 @@ describe("pages and answers for a register-placed airport", () => {
     addFlight(db, "N1VER", "UA100", "ORD", now + 3 * HOUR, { arrivalAirport: "DEN" });
     addFlight(db, "N1VER", "UA3395", "ALA", now + 9 * HOUR, { arrivalAirport: "STL" });
     addFlight(db, "N1VER", "UA102", "STL", now + 15 * HOUR, { arrivalAirport: UNKNOWN });
+    addFlight(db, "N1VER", "UA3396", "STL", now + 21 * HOUR, { arrivalAirport: "ALA" });
+    // Enough flown Starlink departures for an airport page to index, from a
+    // register-placed airport and from a hand-placed one beside it.
+    addIndexingHistory(db, "N1VER", "ALA", "STL", now);
+    addIndexingHistory(db, "N1VER", "STL", "ALA", now);
     app = createApp(db);
   });
   afterAll(() => db.close());
 
-  test("the gauge counts only what neither the tables nor the register hold", () => {
-    expect(unplacedAirportsByAirline(db).get("UA")).toEqual([UNKNOWN]);
+  const robots = (doc: string) => doc.match(/<meta name="robots" content="([^"]*)"/)?.[1] ?? "";
+
+  test("the gauge counts every code no hand table holds, register-placed or not", () => {
+    expect(unplacedAirportsByAirline(db).get("UA")).toEqual(["ALA", UNKNOWN]);
+    // Every hand-placed code stays off it.
+    const all = makeFreshDb();
+    addPlane(all, "N2VER", "Starlink");
+    HAND.forEach((code, i) =>
+      addFlight(all, "N2VER", `UA${1000 + i}`, code, now + HOUR + i, { arrivalAirport: "ORD" })
+    );
+    expect(unplacedAirportsByAirline(all).get("UA")).toEqual([]);
+    all.close();
+  });
+
+  test("the log names a register-only code on its own line, apart from an unknown one", () => {
+    const lines = unplacedAirportLines(unplacedAirportsByAirline(db));
+    expect(lines.registerOnly).toBe("UA: ALA");
+    expect(lines.unknown).toBe(`UA: ${UNKNOWN}`);
+    expect(
+      unplacedAirportLines(
+        new Map([
+          ["QR", ["<B>", "ALA", "ATQ", "PEW", "ZZZZ"]],
+          ["UA", []],
+          ["HA", ["ALA"]],
+        ])
+      )
+    ).toEqual({ unknown: "QR: ZZZZ (+ malformed)", registerOnly: "QR: ALA ATQ PEW; HA: ALA" });
+    expect(unplacedAirportLines(new Map([["UA", []]]))).toEqual({ unknown: "", registerOnly: "" });
+  });
+
+  test("its route page is noindex either way round; the hand-placed pair still indexes", async () => {
+    for (const path of ["/route-planner/ALA/STL", "/route-planner/STL/ALA"]) {
+      const res = await get(path);
+      expect(res.status, path).toBe(200);
+      expect(robots(await res.text()), path).toBe("noindex, follow");
+    }
+    expect(robots(await (await get("/route-planner/ORD/DEN")).text())).toBe("index, follow");
+  });
+
+  test("its airport page serves, named, and is noindex; the hand-placed one indexes", async () => {
+    const ala = await get("/routes/ALA");
+    expect(ala.status).toBe(200);
+    const doc = await ala.text();
+    expect(doc).toContain("Almaty");
+    expect(robots(doc)).toBe("noindex, follow");
+    expect(robots(await (await get("/routes/STL")).text())).toBe("index, follow");
+  });
+
+  test("no sitemap or llms.txt line carries it", async () => {
+    for (const path of ["/sitemap.xml", "/llms.txt"]) {
+      const body = await (await get(path)).text();
+      expect(body, path).toContain("/routes/STL");
+      expect(body, path).not.toMatch(/\bALA\b/);
+    }
+    const xml = await (await get("/sitemap.xml")).text();
+    expect(xml).toContain("/route-planner/ORD/DEN<");
   });
 
   test("its route page names it and keeps local time", async () => {
@@ -244,11 +314,10 @@ describe("pages and answers for a register-placed airport", () => {
     expect(doc).not.toContain("Times in UTC.");
   });
 
-  test("its pair is offered to search like any placed pair, the unknown one is not", () => {
+  test("its pair is not offered to search, no more than the unknown one", () => {
     const pairs = getSitemapRoutes(db, "UA").map((r) => `${r.origin}-${r.destination}`);
     expect(pairs).toContain("ORD-DEN");
-    expect(pairs).toContain("ALA-STL");
-    expect(pairs.filter((p) => p.includes(UNKNOWN))).toEqual([]);
+    expect(pairs.filter((p) => /ALA/.test(p) || p.includes(UNKNOWN))).toEqual([]);
   });
 
   test("a leg asked for by its code is scoped, an unknown code is not", () => {

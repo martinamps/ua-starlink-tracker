@@ -673,15 +673,25 @@ export function airportTimezone(iata: string): string | undefined {
 }
 
 /**
- * Both ends are airports the tables or the register hold. The zone, name and
- * coordinate tables carry one set of codes (tests/unplaced-airports.test.ts)
- * and a register row carries all three, so a code with no zone is one we can
- * neither name nor time: the flight feed hands us charter fields and
- * brand-new codes that no register lists with scheduled service. Such a pair still
- * serves, as bare codes in UTC, but is not offered to search.
+ * A person placed this airport: the hand tables hold it. The zone, name and
+ * coordinate tables carry one set of codes (tests/unplaced-airports.test.ts),
+ * so the zone table answers for all three.
+ *
+ * This, not airportTimezone, is what lets a page about the airport into
+ * search. The register names an airport by its municipality, unchecked, and
+ * where it could be held against the hand names about one foreign airport in
+ * six came out as another place ("Zaventem" for Brussels, "Sepang" for Kuala
+ * Lumpur). A visitor still reads the register's name and local times on the
+ * page; search is offered the page only once someone has checked the code
+ * into the hand tables. A code neither holds was already kept out.
  */
-export function isPlacedAirportPair(origin: string, destination: string): boolean {
-  return Boolean(airportTimezone(origin) && airportTimezone(destination));
+export function isHandPlacedAirport(iata: string): boolean {
+  return Object.hasOwn(AIRPORT_TZ, iata.toUpperCase());
+}
+
+/** Both ends hand-placed: the route page's and the sitemap's rule for search. */
+export function isHandPlacedAirportPair(origin: string, destination: string): boolean {
+  return isHandPlacedAirport(origin) && isHandPlacedAirport(destination);
 }
 
 export { toIata as icaoToIata } from "./airport-code";

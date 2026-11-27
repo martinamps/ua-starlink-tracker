@@ -16,8 +16,14 @@
  * code is unknown (scripts/build-airport-register.ts says what a row must
  * pass). So "placed" still has one meaning across the three tables.
  *
+ * Placed by the register is not placed by hand. A page about such an airport
+ * prints the register's name and local times for whoever opens it, but stays
+ * noindex and out of the sitemap, as a bare code's page does, and the log
+ * names the code (data-freshness.ts) until someone checks it into the hand
+ * tables: airport-tz.ts, isHandPlacedAirport, says why.
+ *
  * Server only. The data is ~250 KB and the browser's airport picker reads
- * the hand names alone (airport-names-table.ts): nothing under src/client
+ * the hand names alone (airport-names.ts): nothing under src/client
  * may import this file or the three that read it
  * (tests/airport-register.test.ts builds the bundles and looks).
  */
