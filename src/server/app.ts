@@ -311,7 +311,7 @@ import type {
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
 import { orList, placeCodeAirports } from "../utils/airport-aliases";
 import { toIata } from "../utils/airport-code";
-import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-names";
+import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-places";
 import {
   airportLocalDate,
   airportTimezone,

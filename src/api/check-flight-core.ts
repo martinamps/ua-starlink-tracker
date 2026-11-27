@@ -65,11 +65,12 @@ import {
   predictFlight,
   predictLeg,
 } from "../scripts/starlink-predictor";
-import { AIRPORT_COORDS } from "../utils/airport-geo";
+import { airportCoords } from "../utils/airport-geo";
 import {
   AIRPORT_TZ,
   type FlightDateWindow,
   airportLocalDate,
+  airportTimezone,
   flightDateWindow,
   matchesLocalDate,
 } from "../utils/airport-tz";
@@ -1643,8 +1644,8 @@ export function parseLegQuery(origin: string | null, destination: string | null)
   // Origin drives the local-date window; without its zone a scoped answer
   // could be the previous evening's tail labelled as exact. A code we know
   // nothing about at all is unrecognized rather than zone-less.
-  if (no && !AIRPORT_TZ[no]) {
-    const reason = AIRPORT_COORDS[no] ? "no_timezone" : "invalid_airport";
+  if (no && !airportTimezone(no)) {
+    const reason = airportCoords(no) ? "no_timezone" : "invalid_airport";
     return { leg: undefined, unscoped: { reason, ...echoed } };
   }
   return {

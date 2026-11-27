@@ -5,7 +5,7 @@
 import React from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { SiteConfig } from "../../airlines/registry";
-import { airportWithCode, routePlaceNames } from "../../utils/airport-names";
+import { airportWithCode, routePlaceNames } from "../../utils/airport-places";
 import { airportTimezone } from "../../utils/airport-tz";
 import { Chip, LINK, Section, StatInline } from "../layout";
 import { countSentence, followSentence } from "../outlook-copy";

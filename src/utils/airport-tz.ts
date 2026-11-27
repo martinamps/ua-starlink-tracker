@@ -12,6 +12,7 @@
  */
 
 import { unixNow } from "../database/sql/windows";
+import { registerAirport } from "./airport-register";
 import { debug } from "./logger";
 
 export const AIRPORT_TZ: Record<string, string> = {
@@ -661,15 +662,22 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
   return fmt;
 }
 
+/**
+ * The airport's zone: the hand table's, else the register's
+ * (airport-register.ts) for a code the table lacks. Undefined when neither
+ * holds the code: never a guessed zone.
+ */
 export function airportTimezone(iata: string): string | undefined {
-  return AIRPORT_TZ[iata.toUpperCase()];
+  const code = iata.toUpperCase();
+  return Object.hasOwn(AIRPORT_TZ, code) ? AIRPORT_TZ[code] : registerAirport(code)?.zone;
 }
 
 /**
- * Both ends are airports the tables hold. The zone, name and coordinate tables
- * carry one set of codes (tests/unplaced-airports.test.ts), so a code with no zone
- * is one we can neither name nor time: the flight feed hands us charter fields
- * and brand-new codes before anyone has checked them. Such a pair still
+ * Both ends are airports the tables or the register hold. The zone, name and
+ * coordinate tables carry one set of codes (tests/unplaced-airports.test.ts)
+ * and a register row carries all three, so a code with no zone is one we can
+ * neither name nor time: the flight feed hands us charter fields and
+ * brand-new codes that no register lists with scheduled service. Such a pair still
  * serves, as bare codes in UTC, but is not offered to search.
  */
 export function isPlacedAirportPair(origin: string, destination: string): boolean {

@@ -17,7 +17,7 @@ import { fmt, zonedDeparture } from "../components/ui/format";
 import { countOnLocalDay, nextLocalDay } from "../database/airports";
 import type { ScopedReader } from "../database/reader";
 import { DEPARTURE_WINDOW_HOURS, unixNow } from "../database/sql/windows";
-import { airportWithCode } from "../utils/airport-names";
+import { airportWithCode } from "../utils/airport-places";
 import { airportLocalDate, airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { AIRPORT_RANK_MIN_DEPARTURES } from "./airport-ranking";

@@ -341,7 +341,10 @@ function emitCappedFutureShare(db: Database): void {
   }
 }
 
-/** airline -> the codes its upcoming flights carry that no airport table holds. */
+/**
+ * airline -> the codes its upcoming flights carry that neither a hand table
+ * nor the register under them holds (airport-register.ts).
+ */
 export function unplacedAirportsByAirline(db: Database): Map<string, string[]> {
   const rows = db
     .query(

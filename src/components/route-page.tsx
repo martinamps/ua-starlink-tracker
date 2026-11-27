@@ -1,6 +1,6 @@
 import type { SiteConfig } from "../airlines/registry";
 import type { RouteFlightBoard } from "../api/route-flights";
-import { airportWithCode, routePairLabel } from "../utils/airport-names";
+import { airportWithCode, routePairLabel } from "../utils/airport-places";
 import type { Link } from "./layout";
 import { Chip, LINK, PageHeader, PageShell, Section } from "./layout";
 import {

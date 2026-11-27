@@ -28,8 +28,11 @@
  * GOX and TAS, named by the gauge for Qatar that evening, came the same way.
  * Goa has two airports (the older is GOI, Dabolim), so GOX says which; the
  * register's municipality is the village, Mopa.
- * A wrong city is worse than a bare code: a code that is not here prints as
- * its code alone, so add one only after checking it.
+ * A wrong city is worse than a bare code, so add one only after checking it.
+ * A code that is not here prints as its code alone in the browser's airport
+ * picker, which bundles this file. On the server it takes the register's
+ * municipality instead (airport-places.ts, which every server caller imports
+ * in place of this file); an entry here always wins over that.
  */
 
 // biome-ignore format: one airport per line keeps the table diffable

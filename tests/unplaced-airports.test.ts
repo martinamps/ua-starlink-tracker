@@ -5,6 +5,10 @@
  * name or a local time we would have to guess, and its route page is not
  * offered to search until someone checks the code and adds it.
  *
+ * Since the register (tests/airport-register.test.ts) "the tables" here means
+ * the hand tables and the register under them: this file's unknown code is
+ * in neither.
+ *
  * Found on 2026-11-27: the live sitemap listed sixteen route pages on eight
  * codes no table held, one of them (MDH to STL) a single charter leg whose
  * board said "Times local to MDH" beside UTC times.
