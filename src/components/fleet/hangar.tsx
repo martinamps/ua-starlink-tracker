@@ -88,23 +88,26 @@ export function TailGrid({
 }) {
   // "sm" is the hangar's: ten columns from 768px, the block's full width
   // below it (.fam-grid), where a ten-wide strip left most of a phone blank.
+  // The hangar's 1.6k squares take their size, corners and hover from
+  // `.fam-grid > a` in the stylesheet rather than five utilities each.
   const grid =
     size === "sm" ? "fam-grid grid gap-[2px]" : "grid grid-cols-[repeat(auto-fill,12px)] gap-[3px]";
-  const cell = size === "sm" ? "w-2 h-2" : "w-3 h-3";
+  const cell = size === "sm" ? "" : " w-3 h-3 rounded-[1px] hover:scale-150 transition-transform";
   return (
     <div className={grid}>
       {tails.map((t) => (
-        // biome-ignore lint/a11y/useAnchorContent: aria-label provides the accessible name; inline text on 1.5k cells would add ~50KB
+        // biome-ignore lint/a11y/useAnchorContent: the title is the accessible name; inline text on 1.5k cells would add ~50KB
         <a
           key={t.tail}
           href={`${anchorBase}#t-${t.tail}`}
+          // An empty link takes its name from its title, so an aria-label
+          // carrying the same words only doubled them on every square.
           title={tailTitle(t, marks, labels)}
-          aria-label={tailTitle(t, marks, labels)}
           // The list below links every tail again, in rows a finger can
           // hit, so the squares stay out of the tab order: a keyboard would
           // otherwise stop on each aircraft twice.
           tabIndex={anchorBase === "" ? -1 : undefined}
-          className={`${WIFI_CLASS[t.provider]}${markCellClass(marks, t.tail)} ${cell} rounded-[1px] hover:scale-150 transition-transform`}
+          className={`${WIFI_CLASS[t.provider]}${markCellClass(marks, t.tail)}${cell}`}
         />
       ))}
     </div>
@@ -289,19 +292,19 @@ function registryClass(t: FleetTail, marks: TailMarks): string {
     : "tail-dim";
 }
 
-function registryDot(t: FleetTail, marks: TailMarks): { ch: string; cls: string } {
+function registryDot(t: FleetTail, marks: TailMarks): { ch?: string; cls: string } {
   const { pipeline, reported } = marks;
   if (t.provider === "starlink") return { ch: "◉", cls: "" };
   // Counted with Starlink, so it keeps the lit row, but a half-filled glyph
   // says nobody has seen it carrying Starlink yet.
   if (t.provider === "starlink_listed") return { ch: "◍", cls: "" };
-  if (fittingNow(marks, t.tail)) return { ch: "○", cls: " dot-mod" };
-  if (reported.has(t.tail)) return { ch: "◎", cls: " dot-verif" };
+  if (fittingNow(marks, t.tail)) return { ch: "○", cls: " tail-dot-mod" };
+  if (reported.has(t.tail)) return { ch: "◎", cls: " tail-dot-verif" };
   const state = pipeline.get(t.tail)?.state;
-  if (state === "in_mod") return { ch: "○", cls: " dot-mod" };
-  if (state === "verification_needed") return { ch: "◎", cls: " dot-verif" };
-  if (state === "scheduled") return { ch: "◌", cls: " dot-mod" };
-  return { ch: " ", cls: "" };
+  if (state === "in_mod") return { ch: "○", cls: " tail-dot-mod" };
+  if (state === "verification_needed") return { ch: "◎", cls: " tail-dot-verif" };
+  if (state === "scheduled") return { ch: "◌", cls: " tail-dot-mod" };
+  return { cls: "" };
 }
 
 export function TailRegistry({
@@ -356,11 +359,12 @@ export function TailRegistry({
               // It opens with the row's own text, space and all, as speech
               // control expects (WCAG 2.5.3).
               aria-label={`${t.tail} ${abbr} · ${wifiNote(t, marks, labels)}`}
-              className={registryClass(t, marks)}
+              // The glyph is drawn by CSS from data-dot (an empty box where
+              // there is none), as on a type page's list: one element fewer
+              // on each of 1.6k rows. The name above already says it.
+              data-dot={dot.ch}
+              className={`${registryClass(t, marks)}${dot.cls}`}
             >
-              <span aria-hidden="true" className={`tail-dot${dot.cls}`}>
-                {dot.ch}
-              </span>
               <span className="tail-num">{t.tail}</span> <span className="tail-abbr">{abbr}</span>
             </a>
           );

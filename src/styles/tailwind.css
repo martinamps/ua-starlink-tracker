@@ -176,10 +176,12 @@
 .tail-dim.tail-pipe {
   color: var(--color-text-secondary);
 }
-.dot-mod {
+.dot-mod,
+.tail-dot-mod::before {
   color: var(--color-warn);
 }
-.dot-verif {
+.dot-verif,
+.tail-dot-verif::before {
   color: var(--color-accent);
 }
 /* The registry is three quarters of /fleet's elements and starts screens below
@@ -264,7 +266,10 @@
   width: 0.8em;
   text-align: center;
 }
-.tail-dot {
+/* A registry row's glyph, from data-dot; a row without one keeps the empty
+   box, so the tails line up. */
+.tail-registry > a::before {
+  content: attr(data-dot);
   width: 0.8em;
   text-align: center;
   flex-shrink: 0;
@@ -285,6 +290,19 @@
 }
 .fam-details-head {
   display: none;
+}
+.fam-grid > a {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  transition-property: transform, translate, scale, rotate;
+  transition-timing-function: var(--default-transition-timing-function);
+  transition-duration: var(--default-transition-duration);
+}
+@media (hover: hover) {
+  .fam-grid > a:hover {
+    scale: 150%;
+  }
 }
 @media (min-width: 768px) {
   .fam-container {
@@ -364,11 +382,15 @@
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
+/* Out of layout until shown: a hidden card still widened the page, and the
+   right-hand block's ran 53px past a 1024px window, so /fleet scrolled
+   sideways. Display joins the fade, which @starting-style replays. */
 .spec-card {
+  display: none;
   opacity: 0;
   pointer-events: none;
   transform: translateY(-4px);
-  transition: opacity 0.15s, transform 0.15s;
+  transition: opacity 0.15s, transform 0.15s, display 0.15s allow-discrete;
   text-transform: none;
   letter-spacing: normal;
   font-weight: 400;
@@ -376,9 +398,14 @@
 .spec-trigger:hover .spec-card,
 .spec-trigger:focus .spec-card,
 .spec-trigger:focus-within .spec-card {
+  display: block;
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
+  @starting-style {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
 }
 @media (max-width: 767px) {
   .spec-card {
