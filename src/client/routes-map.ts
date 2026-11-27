@@ -34,6 +34,12 @@ const TAP_FRESH_MS = 1000;
 const GAP_PX = 8;
 /** The chooser's width from `sm` up (`sm:w-80`), and its most when pinched in. */
 const CHOOSER_WIDTH_PX = 320;
+/**
+ * Inline styles the pinched-in placement writes and the unzoomed one may
+ * leave alone: cleared before an unzoomed chooser opens, or a `left` kept from
+ * a pinch squeezes it against `inset-x-2`'s right edge.
+ */
+const ZOOMED_STYLES = ["transform", "transformOrigin", "width", "right", "left"] as const;
 
 const CHIP =
   "flex min-h-11 flex-col items-center justify-center rounded border border-neutral bg-surface px-1 font-mono text-sm leading-tight text-primary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/50";
@@ -147,8 +153,7 @@ function wire(
     if (zoom > 1) {
       placeZoomed(x, y, zoom, frame);
     } else {
-      for (const key of ["transform", "transformOrigin", "width", "right"] as const)
-        chooser.style[key] = "";
+      for (const key of ZOOMED_STYLES) chooser.style[key] = "";
       placeUnzoomed(x, y, frame);
     }
 
