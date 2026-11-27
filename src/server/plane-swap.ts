@@ -20,10 +20,31 @@ function changeOf(from: boolean | null, to: boolean): SwapStarlinkChange {
   return to ? "gained" : "lost";
 }
 
+/** Distinct departure airports the day's flight flies: one per leg. */
+function legsFlown(
+  history: readonly AssignmentLogRow[],
+  listedDeps: readonly (string | null | undefined)[]
+): number {
+  const deps = new Set<string>();
+  for (const dep of [...history.map((h) => h.departure_airport), ...listedDeps]) {
+    if (dep) deps.add(toIata(dep));
+  }
+  return deps.size;
+}
+
+function legOf(row: AssignmentLogRow): { dep: string; arr: string | null } {
+  return {
+    dep: toIata(row.departure_airport),
+    arr: row.arrival_airport ? toIata(row.arrival_airport) : null,
+  };
+}
+
 export function planeSwapFor(
   reader: Pick<ScopedReader, "getTailStarlinkFlag">,
   verdict: VerdictWithWindow,
-  history: readonly AssignmentLogRow[]
+  history: readonly AssignmentLogRow[],
+  /** Departure airports the answer lists for the day, beside the log's. */
+  listedDeps: readonly (string | null | undefined)[] = []
 ): PlaneSwap | null {
   if (history.length < 2) return null;
   const { verdict: seen, leg } = watchVerdictFrom(verdict, history);
@@ -64,5 +85,6 @@ export function planeSwapFor(
     toStarlink,
     fromStarlink,
     change: changeOf(fromStarlink, toStarlink),
+    leg: legsFlown(history, listedDeps) > 1 ? legOf(current) : null,
   };
 }

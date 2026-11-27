@@ -407,6 +407,48 @@
     transform: translateY(-4px);
   }
 }
+/* From 768px the card hangs right from the name, 16rem wide over 118px
+   blocks, so the right-hand column's ran up to 115px past the window. The
+   grid's own width gives its column count, (width + 12px gap) / 130px, and
+   that column's card ends at its block's right padding instead. The
+   container is lifted so the cards still draw over the sections below it. */
+@media (min-width: 768px) {
+  .fam-container {
+    container-type: inline-size;
+    position: relative;
+    z-index: 1;
+  }
+}
+@container (508px <= width < 638px) {
+  .fam-container > :nth-child(4n) .spec-card {
+    left: calc(118px - 1rem - 16rem);
+  }
+}
+@container (638px <= width < 768px) {
+  .fam-container > :nth-child(5n) .spec-card {
+    left: calc(118px - 1rem - 16rem);
+  }
+}
+@container (768px <= width < 898px) {
+  .fam-container > :nth-child(6n) .spec-card {
+    left: calc(118px - 1rem - 16rem);
+  }
+}
+@container (898px <= width < 1028px) {
+  .fam-container > :nth-child(7n) .spec-card {
+    left: calc(118px - 1rem - 16rem);
+  }
+}
+@container (1028px <= width < 1158px) {
+  .fam-container > :nth-child(8n) .spec-card {
+    left: calc(118px - 1rem - 16rem);
+  }
+}
+@container (1158px <= width < 1288px) {
+  .fam-container > :nth-child(9n) .spec-card {
+    left: calc(118px - 1rem - 16rem);
+  }
+}
 @media (max-width: 767px) {
   .spec-card {
     left: 0;

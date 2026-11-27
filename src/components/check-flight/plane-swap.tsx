@@ -1,3 +1,4 @@
+import { airportCityWithCode, routePairLabel } from "../../utils/airport-names";
 import { Panel } from "../layout";
 import { zonedDeparture } from "../ui/format";
 import { Pill, type Tone } from "../ui/tone";
@@ -28,6 +29,16 @@ function sequence(swap: PlaneSwap): string {
   return `${from} first, then ${rest}`;
 }
 
+/** "This departure", or on a flight of several legs the leg the swap was on:
+ * "The Chicago (ORD) to Denver (DEN) leg". */
+function subject(swap: PlaneSwap): string {
+  const { leg } = swap;
+  if (!leg) return "This departure";
+  return leg.arr
+    ? `The ${routePairLabel(leg.dep, leg.arr)} leg`
+    : `The leg from ${airportCityWithCode(leg.dep)}`;
+}
+
 /** One short note over the answer: the aircraft our log saw change on this departure. */
 export function PlaneSwapNote({ swap }: { swap: PlaneSwap }) {
   const pill = swap.change === "gained" || swap.change === "lost" ? CHANGE_PILL[swap.change] : null;
@@ -39,7 +50,7 @@ export function PlaneSwapNote({ swap }: { swap: PlaneSwap }) {
         {pill && <Pill tone={pill.tone}>{pill.label}</Pill>}
       </p>
       <p className="mt-1 text-secondary text-pretty">
-        {`This departure had ${sequence(swap)}. We first saw ${swap.to} on it ${zonedDeparture(swap.seenAt, swap.zone).full}.`}
+        {`${subject(swap)} had ${sequence(swap)}. We first saw ${swap.to} on it ${zonedDeparture(swap.seenAt, swap.zone).full}.`}
         {same ? ` ${same}` : ""}
       </p>
     </Panel>

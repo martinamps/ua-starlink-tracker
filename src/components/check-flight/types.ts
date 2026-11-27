@@ -156,4 +156,7 @@ export interface PlaneSwap {
   toStarlink: boolean;
   fromStarlink: boolean | null;
   change: SwapStarlinkChange;
+  /** The swapped leg's airports (IATA), set only when the flight flies more
+   * than one leg that day, so the note can say which one changed. */
+  leg?: { dep: string; arr: string | null } | null;
 }
