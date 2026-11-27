@@ -7,6 +7,7 @@
 import { type AnswerContext, type CheckFlightBody, renderFlightAnswer } from "../flight-answer";
 import { wireFlightSearchForms } from "../flight-search";
 import { onReady } from "../ready";
+import { wireShareControls } from "../share";
 
 interface CheckFlightConfig extends Omit<AnswerContext, "zoneFor" | "nowSec"> {
   refresh: boolean;
@@ -48,6 +49,8 @@ function refreshAnswer(config: CheckFlightConfig): void {
 
 function init(): void {
   wireFlightSearchForms();
+  // The dated page is the answer shared, so its title goes to the share sheet.
+  wireShareControls(() => document.title);
   const answer = document.getElementById("flight-answer");
   answer?.addEventListener("click", (e) => {
     const link = (e.target as Element | null)?.closest?.("[data-watch]");

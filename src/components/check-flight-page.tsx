@@ -101,8 +101,18 @@ export function answerContext(
     routePlannerEnabled: site.features.routePlannerPage,
     tailPages: site.features.tailPages,
     host: site.canonicalHost,
+    shareUrl: datedAnswerUrl(site, dated),
     ...(dated.dayLegs?.length ? { dayLegs: dated.dayLegs } : {}),
   };
+}
+
+/** The dated answer's own address: the canonical host and path, the leg kept. */
+function datedAnswerUrl(site: SiteConfig, dated: DatedAnswer): string {
+  const leg = new URLSearchParams();
+  if (dated.leg?.origin) leg.set("origin", dated.leg.origin);
+  if (dated.leg?.destination) leg.set("destination", dated.leg.destination);
+  const path = `/check-flight/${encodeURIComponent(dated.flightNumber)}/${encodeURIComponent(dated.date)}`;
+  return `https://${site.canonicalHost}${path}${leg.size ? `?${leg}` : ""}`;
 }
 
 function InvalidQueryNotice({

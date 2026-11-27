@@ -10,6 +10,7 @@ import {
 } from "../airlines/flight-input";
 import { probLabel } from "../components/ui/format";
 import { esc } from "./esc";
+import { shareControlHtml } from "./share";
 
 /** The viewer's local calendar day; toISOString() is the UTC day, which is
  * already tomorrow for US evenings. */
@@ -131,17 +132,42 @@ export type CheckPages = Record<string, { url: string; site: string }>;
  * The hub answers from stored schedules alone; the airline's own page names
  * the aircraft and re-checks close to departure, so a hub answer hands off to it.
  */
+function checkPageHref(d: CheckAnyBody, pages: CheckPages, raw: string, date: string) {
+  const page = d.airline ? pages[d.airline] : undefined;
+  const fn = canonicalFlightInput(raw);
+  if (!page || d.error || !/^[A-Z0-9]+$/.test(fn)) return null;
+  return {
+    fn,
+    site: page.site,
+    href: `${page.url}/${encodeURIComponent(fn)}/${encodeURIComponent(date)}`,
+  };
+}
+
 export function checkPageLink(
   d: CheckAnyBody,
   pages: CheckPages,
   raw: string,
   date: string
 ): string {
-  const page = d.airline ? pages[d.airline] : undefined;
-  const fn = canonicalFlightInput(raw);
-  if (!page || d.error || !/^[A-Z0-9]+$/.test(fn)) return "";
-  const href = `${page.url}/${encodeURIComponent(fn)}/${encodeURIComponent(date)}`;
-  return `<a href="${esc(href)}" class="mt-1 block py-2 text-accent hover:underline">See ${esc(fn)} on ${esc(page.site)} →</a>`;
+  const page = checkPageHref(d, pages, raw, date);
+  if (!page) return "";
+  return `<a href="${esc(page.href)}" class="mt-1 block py-2 text-accent hover:underline">See ${esc(page.fn)} on ${esc(page.site)} →</a>`;
+}
+
+/**
+ * The share control for a hub answer. The hub's answer has no address of its
+ * own, so what is shared is the airline site's page for the same flight and
+ * date: the page the hand-off link above opens. An answer with no such page
+ * gets no control, since the hub's own address would show the reader nothing.
+ */
+export function checkPageShare(
+  d: CheckAnyBody,
+  pages: CheckPages,
+  raw: string,
+  date: string
+): string {
+  const page = /^\d{4}-\d{2}-\d{2}$/.test(date) ? checkPageHref(d, pages, raw, date) : null;
+  return page ? shareControlHtml(page.href) : "";
 }
 
 /** A note for a typed number whose airline code no longer sells flights (an
@@ -231,7 +257,8 @@ function wireCheckAny(form: HTMLFormElement): void {
         out.innerHTML =
           checkAnyHtml(d, community) +
           (d.error ? shapeHint(typed, example) : numberNoteHtml(notes, typed)) +
-          checkPageLink(d, pages, typed, params.get("date") ?? "");
+          checkPageLink(d, pages, typed, params.get("date") ?? "") +
+          checkPageShare(d, pages, typed, params.get("date") ?? "");
       })
       .catch(() => {
         out.textContent = "Couldn't get an answer. Check your connection and try again.";
