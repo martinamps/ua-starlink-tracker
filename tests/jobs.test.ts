@@ -40,6 +40,7 @@ import type { FleetStats } from "../src/types";
 import {
   type JobClock,
   type JobStampStore,
+  STAMP_SKEW_TOLERANCE_MS,
   bootDelayMs,
   createOutageBreaker,
   startJob,
@@ -933,8 +934,9 @@ describe("fleet-sync boot delay", () => {
     expect(delay).toBe(21 * HOUR);
   });
 
-  test("an overdue, missing or garbled stamp runs 5 min after boot", () => {
-    for (const stamp of [new Date(NOW - 30 * HOUR).toISOString(), null, "not-a-date"]) {
+  test("an overdue, missing, garbled or future stamp runs 5 min after boot", () => {
+    const future = new Date(NOW + 10 * 24 * HOUR).toISOString();
+    for (const stamp of [new Date(NOW - 30 * HOUR).toISOString(), null, "not-a-date", future]) {
       expect(fleetSyncInitialDelayMs(stamp, NOW)).toBe(5 * 60_000);
     }
   });
@@ -1070,10 +1072,42 @@ describe("restarts don't re-run jobs that aren't due", () => {
     expect(runs).toEqual([1]);
   });
 
-  test("bootDelayMs caps a future stamp at one interval", () => {
-    expect(bootDelayMs(1000, 10_000_000, HOUR, 0)).toBe(HOUR);
+  test("bootDelayMs: a future stamp counts as none, a few seconds of skew as now", () => {
+    expect(bootDelayMs(1000, 10_000_000, HOUR, 0)).toBe(1000);
+    expect(bootDelayMs(1000, STAMP_SKEW_TOLERANCE_MS + 1, HOUR, 0)).toBe(1000);
+    expect(bootDelayMs(1000, 5_000, HOUR, 0)).toBe(HOUR);
+    expect(bootDelayMs(1000, STAMP_SKEW_TOLERANCE_MS, HOUR, 0)).toBe(HOUR);
     expect(bootDelayMs(1000, null, HOUR, 0)).toBe(1000);
+    expect(bootDelayMs(1000, Number.NaN, HOUR, 0)).toBe(1000);
     expect(bootDelayMs(1000, 0, HOUR, HOUR / 2)).toBe(HOUR / 2);
+  });
+
+  test("a stamp from a clock that ran ahead never holds the job back across restarts", async () => {
+    const stamps = memoryStamps();
+    // Written while the clock ran 50 min fast; restarts every 30 min would
+    // each have waited out a fresh interval from it.
+    stamps.write("t_restarts", Date.parse("2026-11-26T18:53:00Z") + 50 * 60_000);
+    const runs = await runsAcrossRestarts({
+      intervalMs: HOUR,
+      initialDelayMs: 45_000,
+      restartsMin: [0, 30, 60, 90],
+      endMin: 150,
+      stamps,
+    });
+    expect(runs).toEqual([1, 61, 121]);
+  });
+
+  test("a stamp a few seconds ahead from clock skew counts as a run just started", async () => {
+    const stamps = memoryStamps();
+    stamps.write("t_restarts", Date.parse("2026-11-26T18:53:00Z") + 5_000);
+    const runs = await runsAcrossRestarts({
+      intervalMs: HOUR,
+      initialDelayMs: 45_000,
+      restartsMin: [0],
+      endMin: 70,
+      stamps,
+    });
+    expect(runs).toEqual([60]);
   });
 
   test("a stamp read that throws still schedules the boot run", async () => {
