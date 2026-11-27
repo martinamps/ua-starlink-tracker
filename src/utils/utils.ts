@@ -396,10 +396,6 @@ export async function fetchAllSheets(
   const totalAircraftCount = expressTotal + mainlineTotal;
   const totalStarlinkCount = expressStarlink + mainlineStarlink;
 
-  // Cache update happens in sheet-scrape AFTER updateDatabase accepts the
-  // roster, so cache and DB share one refusal decision — a partial parse
-  // (one sheet interstitial) must not desync /api/fleet-discovery either.
-
   return {
     totalAircraftCount,
     starlinkAircraft,
