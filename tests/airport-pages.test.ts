@@ -15,6 +15,7 @@ import {
   AIRPORT_INDEX_MIN_DEPARTURES,
   airportDek,
   buildAirportBoard,
+  firstIndexedAirports,
   indexableAirports,
 } from "../src/api/airport-board";
 import {
@@ -25,7 +26,7 @@ import {
 import { logFlightAssignments } from "../src/database/assignment-log";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp, parseAirportPath } from "../src/server/app";
-import { airportLocalDate } from "../src/utils/airport-tz";
+import { airportLocalDate, secondsToFirstLocalMidnight } from "../src/utils/airport-tz";
 import { addFlight, addPlane, makeFreshDb, req } from "./helpers";
 
 const UA = SITES.united.canonicalHost;
@@ -320,6 +321,17 @@ describe("sitemap rule", () => {
     expect(body.match(/"dateModified":"([^"]+)"/)?.[1]).toBe(lastmod);
   });
 
+  // The cached copy must not outlive the first airport's midnight, or its
+  // lastmod says yesterday while the page says today.
+  test("the sitemap is cached no longer than an hour or the next airport midnight", async () => {
+    const before = Math.floor(Date.now() / 1000);
+    const res = await app.dispatch(req("/sitemap.xml", UA));
+    const maxAge = Number(res.headers.get("cache-control")?.match(/max-age=(\d+)/)?.[1]);
+    expect(Number.isInteger(maxAge)).toBe(true);
+    expect(maxAge).toBeLessThanOrEqual(3600);
+    expect(maxAge).toBeLessThanOrEqual(secondsToFirstLocalMidnight(["DEN"], before) ?? 3600);
+  });
+
   test("llms.txt names an airport page the sitemap lists", async () => {
     const txt = await (await app.dispatch(req("/llms.txt", UA))).text();
     const linked = txt.match(new RegExp(`https://${UA}/routes/([A-Z]{3})`))?.[1];
@@ -354,6 +366,39 @@ describe("links into the family", () => {
     expect(body).toContain('href="/routes/DEN"');
     expect(visibleText(body).replace(/\s+/g, " ")).toContain("Starlink flights from Denver (DEN)");
     expect((await get("/routes/DEN")).status).toBe(200);
+  });
+
+  // A link from an indexed flight page to a noindex airport page passes
+  // nothing, so flight pages link only airports the sitemap lists.
+  test("a flight page does not link a thin airport's noindex page", async () => {
+    expect((await get("/routes/GJT")).status).toBe(200);
+    const body = await page("/check-flight/UA400");
+    expect(body).toContain("UA400");
+    expect(body).not.toContain('href="/routes/GJT"');
+  });
+
+  test("the airport links stop checking once they have enough", () => {
+    const reader = createReaderFactory(db)("UA");
+    let looked = 0;
+    const checked: string[] = [];
+    const counting = {
+      ...reader,
+      getAirportHistory: () => {
+        looked++;
+        return reader.getAirportHistory();
+      },
+      airportHasData: (a: string) => {
+        checked.push(a);
+        return reader.airportHasData(a);
+      },
+    };
+    expect(firstIndexedAirports(counting, ["DEN", "GJT", "ORD"], 1)).toEqual(["DEN"]);
+    expect(looked).toBe(1);
+    // Only an airport past the index bar reaches the data query.
+    looked = 0;
+    expect(firstIndexedAirports(counting, ["GJT", "DEN", "DEN", "ORD"], 3)).toEqual(["DEN"]);
+    expect(looked).toBe(3);
+    expect(checked).toEqual(["DEN", "DEN"]);
   });
 
   test("an airport page names its place in a breadcrumb trail, indexed or not", async () => {

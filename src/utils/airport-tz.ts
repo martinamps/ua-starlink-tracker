@@ -660,6 +660,32 @@ export function airportLocalDate(iata: string, unixSec: number): string | null {
   return tz ? localDateISO(unixSec, tz) : null;
 }
 
+/**
+ * Seconds from `nowSec` until the first of these airports' local dates turns
+ * over, or null when none is mapped. Airports sharing a zone are timed once.
+ * Each zone is bisected on its local date, so a 23- or 25-hour DST day comes
+ * out exact: no calendar day runs past 26 hours.
+ */
+export function secondsToFirstLocalMidnight(
+  airports: readonly string[],
+  nowSec: number
+): number | null {
+  const zones = new Set(airports.map(airportTimezone).filter((z): z is string => Boolean(z)));
+  let first: number | null = null;
+  for (const tz of zones) {
+    const today = localDateISO(nowSec, tz);
+    let lo = nowSec;
+    let hi = nowSec + 26 * 3600;
+    while (hi - lo > 1) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (localDateISO(mid, tz) === today) lo = mid;
+      else hi = mid;
+    }
+    if (first === null || hi - nowSec < first) first = hi - nowSec;
+  }
+  return first;
+}
+
 export interface FlightDateWindow {
   /** Strict UTC bounds of the calendar date — kept for FR24 fallback + days_out math. */
   start: number;

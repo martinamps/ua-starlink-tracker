@@ -18,6 +18,9 @@ export const CACHE = {
   year: "public, max-age=31536000, immutable",
 } as const;
 
+/** A public cache shorter than CACHE.hour, for a body that goes stale at a known second. */
+export const maxAge = (sec: number) => `public, max-age=${Math.max(0, Math.floor(sec))}`;
+
 export interface ResponseOptions {
   status?: number;
   cache?: string;

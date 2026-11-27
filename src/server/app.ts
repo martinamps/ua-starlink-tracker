@@ -292,6 +292,7 @@ import {
   airportTimezone,
   flightDateWindow,
   isRealIsoDate,
+  secondsToFirstLocalMidnight,
 } from "../utils/airport-tz";
 import {
   API_CORS_HEADERS,
@@ -312,6 +313,7 @@ import {
   html,
   json,
   jsonError,
+  maxAge,
   methodNotAllowed,
   redirect,
   text,
@@ -358,6 +360,7 @@ import {
   airportQuestion,
   airportTitle,
   buildAirportBoard,
+  firstIndexedAirports,
   indexableAirports,
 } from "../api/airport-board";
 import { buildAirportRanking } from "../api/airport-ranking";
@@ -2228,15 +2231,17 @@ const sitemap: Handler = (ctx) => {
   // answer from that airport's midnight: the local date is its lastmod. A
   // finer stamp would move with every departure and teach crawlers to ignore it.
   const nowSec = unixNow();
-  const airportEntries =
-    site.features.airportPages && tenantConfig(tenant)
-      ? indexableAirports(reader).map((airport) => ({
-          path: `/routes/${airport}`,
-          changefreq: "daily",
-          priority: "0.6",
-          lastmod: airportLocalDate(airport, nowSec) ?? undefined,
-        }))
-      : [];
+  const airports =
+    site.features.airportPages && tenantConfig(tenant) ? indexableAirports(reader) : [];
+  const airportEntries = airports.map((airport) => ({
+    path: `/routes/${airport}`,
+    changefreq: "daily",
+    priority: "0.6",
+    lastmod: airportLocalDate(airport, nowSec) ?? undefined,
+  }));
+  // Those dates turn at each airport's midnight, so no cached copy outlives
+  // the first one: otherwise a lastmod could say yesterday for up to an hour.
+  const untilDateTurns = secondsToFirstLocalMidnight(airports, nowSec);
   // A tail's lastmod is the day it joined our list, the one change that turns
   // its answer; flights move hourly and are no reason to recrawl.
   const tailEntries =
@@ -2312,7 +2317,9 @@ ${entry.lastmod ? `    <lastmod>${entry.lastmod}</lastmod>\n` : ""}    <changefr
   )
   .join("\n")}
 </urlset>`;
-  return xml(body, { cache: CACHE.hour });
+  return xml(body, {
+    cache: untilDateTurns !== null && untilDateTurns < 3600 ? maxAge(untilDateTurns) : CACHE.hour,
+  });
 };
 
 const markdownResponse = (body: string) =>
@@ -3524,12 +3531,14 @@ function buildFlightFacts(
   };
 }
 
-/** The flight's departure airports with a page, current legs first, at most three. */
+/** The flight's departure airports whose page indexes, current legs first, at most three. */
 function flightAirportLinks(ctx: RequestContext, routes: FlightFacts["routes"]): string[] {
   if (!ctx.site.features.airportPages) return [];
-  return [...new Set(routes.map((r) => r.departure_airport))]
-    .filter((a) => ctx.reader.airportHasData(a))
-    .slice(0, 3);
+  return firstIndexedAirports(
+    ctx.reader,
+    routes.map((r) => r.departure_airport),
+    3
+  );
 }
 
 /** The model's number for the permalink, so the page and the APIs quote one
