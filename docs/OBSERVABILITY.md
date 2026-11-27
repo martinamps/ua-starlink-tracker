@@ -77,7 +77,7 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 | `starlink.verification.mismatch` | - | Spreadsheet/United.com WiFi mismatch |
 | `starlink.vendor.request` | `vendor:flightaware\|fr24\|united`, `type:flights\|fleet\|verification`, `status:success\|rate_limited\|error` | External API call. A live aircraft lookup refused by the request-path guard is `vendor:fr24 type:assignments status:shed`, with `reason:breaker\|bucket\|queue\|budget` and `caller:page\|api\|extension\|mcp\|other`. `reason:budget` is a caller past its own share of lookups (`src/api/lookup-budget.ts`: a few in hand at once, a burst, then six a minute, kept per limiter bucket and address, in memory only); it got the estimate without asking for a queue place, so it cost nobody else a lookup. The other three reasons are the guards everyone shares. `caller`: `page` is a browser on our own pages, `api` any other request with a browser's agent (the API opened directly, another site's page, a script dressed as a browser), `extension` our own store build, `mcp` a tool call on `/mcp`, `other` the rest (named tools and crawlers, bare scripts, copycat extensions). A script can forge `page` and `extension`. Requests that joined a lookup already under way are not counted, so `caller` names who asked for the refused slot. An MCP `check_flight` asks twice for one flight (the verdict, then the route's legs), so a refused one can count twice |
 | `starlink.vendor.request` (`vendor:indexnow`) | `type:ping`, `airline` (the airline whose list changed), `status:success\|rate_limited\|timeout\|error\|shed` | One IndexNow submission: the few pages that changed when a tail joined a list (or a United tail's status flipped), posted for one live site. `success` is a 200 or 202; `rate_limited` a 429, after which that site stays quiet for the time the engine asked; `timeout` no answer in 10 s; `error` any other answer (403 = key file not found or not matching, 422 = an address that is not the host's) or a network failure. After a `timeout` or `error` the site stays quiet for 10 minutes, doubling with each failure in a row up to 6 hours. `shed` refused by our own guard: the site's 40-addresses-a-day cap (a new tail's announcement goes whole or waits, so it is also shed when only part would fit), or a pause still running. A new tail whose announcement was not a `success` waits in `meta` (`indexnowWaiting`, at most 50 tails an airline, 7 days) and is tried again each 5-minute pass, so a steady run of `shed` with no `success` is a tail waiting; each retry that is sent is counted like any other submission. A hub submission carries the same `airline`. Nothing is counted when no page was due. The key file's fetches are in `http.request` as `route:unmatched status_code:200` |
-| `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class`, `ext_version` (extension only), `visit_source` | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
+| `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class`, `ext_version` (extension only), `visit_source`, `market` | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
 | `starlink.http.bad_host` | `method`, `airline:unknown` | A request whose Host header is not a host (`a/b`, `x.com:abc`, empty) was answered 400. It has no tenant or route, so it is not in `http.request`. Cloudflare and the proxy refuse most of these first; a rise means something reaches the origin around them |
 | `starlink.http.rate_limited` | `route`, `tenant`, `airline`, `bucket:api\|ext\|mcp\|page`, `client_class`, `ext_version` (extension only) | Per-IP limiter returned a 429 (also counted in `http.request` as `status_code:429`). `/api/*` calls classified `client_class:extension` use the `ext` bucket (`EXTENSION_RATE_LIMIT`, 300/min); every other bucket allows `API_RATE_LIMIT` (100/min) |
 | `starlink.http.rate_limit_exempt` | the `http.rate_limited` tags plus `crawler:googlebot\|bingbot` | Over the `page` limit but served: the UA claims Googlebot/Bingbot and the IP's reverse DNS (forward-confirmed) is in the engine's domain. Cached per IP |
@@ -136,6 +136,39 @@ that isn't a page needs its own `NOT route:` here.
 
 ```
 sum:starlink.http.request{client_class:browser AND method:get AND status_code:200 AND NOT route:unmatched AND NOT route:/api* AND NOT route:/static AND NOT route:/feed.xml AND NOT route:/robots.txt AND NOT route:/sitemap.xml AND NOT route:/llms.txt AND NOT route:/badge.svg AND NOT route:/data/starlink-tails.csv AND NOT route:/cal AND NOT route:/embed AND NOT route:/.well-known/mcp-registry-auth AND NOT visit_source:own} by {visit_source,tenant}.as_count().rollup(sum, 604800)
+```
+
+### Market (`http.request` only)
+
+`market` says whether a request came from the site's home market, as one of
+three words (`classifyMarket` in `src/observability/metrics.ts`):
+
+| Value | Rule |
+|---|---|
+| `home` | Came through Cloudflare, and Cloudflare's `cf-ipcountry` is one of the site's home countries |
+| `abroad` | Came through Cloudflare, with any other country |
+| `unknown` | Didn't come through Cloudflare, or no country, Cloudflare's `XX` (unknown) or `T1` (Tor), or anything that isn't two capital letters |
+
+A site's home countries are its airline's aircraft register
+(`registerCountries` in `src/airlines/registry.ts`, read by
+`homeMarketCountries`): United, Alaska and Hawaiian are `US`, Qatar `QA`. The
+hub's are every enabled airline's together (US, QA, FR, IE, GB, SE, NO, DK).
+
+"Came through Cloudflare" is read from the one hop a caller can't choose: the
+address that handed the request to our proxy, which the proxy writes as the
+last `x-forwarded-for` entry, must be in Cloudflare's published ranges
+(`cameThroughCloudflare` in `src/server/client-ip.ts`). A request sent straight
+to the origin can write `cf-ipcountry: US`; it is `unknown`. If Cloudflare's
+IP Geolocation setting is off, every request is `unknown`.
+
+**Budget: 3 values, closed.** Only the word is emitted: the country is read
+inside `classifyMarket` and goes to no metric, span or log.
+
+Weekly page arrivals from browsers, per site, home against abroad (proxy pools
+of one-page foreign addresses show up as `abroad`):
+
+```
+sum:starlink.http.request{client_class:browser AND method:get AND status_code:200 AND NOT route:unmatched AND NOT route:/api* AND NOT route:/static AND NOT route:/feed.xml AND NOT route:/robots.txt AND NOT route:/sitemap.xml AND NOT route:/llms.txt AND NOT route:/badge.svg AND NOT route:/data/starlink-tails.csv AND NOT route:/cal AND NOT route:/embed AND NOT route:/.well-known/mcp-registry-auth AND NOT visit_source:own} by {tenant,market}.as_count().rollup(sum, 604800)
 ```
 
 ### Rate-limit log
