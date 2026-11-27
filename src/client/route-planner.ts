@@ -14,16 +14,16 @@ import { HINT_ERROR, HINT_PLAIN } from "./hint-classes";
 import { renderRouteFlights } from "./route-flights";
 
 interface Leg {
-  route: string;
-  flight_number: string;
-  probability: number;
-  confidence: string;
-  n_observations: number;
   /** Usual local times at each end ("8:15 AM"), when on record. */
   typical_departure?: string;
   typical_arrival?: string;
   /** Origin-local date the leg flies, on a dated search. */
   date?: string;
+  route: string;
+  flight_number: string;
+  probability: number;
+  confidence: string;
+  n_observations: number;
 }
 
 interface Itinerary {
