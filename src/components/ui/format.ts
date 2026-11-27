@@ -134,6 +134,19 @@ export function monthDay(input: DateInput, nowSec?: number): string {
   }).format(d);
 }
 
+/** "Saturday" for a YYYY-MM-DD calendar day. */
+export function weekdayName(input: DateInput): string {
+  const d = toDate(input);
+  if (!d) return String(input);
+  return formatter("UTC", { weekday: "long" }).format(d);
+}
+
+/** "seen on 1 day only" / "seen on 2 days only": a time short of usual, in the planner's words. */
+export function seenOnDays(days: number | undefined): string {
+  const n = days ?? 0;
+  return `seen on ${fmt(n)} day${n === 1 ? "" : "s"} only`;
+}
+
 const SHORT_DATE = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2})(?:, (\d{4}))?\b/g;
 
 /**

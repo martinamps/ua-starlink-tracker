@@ -268,8 +268,10 @@ import {
   carrierRouteAnswer,
   compareRoute,
   describeCarrierPrediction,
+  emptyPlanMessage,
   joinSentences,
   planItinerary,
+  planRoute,
   predictFlight,
   routeBaseline,
   storedUnreadAircraft,
@@ -1680,7 +1682,12 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   // Additive: the nonstop every connection is measured against (null when the
   // pair's duration is unknowable, i.e. an airport outside the coordinate table).
   const baseline = routeBaseline(reader, from, to);
-  return json({ origin, destination, itineraries, baseline });
+  if (itineraries.length > 0) return json({ origin, destination, itineraries, baseline });
+  // Additive: why nothing is offered. Re-planned only on the rare empty answer
+  // so the itinerary call above stays as it is.
+  const { empty } = planRoute(reader, from, to, { maxItineraries: 12, maxStops, targetDateUnix });
+  const message = empty ? emptyPlanMessage(empty, to) : undefined;
+  return json({ origin, destination, itineraries, baseline, ...(message ? { message } : {}) });
 };
 
 function recordRouteFlightsView(

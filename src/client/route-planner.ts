@@ -6,7 +6,14 @@
  * without data, so a reload would lose the search.
  */
 import type { RouteFlightBoard } from "../api/route-flights";
-import { formatDuration, monthDay, probLabel, probTier } from "../components/ui/format";
+import {
+  formatDuration,
+  monthDay,
+  probLabel,
+  probTier,
+  seenOnDays,
+  weekdayName,
+} from "../components/ui/format";
 import { orList, placeCodeAirports } from "../utils/airport-aliases";
 import type { AirportBox, attachAirportBox } from "./airport-picker";
 import { esc } from "./esc";
@@ -19,6 +26,11 @@ interface Leg {
   typical_arrival?: string;
   /** Origin-local date the leg flies, on a dated search. */
   date?: string;
+  /** "usual" once seen on 3 days; else the times are one or two sightings. */
+  time_basis?: "usual" | "next" | "last_seen";
+  days_seen?: number;
+  /** False when the flight was logged, but never on `date`'s weekday. */
+  runs_on_date?: boolean;
   route: string;
   flight_number: string;
   probability: number;
@@ -100,12 +112,21 @@ function renderLeg(leg: Leg): string {
 
 const TIMING_ROW = "text-xs text-muted pl-3 ml-1";
 
-/** The leg's usual times, dated when it flies on another day than the trip starts. */
+/**
+ * The leg's times, dated when it flies on another day than the trip starts.
+ * "Usually" only for a time seen on several days, as the route board says it;
+ * a flight never seen on the leg's weekday says that too.
+ */
 function legTimes(leg: Leg, tripDate: string | undefined): string {
   if (!leg.typical_departure) return "";
   const day = leg.date && leg.date !== tripDate ? ` · ${esc(monthDay(leg.date))}` : "";
   const lands = leg.typical_arrival ? `, lands ${esc(leg.typical_arrival)}` : "";
-  return `<div class="${TIMING_ROW}">Usually leaves ${esc(leg.typical_departure)}${lands}${day}</div>`;
+  const thin = leg.time_basis !== undefined && leg.time_basis !== "usual";
+  const seen = thin ? ` · ${seenOnDays(leg.days_seen)}` : "";
+  // runs_on_date is only sent beside the leg's date.
+  const off =
+    leg.runs_on_date === false ? ` · not seen on ${weekdayName(leg.date as string)}s` : "";
+  return `<div class="${TIMING_ROW}">${thin ? "L" : "Usually l"}eaves ${esc(leg.typical_departure)}${lands}${day}${seen}${off}</div>`;
 }
 
 /**
@@ -125,7 +146,7 @@ function connectionRow(it: Itinerary, i: number): string {
 }
 
 function legRows(it: Itinerary): string {
-  const tripDate = it.legs[0]?.date;
+  const tripDate = it.legs.find((l) => l.date)?.date;
   return it.legs
     .map((leg, i) => `${connectionRow(it, i)}${renderLeg(leg)}${legTimes(leg, tripDate)}`)
     .join("");
@@ -199,7 +220,8 @@ function renderResults(out: HTMLElement, data: PlanBody, boardHasRows: boolean):
   const itins = data.itineraries ?? [];
   if (itins.length === 0) {
     if (boardHasRows) {
-      out.innerHTML = "";
+      // The board answers the nonstop; say why no connection is offered beside it.
+      out.innerHTML = data.message ? `<p class="text-sm text-muted">${esc(data.message)}</p>` : "";
       return;
     }
     // A sparse nonstop's budget yields to the fastest connection, so an empty

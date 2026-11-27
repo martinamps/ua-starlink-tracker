@@ -90,6 +90,7 @@ import {
   type RouteFlightNumbers,
   type RouteFlightRow,
   type RouteGraphEdge,
+  type RouteGraphSighting,
   type RouteSummary,
   type SitemapFlight,
   type SitemapRoute,
@@ -149,6 +150,7 @@ import {
   getRouteFlightNumbers,
   getRouteFlights,
   getRouteGraphEdges,
+  getRouteGraphSightings,
   getRouteNetworkRows,
   getRouteStarlinkSchedule,
   getRouteSummary,
@@ -314,6 +316,7 @@ export interface ScopedReader {
   getAdsbFlightDrawsFor(flightNumber: string, sinceTs: number): AdsbFlightDraw[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
+  getRouteGraphSightings(): RouteGraphSighting[];
   /** Every ORIG-DEST the carrier flies; null when no route census exists for the scope. */
   getServedRoutePairs(): ReadonlySet<string> | null;
   getConfirmedStarlinkEdges(queryStart: number, queryEnd: number): ConfirmedEdge[];
@@ -648,6 +651,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       scope === "UA" ? getAdsbFlightDrawsFor(db, fn, since) : [],
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
+    getRouteGraphSightings: () => getRouteGraphSightings(db, airlines),
     getServedRoutePairs: () => getServedRoutePairs(db, airlines),
     getConfirmedStarlinkEdges: (s, e) => getConfirmedStarlinkEdges(db, s, e, airlines),
     airlineServesAirports: (px, ...aps) => airlineServesAirports(db, soleAirline(), px, ...aps),

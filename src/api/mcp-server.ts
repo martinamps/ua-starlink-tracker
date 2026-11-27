@@ -57,6 +57,7 @@ import {
   airlineOwnTypeSum,
 } from "../airlines/rollout-facts";
 import { retiredCodeNote, untrackedAirlineInfo } from "../airlines/untracked-airline";
+import { seenOnDays, weekdayName } from "../components/ui/format";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
 import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/windows";
@@ -77,11 +78,13 @@ import {
   carrierRouteAnswer,
   compareRoute,
   describeCarrierPrediction,
+  emptyPlanMessage,
   itineraryHourBudget,
   joinSentences,
   namesScheduledAircraft,
   noModelConfidence,
   planItinerary,
+  planRoute,
   predictFlight,
   predictRoute,
   routeBaseline,
@@ -1849,7 +1852,7 @@ function toolPlanStarlinkItinerary(
     return formatCarrierRoute(cfg, reader, origin.toUpperCase(), destination.toUpperCase());
   }
 
-  const itineraries = planItinerary(reader, origin, destination, {
+  const { itineraries, empty } = planRoute(reader, origin, destination, {
     maxItineraries: maxResults,
     maxStops,
     targetDateUnix,
@@ -1901,8 +1904,9 @@ function toolPlanStarlinkItinerary(
       : hasNonstop
         ? "otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes"
         : "otherwise advise the fastest United connection — there is no nonstop to fall back on";
+    const why = empty ? `\n\n${emptyPlanMessage(empty, dest)}` : "";
     return textResult(
-      `${headline}${baselineLine ? `\n\n${baselineLine}` : ""}\n\nNo reasonable path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — near-term assignments to Starlink aircraft may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) ${lastResort}.`
+      `${headline}${baselineLine ? `\n\n${baselineLine}` : ""}${why}\n\nNo reasonable path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — near-term assignments to Starlink aircraft may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) ${lastResort}.`
     );
   }
 
@@ -1928,9 +1932,16 @@ function toolPlanStarlinkItinerary(
       ? "(assigned to a Starlink-equipped tail)"
       : confidenceTag(leg.n_observations, leg.confidence);
     const day = leg.date && dateStr && leg.date !== dateStr ? ` on ${leg.date}` : "";
-    const when = leg.typical_departure
-      ? `, usually ${leg.typical_departure}${leg.typical_arrival ? `–${leg.typical_arrival}` : ""}${day}`
-      : "";
+    const times = `${leg.typical_departure}${leg.typical_arrival ? `–${leg.typical_arrival}` : ""}${day}`;
+    const offDay =
+      leg.runs_on_date === false && leg.date
+        ? `; not seen flying on a ${weekdayName(leg.date)}, check it runs`
+        : "";
+    const when = !leg.typical_departure
+      ? ""
+      : leg.time_basis === undefined || leg.time_basis === "usual"
+        ? `, usually ${times}${offDay}`
+        : `, ${times} (${seenOnDays(leg.days_seen)}, not yet a usual time${offDay})`;
     return `${leg.flight_number}${fleetTag} (${leg.route}${dur}${when}) — ${pct}% ${tag}`;
   };
 
@@ -1997,12 +2008,15 @@ ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")
   // whose time isn't on record, or an any-flight positioning leg, is unchecked.
   const multiLeg = itineraries.filter((it) => it.legs.length > 1);
   const unchecked = multiLeg.filter((it) => it.schedule !== "same_day").length;
+  const thinTimes = multiLeg.some((it) =>
+    it.legs.some((l) => l.time_basis !== undefined && l.time_basis !== "usual")
+  );
   const timingNote =
     multiLeg.length === 0
       ? ""
       : unchecked === 0
-        ? `\n\nEach connection leaves at least an hour after the previous leg usually lands, by usual departure times — confirm the day's schedule on ${cfg.verifySite} before booking.`
-        : `\n\n⚠️ ${unchecked === multiLeg.length ? "Connection" : `${unchecked} of ${multiLeg.length} connections'`} timing NOT validated (a leg's time isn't on record, or it's an any-flight leg) — verify those legs connect same-day on ${cfg.verifySite}. The others leave at least an hour after the previous leg usually lands.`;
+        ? `\n\nEach connection leaves at least an hour after the previous leg lands, by ${thinTimes ? "the times on record (some seen on only one or two days)" : "usual departure times"} — confirm the day's schedule on ${cfg.verifySite} before booking.`
+        : `\n\n⚠️ ${unchecked === multiLeg.length ? "Connection" : `${unchecked} of ${multiLeg.length} connections'`} timing NOT validated (a leg's time isn't on record, or it's an any-flight leg) — verify those legs connect same-day on ${cfg.verifySite}. The others leave at least an hour after the previous leg lands${thinTimes ? ", by the times on record (some seen on only one or two days)" : ""}.`;
 
   const hasDirect = itineraries.some((it) => it.via.length === 0);
   const baselineSection = baselineLine && !hasDirect ? `${baselineLine}\n\n` : "";
@@ -2011,7 +2025,7 @@ ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")
 
 ${baselineSection}${sections.join("\n\n---\n\n")}${timingNote}
 
-**Ranking**: by coverage ratio (expected Starlink hours / total hours), with a small penalty per stop. Connections are limited to ${ENFORCE_ITINERARY_TIME_BUDGET ? "a modest time premium over the nonstop (real layovers counted where times are known, else 1h per layover)" : "the geographic detour bound"}. "~1.8h Starlink / ~7h flying (26%)" = 26% of flight time expected on Starlink.`;
+**Ranking**: by coverage ratio (expected Starlink hours / total hours), with a small penalty per stop. Connections are limited to ${ENFORCE_ITINERARY_TIME_BUDGET ? "a modest time premium over the nonstop (1h per layover on top of flying time, and where times are known, real waits no more than 2h a stop past that)" : "the geographic detour bound"}. "~1.8h Starlink / ~7h flying (26%)" = 26% of flight time expected on Starlink.`;
 
   return textResult(text);
 }
