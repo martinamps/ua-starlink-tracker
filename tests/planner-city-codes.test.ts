@@ -318,7 +318,7 @@ describe("a K or P spelling of an airport the names table lacks", () => {
     expect(resolveAirport("kord")).toMatchObject({ kind: "code", code: "KORD" });
     expect(resolveAirport("pari").kind).toBe("choose");
     // Other four letters that match nothing stay no code at all.
-    for (const typed of ["roma", "cork", "oahu", "zzzz", "QQQQ"]) {
+    for (const typed of ["roma", "bern", "oahu", "zzzz", "QQQQ"]) {
       expect(resolveAirport(typed), typed).toEqual({ kind: "none" });
     }
   });

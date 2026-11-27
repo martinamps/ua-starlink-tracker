@@ -20,6 +20,9 @@
  * hand: ANU's municipality is the parish (Osbourn), so it takes the island's
  * name as AUA does, and MDH lies between the two towns it serves (the
  * register's municipality is Murphysboro, its keyword Carbondale).
+ * Seven more, named by the gauge the day it went live, were added the same
+ * way (DVO, GYD, LUN, MUX, NCL, ORK, TFU), each checked against a second
+ * register. Chengdu has two airports, so TFU says which.
  * A wrong city is worse than a bare code: a code that is not here prints as
  * its code alone, so add one only after checking it.
  */
@@ -199,6 +202,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   DUB: ["Dublin"],
   DUR: ["Durban"],
   DUS: ["Düsseldorf"],
+  DVO: ["Davao"],
   DVL: ["Devils Lake"],
   DXB: ["Dubai"],
   EAR: ["Kearney"],
@@ -256,6 +260,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   GUC: ["Gunnison"],
   GUM: ["Guam"],
   GVA: ["Geneva"],
+  GYD: ["Baku"],
   HAJ: ["Hannover"],
   HAM: ["Hamburg"],
   HAN: ["Hanoi"],
@@ -352,6 +357,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   LRD: ["Laredo"],
   LRH: ["La Rochelle"],
   LTO: ["Loreto"],
+  LUN: ["Lusaka"],
   LUX: ["Luxembourg"],
   LYH: ["Lynchburg"],
   LYS: ["Lyon"],
@@ -407,6 +413,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   MTJ: ["Montrose"],
   MTY: ["Monterrey, Mexico"],
   MUC: ["Munich"],
+  MUX: ["Multan"],
   MVD: ["Montevideo"],
   MXP: ["Milan", "Malpensa"],
   MYR: ["Myrtle Beach"],
@@ -416,6 +423,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   NBJ: ["Luanda"],
   NBO: ["Nairobi"],
   NCE: ["Nice"],
+  NCL: ["Newcastle upon Tyne"],
   NDJ: ["N'Djamena"],
   NGO: ["Nagoya"],
   NIM: ["Niamey"],
@@ -436,6 +444,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   OPO: ["Porto"],
   ORD: ["Chicago", "O'Hare"],
   ORF: ["Norfolk"],
+  ORK: ["Cork"],
   ORN: ["Oran"],
   ORY: ["Paris", "Orly"],
   OSL: ["Oslo"],
@@ -574,6 +583,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   TAM: ["Tampico"],
   TBS: ["Tbilisi"],
   TEV: ["Teruel"],
+  TFU: ["Chengdu", "Tianfu"],
   TGZ: ["Tuxtla Gutiérrez"],
   TIA: ["Tirana"],
   TKK: ["Chuuk"],
