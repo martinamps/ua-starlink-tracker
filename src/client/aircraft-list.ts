@@ -1,7 +1,7 @@
 /**
  * The homepage aircraft list (components/home/aircraft-list.tsx): search and
- * subfleet filters over the rendered rows, mirrored into ?q= and ?filter=;
- * "+N" pill expansion; and flight-number tooltips on hover devices.
+ * subfleet filters over the rendered rows, mirrored into ?q= and ?filter=,
+ * and "+N" pill expansion.
  */
 
 export const FILTER_BUTTON =
@@ -125,59 +125,7 @@ function wireExpand(): void {
   });
 }
 
-/** Flight-number tooltips: on hover where there is hover (not touch), and on
- * keyboard focus everywhere, so a sighted keyboard user sees the number too. */
-function wireTooltips(): void {
-  let tip: HTMLDivElement | null = null;
-  let current: Element | null = null;
-  const remove = () => {
-    tip?.remove();
-    tip = null;
-  };
-  const pillOf = (target: EventTarget | null) =>
-    (target as Element | null)?.closest?.("[data-flight-tooltip]") as HTMLElement | null;
-  const show = (pill: HTMLElement) => {
-    remove();
-    current = pill;
-    const text = pill.dataset.flightTooltip;
-    if (!text) return;
-    tip = document.createElement("div");
-    tip.textContent = text;
-    tip.style.cssText =
-      "position:fixed;padding:4px 8px;background:var(--color-accent);color:var(--color-base);font-size:11px;font-weight:600;font-family:var(--font-mono);border-radius:4px;pointer-events:none;z-index:9999;white-space:nowrap;box-shadow:0 4px 6px rgba(0,0,0,0.3);";
-    document.body.appendChild(tip);
-    const rect = pill.getBoundingClientRect();
-    tip.style.left = `${rect.left + rect.width / 2 - tip.offsetWidth / 2}px`;
-    tip.style.top = `${rect.top - tip.offsetHeight - 6}px`;
-  };
-  // A tap focuses a pill too; :focus-visible is the keyboard's focus alone.
-  document.addEventListener("focusin", (e) => {
-    const pill = pillOf(e.target);
-    if (pill?.matches(":focus-visible")) show(pill);
-  });
-  document.addEventListener("focusout", (e) => {
-    if (!pillOf(e.target)) return;
-    remove();
-    current = null;
-  });
-  if (!window.matchMedia("(hover: hover)").matches) return;
-  document.addEventListener("mouseover", (e) => {
-    const pill = pillOf(e.target);
-    if (!pill || pill === current) return;
-    show(pill);
-  });
-  document.addEventListener("mouseout", (e) => {
-    const pill = (e.target as Element | null)?.closest?.("[data-flight-tooltip]");
-    if (!pill) return;
-    const related = e.relatedTarget as Node | null;
-    if (related && pill.contains(related)) return;
-    remove();
-    current = null;
-  });
-}
-
 export function wireAircraftList(): void {
   wireSearch();
   wireExpand();
-  wireTooltips();
 }

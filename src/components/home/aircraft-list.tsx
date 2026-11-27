@@ -6,7 +6,11 @@
 import { Fragment } from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
-import { ensureAirlinePrefix, isFlightZero } from "../../airlines/flight-number";
+import {
+  ensureAirlinePrefix,
+  isFlightZero,
+  marketedRowFlightNumber,
+} from "../../airlines/flight-number";
 import {
   BY_TYPE_METHOD,
   BY_TYPE_TAB_NOTE,
@@ -69,14 +73,29 @@ function permalinker(airline: AirlineConfig | null, airlineByTail: Record<string
   };
 }
 
+/**
+ * The number a row's flight is sold under: UA4757 for OO4757, AS3053 for an
+ * Alaska row's OO3053. The row's airline is settled, so shared operators
+ * (SkyWest flies for both) map too; a callsign with no number (SKW394Y)
+ * stays as stored.
+ */
+function rowMarketingNumber(rowAirline: AirlineConfig | undefined, flightNumber: string): string {
+  return rowAirline
+    ? ensureAirlinePrefix(rowAirline, marketedRowFlightNumber(rowAirline, flightNumber))
+    : flightNumber;
+}
+
 function FlightPills({
   tailNumber,
   flights,
   permalink,
+  rowAirline,
 }: {
   tailNumber: string;
   flights: Flight[];
   permalink: (tail: string, fn: string) => string | null;
+  /** The row's airline, whose marketing number each pill shows. */
+  rowAirline: AirlineConfig | undefined;
 }) {
   if (flights.length === 0) {
     return <span className="text-muted text-xs italic font-mono">No flights scheduled</span>;
@@ -109,9 +128,10 @@ function FlightPills({
         // is the same either way, and deduping would point one flight number at
         // two destinations in one row.
         const href = permalink(tailNumber, flight.flight_number);
-        // The tooltip names the destination: the marketing number the
-        // permalink is filed under rather than the operating callsign.
-        const tooltip = href ? href.slice("/check-flight/".length) : flight.flight_number;
+        // The marketing number a traveller books and searches (UA4757, not the
+        // operating callsign OO4757): the one the permalink is filed under, and
+        // the one the list's search index holds.
+        const number = rowMarketingNumber(rowAirline, flight.flight_number);
         // departure_time is a UTC epoch; the clock is pinned to UTC and named,
         // 24-hour like /check-flight/{fn}, so the two read as one clock. From md
         // up the column header names the zone, so the pill drops it.
@@ -122,13 +142,14 @@ function FlightPills({
             <a
               href={href ?? `https://www.flightaware.com/live/flight/${flight.flight_number}`}
               {...(href ? {} : { target: "_blank", rel: "nofollow noopener noreferrer" as const })}
-              data-flight-tooltip={tooltip}
-              // The visible text is an airport pair and a clock; the label restates
-              // it with the flight number for screen readers (WCAG 2.5.3).
-              aria-label={`Flight ${tooltip}, ${dep} to ${arr}, departs ${clock} UTC`}
+              // The label speaks the visible words as a sentence ("STL to EWR"
+              // rather than an arrow) and keeps every one of them, so speech
+              // input can name the pill by what it shows (WCAG 2.5.3).
+              aria-label={`Flight ${number}, ${dep} to ${arr}, departs ${clock} UTC`}
               className={`flight-pill ${visibility}`}
             >
-              <span className="text-accent font-medium">{dep}</span>{" "}
+              {/* A bare <b>: ~1,000 pills a page, styled once under .flight-pill. */}
+              <b>{number}</b> <span className="text-accent font-medium">{dep}</span>{" "}
               <span className="text-muted">→</span>{" "}
               <span className="text-accent font-medium">{arr}</span>{" "}
               <span className="text-muted text-[10px]">
@@ -174,13 +195,11 @@ function searchIndex(flights: Flight[], rowAirline: AirlineConfig | undefined) {
   return {
     airports: pairs.flat().join(" "),
     routes: pairs.flatMap(([d, a]) => [`${d}-${a}`, `${a}-${d}`]).join(" "),
-    // The raw callsign plus its marketing number (ensureAirlinePrefix), so a
-    // G7-coded flight is findable by the UA number its pill shows.
+    // The raw callsign plus the marketing number its pill shows, so a G7-coded
+    // flight is findable by its UA number.
     flights: flights
       .flatMap((f) => {
-        const marketing = rowAirline
-          ? ensureAirlinePrefix(rowAirline, f.flight_number)
-          : f.flight_number;
+        const marketing = rowMarketingNumber(rowAirline, f.flight_number);
         return marketing === f.flight_number ? [f.flight_number] : [f.flight_number, marketing];
       })
       .join(" ")
@@ -358,9 +377,9 @@ export function AircraftList({
         </div>
       </div>{" "}
       <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-2.5 border-b border-subtle bg-surface-elevated/50 text-xs font-mono text-muted uppercase tracking-widest">
-        <div className="col-span-3">Aircraft</div> <div className="col-span-2">Type</div>{" "}
-        <div className="col-span-3">Operator</div>{" "}
-        <div className="col-span-4">Upcoming flights (UTC)</div>
+        <div className="col-span-2">Aircraft</div> <div className="col-span-2">Type</div>{" "}
+        <div className="col-span-2">Operator</div>{" "}
+        <div className="col-span-6">Upcoming flights (UTC)</div>
       </div>{" "}
       <div className="overflow-auto" style={{ maxHeight: "65vh" }}>
         {aircraft.length === 0 ? (
@@ -388,7 +407,7 @@ export function AircraftList({
                     data-flights={index.flights}
                   >
                     <div className="md:grid md:grid-cols-12 md:gap-4 md:items-center">
-                      <div className="md:col-span-3 flex items-start md:items-center justify-between md:justify-start gap-3 mb-3 md:mb-0">
+                      <div className="md:col-span-2 flex items-start md:items-center justify-between md:justify-start gap-3 mb-3 md:mb-0">
                         <div className="flex items-center gap-3">
                           <div className="status-dot flex-shrink-0" />{" "}
                           <div>
@@ -422,16 +441,17 @@ export function AircraftList({
                           {aircraftName(plane.Aircraft)}
                         </span>
                       </div>{" "}
-                      <div className="md:col-span-3 text-xs md:text-sm text-muted mb-3 md:mb-0 pl-5 md:pl-0">
+                      <div className="md:col-span-2 text-xs md:text-sm text-muted mb-3 md:mb-0 pl-5 md:pl-0">
                         {badge && plane.OperatedBy === AIRLINES[airline]?.name
                           ? null
                           : operatorName(plane.OperatedBy) || "—"}
                       </div>{" "}
-                      <div className="md:col-span-4 pt-3 md:pt-0 border-t md:border-t-0 border-subtle">
+                      <div className="md:col-span-6 pt-3 md:pt-0 border-t md:border-t-0 border-subtle">
                         <FlightPills
                           tailNumber={plane.TailNumber}
                           flights={flights}
                           permalink={permalink}
+                          rowAirline={AIRLINES[airline]}
                         />
                       </div>
                     </div>

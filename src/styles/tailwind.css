@@ -74,6 +74,11 @@
     border-color: var(--color-border);
     color: var(--color-text-secondary);
   }
+  /* The flight number a traveller searches for, ahead of its route. */
+  .flight-pill b {
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
 }
 
 /* Unlayered on purpose: an expanded row must beat the layered `hidden` /
