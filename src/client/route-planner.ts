@@ -19,6 +19,8 @@ interface Leg {
   probability: number;
   confidence: string;
   n_observations: number;
+  /** This host's answer page for the flight, dated when the search was. */
+  page?: string;
 }
 
 interface Itinerary {
@@ -63,6 +65,19 @@ function probBars(prob: number, color: string): string {
   return `${html}</span>`;
 }
 
+/** The page path the API vouched for, re-checked so a stray value can't become an off-site link. */
+const LEG_PAGE = /^\/check-flight\/[A-Z0-9]{3,8}(\/\d{4}-\d{2}-\d{2})?$/;
+
+/**
+ * The leg's flight number, as a link to its answer page when the API sent one:
+ * that page holds the plane-swap answer and the calendar watch.
+ */
+function legFlight(leg: Leg): string {
+  const fn = esc(leg.flight_number);
+  if (!leg.page || !LEG_PAGE.test(leg.page)) return fn;
+  return `<a href="${esc(leg.page)}" class="leg-link"><span>${fn}<span class="sr-only"> flight details</span></span><span aria-hidden="true" class="text-accent">›</span></a>`;
+}
+
 function renderLeg(leg: Leg): string {
   const color = probColor(leg.probability);
   const [from, to] = leg.route.split("-").map(esc);
@@ -72,7 +87,7 @@ function renderLeg(leg: Leg): string {
   }
   const conf = leg.confidence === "low" ? " · low confidence" : "";
   const checks = `${leg.n_observations} check${leg.n_observations === 1 ? "" : "s"}`;
-  return `<div class="flex items-center justify-between py-2 border-l-2 pl-3 ml-1" style="border-color:${color}"><div class="text-sm"><div class="font-mono text-secondary">${esc(leg.flight_number)} <span class="text-muted">${from} → ${to}</span></div><div class="text-xs text-muted">Based on ${checks}${conf}</div></div>${odds}</div>`;
+  return `<div class="flex items-center justify-between py-2 border-l-2 pl-3 ml-1" style="border-color:${color}"><div class="text-sm"><div class="font-mono text-secondary">${legFlight(leg)} <span class="text-muted">${from} → ${to}</span></div><div class="text-xs text-muted">Based on ${checks}${conf}</div></div>${odds}</div>`;
 }
 
 function flightPath(legs: Leg[]): string {

@@ -470,6 +470,21 @@
     opacity: 0;
   }
 }
+/* A planner leg's flight number, linking its answer page: one class, since
+   the planner's script ships each byte to every visit. The negative margin
+   keeps the row's height while the tap target stays 44px tall. */
+@layer components {
+  .leg-link {
+    @apply inline-flex min-h-11 -my-3 items-center gap-1 rounded text-primary transition-colors hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50;
+  }
+  /* The number alone is underlined; the chevron beside it is not. */
+  .leg-link > :first-child {
+    @apply underline decoration-accent/50 underline-offset-4;
+  }
+  .leg-link:hover > :first-child {
+    @apply decoration-accent;
+  }
+}
 .prob-bars {
   display: inline-flex;
   gap: 2px;

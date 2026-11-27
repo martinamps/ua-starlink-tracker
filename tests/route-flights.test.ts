@@ -332,6 +332,25 @@ describe("board behavior (synthetic)", () => {
       arrivalAirport: "DEN",
       lastUpdated: now,
     });
+    // A three-leg chain on airports no other case uses, for the planner's links:
+    // each leg flown on the A321neo for five days, then scheduled tomorrow.
+    for (const d of [-7, -6, -5, -4, -3]) {
+      log("UA", "UA510", "N111UA", at(d, 13), ["BOS", "PHL"]);
+      log("UA", "UA520", "N111UA", at(d, 17), ["PHL", "CLT"]);
+      log("UA", "UA530", "N111UA", at(d, 21), ["CLT", "MIA"]);
+    }
+    addFlight(sdb, "N111UA", "UA510", "BOS", at(1, 13), {
+      arrivalAirport: "PHL",
+      lastUpdated: now,
+    });
+    addFlight(sdb, "N111UA", "UA520", "PHL", at(1, 17), {
+      arrivalAirport: "CLT",
+      lastUpdated: now,
+    });
+    addFlight(sdb, "N111UA", "UA530", "CLT", at(1, 21), {
+      arrivalAirport: "MIA",
+      lastUpdated: now,
+    });
     // The route page serves only pairs the route cache knows.
     sdb
       .query(
@@ -395,6 +414,73 @@ describe("board behavior (synthetic)", () => {
     expect(fromBoard).not.toBeNull();
     expect(leg?.probability).toBeCloseTo(fromBoard ?? -1, 6);
     expect(check.prediction.probability).toBeCloseTo(fromBoard ?? -1, 6);
+  });
+
+  test("a planner leg links its own answer page, the first leg dated as searched", async () => {
+    type PlanLeg = { flight_number: string; page?: string };
+    const itinerariesOf = async (query: string) =>
+      (
+        (await jsonOf(sapp, `/api/plan-route?${query}`, UA)) as {
+          itineraries: Array<{ legs: PlanLeg[] }>;
+        }
+      ).itineraries;
+    const date = isoDateDaysAgo(-20, now);
+    const undatedPage = (leg: PlanLeg) =>
+      leg.flight_number === "(any)" ? undefined : `/check-flight/${leg.flight_number}`;
+    // Only the first leg is known to fly that day: a later one often flies the
+    // next, so it links the flight's undated page.
+    const expectDatedFirstLeg = (legs: PlanLeg[]) =>
+      legs.forEach((leg, i) => {
+        if (leg.flight_number === "(any)") expect(leg.page).toBeUndefined();
+        else if (i === 0) expect(leg.page).toBe(`/check-flight/${leg.flight_number}/${date}`);
+        else expect(leg.page).toBe(undatedPage(leg));
+      });
+
+    const nonstop = await itinerariesOf(`origin=ORD&destination=IAD&date=${date}`);
+    expect(nonstop.length).toBeGreaterThan(0);
+    for (const it of nonstop) expectDatedFirstLeg(it.legs);
+
+    const twoLeg = (await itinerariesOf(`origin=BOS&destination=CLT&date=${date}`)).find(
+      (it) => it.legs.length === 2 && it.legs.every((l) => l.flight_number !== "(any)")
+    );
+    expect(twoLeg?.legs.map((l) => l.page)).toEqual([
+      `/check-flight/UA510/${date}`,
+      "/check-flight/UA520",
+    ]);
+
+    const threeLeg = (await itinerariesOf(`origin=BOS&destination=MIA&date=${date}`)).find(
+      (it) => it.legs.length === 3
+    );
+    expect(threeLeg?.legs.map((l) => l.page)).toEqual([
+      `/check-flight/UA510/${date}`,
+      "/check-flight/UA520",
+      "/check-flight/UA530",
+    ]);
+
+    // Behind a positioning leg, the first real flight is a later leg too.
+    const behindPositioning = (await itinerariesOf(`origin=SFO&destination=IAD&date=${date}`)).find(
+      (it) => it.legs[0].flight_number === "(any)"
+    );
+    expect(behindPositioning?.legs.map((l) => l.page)).toEqual([undefined, "/check-flight/UA100"]);
+
+    for (const query of [
+      "origin=SFO&destination=IAD",
+      "origin=BOS&destination=MIA&date=2026-02-30",
+    ]) {
+      for (const it of await itinerariesOf(query)) {
+        for (const leg of it.legs) expect(leg.page).toBe(undatedPage(leg));
+      }
+    }
+
+    const pages = [...nonstop, twoLeg, threeLeg].flatMap((it) =>
+      (it?.legs ?? []).flatMap((l) => (l.page ? [l.page] : []))
+    );
+    for (const page of pages) {
+      const res = await sapp.dispatch(
+        req(page, UA, { headers: { Accept: "text/html", "x-forwarded-for": "127.0.0.1" } })
+      );
+      expect(res.status).toBe(200);
+    }
   });
 
   test("a leg that changed metal reads its new mix, and every surface agrees", async () => {
