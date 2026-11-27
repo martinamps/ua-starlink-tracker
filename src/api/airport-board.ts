@@ -18,7 +18,7 @@ import { countOnLocalDay, nextLocalDay } from "../database/airports";
 import type { ScopedReader } from "../database/reader";
 import { DEPARTURE_WINDOW_HOURS, unixNow } from "../database/sql/windows";
 import { airportWithCode } from "../utils/airport-names";
-import { airportTimezone } from "../utils/airport-tz";
+import { airportLocalDate, airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { AIRPORT_RANK_MIN_DEPARTURES } from "./airport-ranking";
 
@@ -75,12 +75,21 @@ export interface AirportBoard {
   /** Departures Starlink planes flew from here over the last `days` days. */
   history: { days: number; starlink: number };
   /**
-   * The airport's next local day (YYYY-MM-DD), the Starlink departures in
-   * `departures` that leave on it, and where that puts the airport among those
-   * ranked on /routes (null under the ranking's minimum). Null for an airport
-   * with no mapped timezone.
+   * The airport's local today (YYYY-MM-DD): Starlink departures that already
+   * left, those in `departures` still to leave on it, their sum, and where the
+   * sum puts the airport among those ranked on /routes (null under the
+   * ranking's minimum). Null for an airport with no mapped timezone.
    */
-  day: { date: string; departures: number; rank: number | null; ranked: number } | null;
+  today: {
+    date: string;
+    left: number;
+    toGo: number;
+    departures: number;
+    rank: number | null;
+    ranked: number;
+  } | null;
+  /** The airport's local tomorrow and the departures in `departures` on it. */
+  tomorrow: { date: string; departures: number } | null;
   indexable: boolean;
 }
 
@@ -138,7 +147,8 @@ export function buildAirportBoard(
         a.destination.localeCompare(b.destination)
     );
 
-  const date = nextLocalDay(airport, nowSec);
+  const todayDate = airportLocalDate(airport, nowSec);
+  const tomorrowDate = nextLocalDay(airport, nowSec);
 
   return {
     airport,
@@ -149,32 +159,45 @@ export function buildAirportBoard(
     departures,
     destinations,
     history: { days: history.days, starlink: flown?.starlink ?? 0 },
-    day: date
-      ? dayStanding(reader, airport, date, countOnLocalDay(airport, date, departures))
+    today: todayDate
+      ? todayStanding(reader, airport, todayDate, {
+          left: countOnLocalDay(
+            airport,
+            todayDate,
+            reader.getStarlinkDeparturesLeft(airport, nowSec)
+          ),
+          toGo: countOnLocalDay(airport, todayDate, departures),
+        })
+      : null,
+    tomorrow: tomorrowDate
+      ? { date: tomorrowDate, departures: countOnLocalDay(airport, tomorrowDate, departures) }
       : null,
     indexable: (flown?.starlink ?? 0) >= AIRPORT_INDEX_MIN_DEPARTURES,
   };
 }
 
 /**
- * The day's count with its place among the ranked airports. The rank is read
+ * Today's count with its place among the ranked airports. The rank is read
  * off the other airports' counts, so it agrees with this page's own number
  * even when the shared ranking was built a minute earlier.
  */
-function dayStanding(
+function todayStanding(
   reader: ScopedReader,
   airport: string,
   date: string,
-  departures: number
-): NonNullable<AirportBoard["day"]> {
+  { left, toGo }: { left: number; toGo: number }
+): NonNullable<AirportBoard["today"]> {
+  const departures = left + toGo;
   const others = reader
     .getAirportDayCounts()
-    .filter((c) => c.airport !== airport && c.departures >= AIRPORT_RANK_MIN_DEPARTURES);
+    .filter((c) => c.airport !== airport && c.today.departures >= AIRPORT_RANK_MIN_DEPARTURES);
   const ranks = departures >= AIRPORT_RANK_MIN_DEPARTURES;
   return {
     date,
+    left,
+    toGo,
     departures,
-    rank: ranks ? others.filter((c) => c.departures > departures).length + 1 : null,
+    rank: ranks ? others.filter((c) => c.today.departures > departures).length + 1 : null,
     ranked: others.length + (ranks ? 1 : 0),
   };
 }

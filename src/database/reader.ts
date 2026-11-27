@@ -49,6 +49,7 @@ import {
   getAirportDayCounts,
   getAirportHistory,
   getAirportStarlinkDepartures,
+  getStarlinkDeparturesLeft,
 } from "./airports";
 import {
   type AssignmentLogRow,
@@ -366,6 +367,8 @@ export interface ScopedReader {
   airportHasData(airport: string): boolean;
   /** Equipped departures from the airport in the next 48h, under their marketed numbers. */
   getAirportStarlinkDepartures(airport: string): AirportDepartureRow[];
+  /** Starlink departures that already left the airport over the last day. */
+  getStarlinkDeparturesLeft(airport: string, nowSec?: number): Array<{ departure_time: number }>;
   /** Starlink departures flown per airport over the last few days; the airport
    * pages' index rule and the sitemap read the same build. */
   getAirportHistory(): AirportHistory;
@@ -668,6 +671,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     airportHasData: (a) => airportHasData(db, a, soleAirline()),
     getAirportStarlinkDepartures: (a) => getAirportStarlinkDepartures(db, soleAirline(), a),
+    getStarlinkDeparturesLeft: (a, now = unixNow()) =>
+      getStarlinkDeparturesLeft(db, soleAirline(), now, a),
     getAirportHistory: () => airportHistoryMemo("", () => getAirportHistory(db, soleAirline())),
     getAirportDayCounts: () => airportDayMemo("", () => getAirportDayCounts(db, soleAirline())),
 

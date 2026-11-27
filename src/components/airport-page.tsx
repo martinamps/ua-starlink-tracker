@@ -48,44 +48,54 @@ function Stat({
   );
 }
 
+const departuresWord = (n: number) => (n === 1 ? "departure" : "departures");
+
 function Stats({ board }: { board: AirportBoard }) {
-  const { history, airport, day } = board;
-  if (history.starlink === 0 && board.departures.length === 0) return null;
+  const { history, airport, today, tomorrow } = board;
+  if (history.starlink === 0 && board.departures.length === 0 && !today?.departures) return null;
   const flown = history.starlink > 0;
   return (
     <Panel as="section" aria-label={`Starlink at ${airport}`} className={SECTION}>
-      <div className={day && flown ? "grid gap-5 sm:grid-cols-3" : "grid gap-5 sm:grid-cols-2"}>
-        {day && (
-          <Stat value={fmt(day.departures)}>
-            Starlink {day.departures === 1 ? "departure" : "departures"} scheduled for{" "}
-            {weekdayDate(day.date)}
-            {day.rank !== null && (
+      <div className={today && flown ? "grid gap-5 sm:grid-cols-3" : "grid gap-5 sm:grid-cols-2"}>
+        {today && (
+          <Stat value={fmt(today.departures)}>
+            Starlink {departuresWord(today.departures)} today, {weekdayDate(today.date)}:{" "}
+            {fmt(today.left)} gone, {fmt(today.toGo)} still to leave
+            {today.rank !== null && (
               <>
                 {" · "}
                 <a href="/routes#airports" className={LINK}>
-                  No. {fmt(day.rank)} of {fmt(day.ranked)} airports
+                  No. {fmt(today.rank)} of {fmt(today.ranked)} airports
                 </a>
               </>
             )}
           </Stat>
         )}
-        <Stat value={fmt(board.departures.length)}>
-          Starlink {board.departures.length === 1 ? "departure" : "departures"} assigned in the next{" "}
-          {board.windowHours} hours
-        </Stat>
+        {tomorrow && (
+          <Stat value={fmt(tomorrow.departures)}>
+            Starlink {departuresWord(tomorrow.departures)} scheduled for tomorrow,{" "}
+            {weekdayDate(tomorrow.date)}
+          </Stat>
+        )}
+        {!today && (
+          <Stat value={fmt(board.departures.length)}>
+            Starlink {departuresWord(board.departures.length)} assigned in the next{" "}
+            {board.windowHours} hours
+          </Stat>
+        )}
         {flown && (
           <Stat value={perDayLabel(history.starlink / history.days)} unit="a day">
             flown by Starlink planes: {fmt(history.starlink)} in the last {history.days} days
           </Stat>
         )}
       </div>
-      {day && (
+      {today && (
         <p className="mt-4 text-xs text-muted text-pretty">
-          The day's figure counts departures scheduled on planes we list as having Starlink, by{" "}
-          {airport}'s own calendar day, as we hold the schedule now. That schedule reaches about two
-          days ahead and is still being added to, so a day's count can rise as the day nears. Planes
-          are swapped before departure, and we hold no total of {airport}'s departures to set it
-          against.
+          Counted by {airport}'s own calendar day, on planes we list as having Starlink. Today's
+          figure adds those that already left to those still scheduled. Tomorrow's is the schedule
+          as we hold it now: it reaches about two days ahead and is still being added to, so it can
+          rise as the day nears. Planes are swapped before departure, and we hold no total of{" "}
+          {airport}'s departures to set either against.
         </p>
       )}
     </Panel>
