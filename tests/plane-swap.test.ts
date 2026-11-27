@@ -75,9 +75,47 @@ describe("plane swap on the dated answer page (synthetic)", () => {
     const db = swapped(["N11111", "Starlink"], ["N33333", "Starlink"]);
     const { text } = await bodyOf(createApp(db), page, UA_HOST);
     expect(text).toContain('id="plane-swap"');
-    expect(text).toContain("Both planes have Starlink.");
+    expect(text).toContain("Both N11111 and N33333 have Starlink.");
     expect(text).not.toContain("Starlink gained");
     expect(text).not.toContain("Starlink lost");
+  });
+
+  /** Three planes in turn, each logged an hour after the one before. */
+  function swappedTwice(...planes: Array<[string, string | null]>) {
+    const db = makeSyntheticDb();
+    for (const [tail, wifi] of planes) addPlane(db, tail, wifi);
+    for (const [i, [tail]] of planes.entries()) {
+      updateFlights(db, tail, [leg("UA123", at("19:00"))]);
+      if (i > 0) updateFlights(db, planes[i - 1][0], []);
+      if (i < planes.length - 1) {
+        db.query("UPDATE flight_assignment_log SET first_seen = first_seen - 3600").run();
+      }
+    }
+    return db;
+  }
+
+  // The rule: the note names the first plane logged, and the Starlink pill
+  // compares the current plane against that first one, never the middle one.
+  test("three planes: names the first, then the middle, and compares against the first", async () => {
+    const db = swappedTwice(["N11111", "Thales"], ["N22222", "Starlink"], ["N33333", "Starlink"]);
+    const { text } = await bodyOf(createApp(db), page, UA_HOST);
+    const note = text.slice(text.indexOf('id="plane-swap"'));
+    expect(note).toContain(
+      "This departure had N11111 first, then N22222. We first saw N33333 on it"
+    );
+    expect(note).toContain("Starlink gained");
+  });
+
+  test("Starlink, then none, then Starlink again: no 'gained', the first plane had it", async () => {
+    const db = swappedTwice(["N11111", "Starlink"], ["N22222", "Thales"], ["N33333", "Starlink"]);
+    const { text } = await bodyOf(createApp(db), page, UA_HOST);
+    const note = text.slice(text.indexOf('id="plane-swap"'));
+    expect(note).toContain(
+      "This departure had N11111 first, then N22222. We first saw N33333 on it"
+    );
+    expect(note).toContain("Both N11111 and N33333 have Starlink.");
+    expect(note).not.toContain("Starlink gained");
+    expect(note).not.toContain("Starlink lost");
   });
 
   test("swapped back to the first tail: no note, as the calendar feed", async () => {

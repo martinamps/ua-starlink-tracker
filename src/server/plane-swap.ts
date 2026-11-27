@@ -33,16 +33,31 @@ export function planeSwapFor(
   const legRows = leg.dep ? history.filter((h) => h.departure_airport === leg.dep) : history;
   const current = legRows.find((r) => r.tail_number === tail);
   if (!current) return null;
-  // The tail last seen before this one took over: with three tails, the middle one.
-  const previous = legRows
-    .filter((r) => r.tail_number !== tail && r.first_seen <= current.first_seen)
-    .sort((a, b) => b.last_seen - a.last_seen || b.first_seen - a.first_seen)[0];
-  if (!previous) return null;
-  const flag = reader.getTailStarlinkFlag(previous.tail_number, previous.airline);
+  // The first tail logged, as the feed's isSwap reads it: the plane a traveller
+  // who checked earliest saw, and the one the Starlink change is measured from.
+  const ordered = [...legRows].sort(
+    (a, b) => a.first_seen - b.first_seen || a.tail_number.localeCompare(b.tail_number)
+  );
+  const first = ordered[0];
+  if (!first || first.tail_number === tail) return null;
+  const between = [
+    ...new Set(
+      ordered
+        .filter(
+          (r) =>
+            r.tail_number !== first.tail_number &&
+            r.tail_number !== tail &&
+            r.first_seen <= current.first_seen
+        )
+        .map((r) => r.tail_number)
+    ),
+  ];
+  const flag = reader.getTailStarlinkFlag(first.tail_number, first.airline);
   const fromStarlink = flag === null ? null : flag === 1;
   const toStarlink = seen.state === "yes";
   return {
-    from: previous.tail_number,
+    from: first.tail_number,
+    between,
     to: tail,
     seenAt: current.first_seen,
     zone: airportTimezone(toIata(current.departure_airport)) ?? null,

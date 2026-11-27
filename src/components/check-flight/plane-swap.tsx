@@ -8,10 +8,24 @@ const CHANGE_PILL: Record<"gained" | "lost", { tone: Tone; label: string }> = {
   lost: { tone: "danger", label: "Starlink lost" },
 };
 
-/** The answer card already carries the page's one "can be swapped" caveat. */
+/** Every comparison is between the first plane and the current one, as the pill's.
+ * The answer card already carries the page's one "can be swapped" caveat. */
 function sameLine(swap: PlaneSwap): string | null {
   if (swap.change !== "same") return null;
-  return swap.toStarlink ? "Both planes have Starlink." : "Neither plane has Starlink.";
+  return swap.toStarlink
+    ? `Both ${swap.from} and ${swap.to} have Starlink.`
+    : `Neither ${swap.from} nor ${swap.to} has Starlink.`;
+}
+
+/** "N1 first" or "N1 first, then N2" / "N1 first, then N2 and N3". */
+function sequence(swap: PlaneSwap): string {
+  const { from, between } = swap;
+  if (between.length === 0) return `${from} first`;
+  const rest =
+    between.length === 1
+      ? between[0]
+      : `${between.slice(0, -1).join(", ")} and ${between[between.length - 1]}`;
+  return `${from} first, then ${rest}`;
 }
 
 /** One short note over the answer: the aircraft our log saw change on this departure. */
@@ -25,7 +39,7 @@ export function PlaneSwapNote({ swap }: { swap: PlaneSwap }) {
         {pill && <Pill tone={pill.tone}>{pill.label}</Pill>}
       </p>
       <p className="mt-1 text-secondary text-pretty">
-        {`This departure had ${swap.from} first. We first saw ${swap.to} on it ${zonedDeparture(swap.seenAt, swap.zone).full}.`}
+        {`This departure had ${sequence(swap)}. We first saw ${swap.to} on it ${zonedDeparture(swap.seenAt, swap.zone).full}.`}
         {same ? ` ${same}` : ""}
       </p>
     </Panel>

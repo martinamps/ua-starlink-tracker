@@ -140,14 +140,16 @@ export interface DatedAnswer {
 export type SwapStarlinkChange = "gained" | "lost" | "same" | "unknown";
 
 export interface PlaneSwap {
-  /** The tail on the departure before the one the answer names. */
+  /** The first tail logged on the departure; the Starlink change is measured from it. */
   from: string;
+  /** Tails logged after `from` and before `to`, in the order first seen. */
+  between: string[];
   to: string;
   /** When we first logged `to` on the departure (unix seconds). */
   seenAt: number;
   /** IANA zone of the departure airport; null renders UTC. */
   zone: string | null;
-  /** Whether each side has Starlink: `to` as the answer card says it. */
+  /** Whether `from` and `to` have Starlink: `to` as the answer card says it. */
   toStarlink: boolean;
   fromStarlink: boolean | null;
   change: SwapStarlinkChange;
