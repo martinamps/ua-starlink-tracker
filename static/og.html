@@ -13,7 +13,8 @@
     count          hero number (count layout)
     sub            caption under the number (count layout)
     series         comma-separated cumulative install counts for the sparkline (count layout)
-    cards          JSON array [{name,pct,accent}] (grid layout)
+    cards          JSON array [{name,pct,accent}], or {name,count,accent} for an
+                   airline with no share to state (grid layout)
     caption        small caption under the cards (grid layout)
     date           YYYY-MM-DD stamp of the data behind the card (both layouts).
                    A shared PNG outlives its numbers by months; with no date on
@@ -92,6 +93,7 @@
   }
   .card .bar { height: 12px; background: #1e2638; border-radius: 6px; margin-top: 26px; overflow: hidden; }
   .card .bar-fill { height: 100%; border-radius: 6px; }
+  .card .unit { height: 12px; line-height: 12px; margin-top: 26px; font-size: 14px; letter-spacing: 0.28em; color: var(--muted); }
   .caption {
     position: absolute; left: 0; right: 0; bottom: 138px; text-align: center;
     font-size: 21px; letter-spacing: 0.26em; color: var(--muted); text-transform: uppercase;
@@ -179,6 +181,15 @@ if (layout === "count") {
   content.innerHTML = `
     <div class="cards">
       ${cards.map((c) => {
+        // No share to state (a roster the programme doesn't cover): the count alone.
+        if (c.pct == null) {
+          return `
+        <div class="card">
+          <div class="name">${esc(c.name)}</div>
+          <div class="pct">${Math.max(0, Math.floor(Number(c.count) || 0))}</div>
+          <div class="unit">AIRCRAFT</div>
+        </div>`;
+        }
         const pct = Math.max(0, Math.min(100, Number(c.pct) || 0));
         return `
         <div class="card">

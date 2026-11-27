@@ -4,6 +4,7 @@ import {
   type AnswerContext,
   CALENDAR_OFFER_ID,
   type FlightAnswer,
+  answerTails,
   calendarOffered,
   datePassed,
   renderFlightAnswer,
@@ -224,6 +225,18 @@ export default function CheckFlightPage({
   // lookup, which the server render deliberately skips.
   const refresh = !!ctx && !!answer && !answer.firm && !datePassed(ctx) && ctx.daysOut <= 2;
 
+  // What the homepage's "Your flights" compares a later answer with
+  // (src/client/recent-checks.ts): only for an answer worth coming back to.
+  const seen =
+    dated && ctx && answer && !dated.body.error && !datePassed(ctx)
+      ? {
+          tone: answer.tone,
+          firm: answer.firm,
+          tails: answerTails(dated.body),
+          headline: answer.headline,
+        }
+      : null;
+
   const accuracyCopy =
     cfg.verifierBackend === "united"
       ? "We check each aircraft's Wi-Fi on united.com and match aircraft to flights using flight schedule data."
@@ -419,6 +432,7 @@ export default function CheckFlightPage({
               refresh,
               zones: refresh ? AIRPORT_ZONES : {},
               ...(dated.leg ? { leg: dated.leg } : {}),
+              ...(seen ? { seen } : {}),
             }),
           }}
         />

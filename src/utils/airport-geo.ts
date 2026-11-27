@@ -2,8 +2,18 @@
  * IATA -> [lat, lon] for every airport in the tracked route network, plus a
  * great-circle helper. Source: OurAirports (public domain). Used by the
  * itinerary planner's detour gate; coordinates are static facts, so an
- * unknown code means a new airport entered the network -- callers must treat
- * a null distance as "can't check" and keep the option, never drop it.
+ * unknown code means a new airport entered the network.
+ *
+ * A null distance means "can't check". For a connection the planner now
+ * drops what it can't check: no hub without coordinates, and no connection
+ * for a trip that starts or ends at such a code (its nonstops stay, they need
+ * no geography). The first rule here was the opposite, keep the option and
+ * never drop it, from when the table held 455 airports and an unknown code
+ * was common, so dropping would have emptied real answers. The tables now
+ * hold every airport the site names and a gauge counts the unplaced ones, so
+ * an unknown code is rare and new, and keeping it offered DEN->EWR by way of
+ * St. Kitts. Answers must say such a trip's connections went unchecked, not
+ * that none exists.
  */
 
 // biome-ignore format: one airport per line keeps the table diffable
@@ -228,6 +238,7 @@ export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
   GNV: [29.6901, -82.2718],
   GOA: [44.4133, 8.8375],
   GOT: [57.6628, 12.2798],
+  GOX: [15.7443, 73.8606],
   GPT: [30.4056, -89.0698],
   GRB: [44.4835, -88.1308],
   GRR: [42.8808, -85.5228],
@@ -561,6 +572,7 @@ export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
   SYD: [-33.9461, 151.1770],
   SYR: [43.1112, -76.1063],
   TAM: [22.2926, -97.8671],
+  TAS: [41.2579, 69.2812],
   TBS: [41.6692, 44.9547],
   TEV: [40.4103, -1.2174],
   TFU: [30.3125, 104.4413],
@@ -708,6 +720,7 @@ export const AIRPORT_COUNTRY: Record<string, string> = {
   PEK: "CN", PKX: "CN", PVG: "CN", SGN: "VN", SIN: "SG", TPE: "TW",
   XMN: "CN",
   TFU: "CN", DVO: "PH", MUX: "PK", GYD: "AZ", LUN: "ZM", NCL: "GB", ORK: "IE",
+  GOX: "IN", TAS: "UZ",
   ADL: "AU", AKL: "NZ", BNE: "AU", MEL: "AU", PER: "AU", PPT: "PF", RAR: "CK", SYD: "AU",
   KSA: "FM", PNI: "FM", TKK: "FM", YAP: "FM", KWA: "MH", MAJ: "MH", ROR: "PW",
   ORY: "FR", LYS: "FR", MRS: "FR", TLS: "FR", BOD: "FR", NTE: "FR", MPL: "FR", BIQ: "FR",
@@ -735,8 +748,10 @@ export function airportCountry(code: string): string | null {
 /**
  * May `hub` connect a US-domestic trip? Routing SFO→EWR via Halifax means a
  * passport, customs, and a fare nobody books. Only US↔US trips are gated: a
- * YVR→YYZ trip on United legitimately connects through a US hub. Unknown hub
- * codes pass (fail open, like the detour gate).
+ * YVR→YYZ trip on United legitimately connects through a US hub. A hub of
+ * unknown country passes here, but the planner never asks about one: it
+ * refuses a hub without coordinates before this gate, since an unknown
+ * country once let St. Kitts into a US-domestic trip.
  */
 export function hubAllowedForTrip(origin: string, destination: string, hub: string): boolean {
   if (airportCountry(origin) !== "US" || airportCountry(destination) !== "US") return true;

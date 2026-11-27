@@ -8,7 +8,7 @@ import {
   canonicalFlightFor,
   canonicalFlightInput,
 } from "../airlines/flight-input";
-import { probLabel } from "../components/ui/format";
+import { probLabel, shareLabel } from "../components/ui/format";
 import { esc } from "./esc";
 import { shareControlHtml } from "./share";
 
@@ -50,7 +50,7 @@ const STATEMENT_LABELS: Record<string, [string, string]> = {
   outside_dates: ["No answer for this date", "text-muted"],
 };
 
-interface CheckAnyBody {
+export interface CheckAnyBody {
   error?: string;
   airline_info?: AirlineInfo;
   /** An airline answered from its own dated statement, by route. */
@@ -67,6 +67,7 @@ interface CheckAnyBody {
   airline?: string;
   reason?: string;
   message?: string;
+  flights?: unknown;
 }
 
 /**
@@ -92,6 +93,13 @@ export function airlineInfoHtml(info: AirlineInfo): string {
     `<a href="${esc(info.page)}" class="mt-1 block py-2 text-accent hover:underline">${esc(info.airline)} and Starlink: every dated fact →</a>`,
   ].join("");
 }
+
+/** A number with no flight history behind it is a share of aircraft, and
+ * rounds down as the sentence beside it does: a subfleet's share ("type"), or
+ * the estimate for a flight number never seen, which this body marks only in
+ * its sentence. */
+const fleetFigure = (d: CheckAnyBody) =>
+  d.confidence === "type" || /No history for \S+ yet/.test(d.reason ?? "");
 
 export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
   if (d.error) {
@@ -119,7 +127,7 @@ export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
           : p !== null && d.basis
             ? [`≥${Math.floor(p * 100)}% Starlink`, "text-accent"]
             : p !== null
-              ? [`${probLabel(p)} Starlink`, "text-accent"]
+              ? [`${fleetFigure(d) ? shareLabel(p) : probLabel(p)} Starlink`, "text-accent"]
               : d.confidence === "type"
                 ? ["Depends on aircraft", "text-muted"]
                 : ["Unknown", "text-muted"];
@@ -190,7 +198,14 @@ export function shapeHint(raw: string, example: string): string {
   return `<span class="block text-muted">Type the airline code and number together, like ${esc(example)}.</span>`;
 }
 
-function wireCheckAny(form: HTMLFormElement): void {
+/** A check-any form's answer, as it was asked: for a page that keeps the visitor's checks. */
+export type OnChecked = (
+  form: HTMLFormElement,
+  asked: URLSearchParams,
+  answer: CheckAnyBody
+) => void;
+
+function wireCheckAny(form: HTMLFormElement, onChecked?: OnChecked): void {
   const out = document.getElementById(`${form.id}-result`);
   if (!out) return;
   const community = form.dataset.answer === "community";
@@ -259,6 +274,7 @@ function wireCheckAny(form: HTMLFormElement): void {
           (d.error ? shapeHint(typed, example) : numberNoteHtml(notes, typed)) +
           checkPageLink(d, pages, typed, params.get("date") ?? "") +
           checkPageShare(d, pages, typed, params.get("date") ?? "");
+        onChecked?.(form, params, d);
       })
       .catch(() => {
         out.textContent = "Couldn't get an answer. Check your connection and try again.";
@@ -271,7 +287,7 @@ function wireCheckAny(form: HTMLFormElement): void {
   });
 }
 
-export function wireFlightSearchForms(): void {
+export function wireFlightSearchForms(onChecked?: OnChecked): void {
   for (const el of Array.from(document.querySelectorAll("form[data-flight-search]"))) {
     const form = el as HTMLFormElement;
     // Wired once even when a page loads the script twice.
@@ -283,7 +299,7 @@ export function wireFlightSearchForms(): void {
     if (date && !date.value && form.dataset.prefillDate !== undefined) date.value = localToday();
     const mode = form.dataset.flightSearch;
     if (mode === "check-any") {
-      wireCheckAny(form);
+      wireCheckAny(form, onChecked);
       continue;
     }
     if (mode !== "permalink") continue;

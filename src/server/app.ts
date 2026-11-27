@@ -165,6 +165,7 @@ import {
 import { clientScriptResponse } from "../client/bundle";
 import {
   type DayLeg,
+  answerTails,
   datePassed,
   forecastNote,
   inTravelOrder,
@@ -249,6 +250,7 @@ import { type RouteNetwork, buildRouteNetwork } from "../components/routes-map/n
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
 import {
+  approxShare,
   capitalize,
   coldShare,
   flightShare,
@@ -256,7 +258,7 @@ import {
   monthDay,
   pct as pctLabel,
   pctWhole,
-  probPhrase,
+  sharePhrase,
   zonedDeparture,
 } from "../components/ui/format";
 import {
@@ -367,7 +369,8 @@ import {
   passengerVerifyEnabled,
 } from "./passenger-detect";
 import { planeSwapFor } from "./plane-swap";
-import { SHARE_TAP_PATH, recordShareShown, shareTap } from "./share-tap";
+import { RECENT_PREFIX, RECENT_TAP_PATH, recentTap } from "./recent-checks";
+import { SHARE_TAP_PATH, fromOurPageInABrowser, recordShareShown, shareTap } from "./share-tap";
 import {
   bareDigitsFlight,
   checkPageFor,
@@ -934,7 +937,12 @@ const apiData: Handler = ({ reader }) => {
 // Per-airline rollout summary — used by the OG image generator and any
 // cross-airline UI. Cheap to compute per-request. `percentage` is pctWhole,
 // the pages' own rule: it once rounded to a tenth, and answered 45 for the
-// 736 of 1,636 that the home page printed as 44%.
+// 736 of 1,636 that the home page printed as 44%. It is null where the pages
+// print no share at all (denominatorIsPublishable): a roster with aircraft the
+// programme excludes, or a count above its total. The counts stay.
+const sharedPct = (n: number, total: number, rosterIsProgramScope = true) =>
+  denominatorIsPublishable(n, total, rosterIsProgramScope) ? pctWhole(n, total) : null;
+
 const apiFleetSummary: Handler = ({ getReader }) => {
   const airlines = publicAirlines().map((cfg) => {
     const r = getReader(cfg.code);
@@ -945,7 +953,7 @@ const apiFleetSummary: Handler = ({ getReader }) => {
       body: f.body,
       installed: f.starlink,
       total: f.total,
-      percentage: pctWhole(f.starlink, f.total),
+      percentage: sharedPct(f.starlink, f.total),
       ...(f.outsideProgramme ? { excluded: true, label: f.outsideProgramme.label } : {}),
     }));
     return {
@@ -953,7 +961,7 @@ const apiFleetSummary: Handler = ({ getReader }) => {
       name: cfg.name,
       installed,
       total,
-      percentage: pctWhole(installed, total),
+      percentage: sharedPct(installed, total, cfg.rollout.rosterIsProgramScope),
       families,
     };
   });
@@ -1716,7 +1724,7 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   if (!cfg.flightHistoryModel) {
     const r = carrierRouteAnswer(cfg, reader, from, to);
     const message = r
-      ? joinSentences(`~${Math.round(r.probability * 100)}% Starlink — ${r.reason}`)
+      ? joinSentences(`${approxShare(r.probability)} Starlink — ${r.reason}`)
       : joinSentences(
           `Route predictions for ${cfg.name} are determined by aircraft type`,
           cfg.rollout.phaseNote
@@ -3846,8 +3854,8 @@ function flightMetaAnswer(
       // Model-less carriers: only a uniform subfleet penetration is an honest
       // number for meta copy; split/no-model carriers get none.
       const answer = carrierPrediction(cfg, reader, flightNumber);
-      if (answer.kind === "penetration" && Math.round(answer.pen.pct * 100) > 0) {
-        return ` ${capitalize(probPhrase(answer.pen.pct))} of the aircraft that fly it have Starlink.`;
+      if (answer.kind === "penetration" && answer.pen.pct > 0) {
+        return ` ${capitalize(sharePhrase(answer.pen.pct))} of the aircraft that fly it have Starlink.`;
       }
     }
   } catch {
@@ -4355,6 +4363,66 @@ const checkFlightPage: Handler = async (ctx) => {
   return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"), {
     popular: ctx.reader.getPopularFlights(),
   });
+};
+
+/**
+ * GET /static/recent/{FN}/{YYYY-MM-DD}[?origin=&destination=]: what the
+ * flight's own dated page says right now, for one row of the homepage's
+ * remembered flights (src/client/recent-checks.ts).
+ *
+ * Built the way the page builds its card (datedAnswer, then the same context
+ * and renderer), so the row and the page cannot word one answer two ways, a
+ * yes for some legs only included. From the database alone, like the page's
+ * first render: a homepage opening must not spend a live aircraft lookup.
+ * `tails` and `firm` are what the row's change note compares; `passed` tells
+ * the browser to drop a flight whose date is over at its own airport.
+ *
+ * Answered only for a browser on this host's own pages, in the flight's one
+ * canonical spelling; everything else is the same bare 404.
+ */
+const recentCheckAnswer: Handler = async (ctx) => {
+  if (ctx.req.method !== "GET") return methodNotAllowed(["GET"]);
+  const none = () =>
+    text("Not found", "text/plain; charset=utf-8", {
+      status: 404,
+      cache: CACHE.noStore,
+      headers: { ...BASE_RESPONSE_HEADERS, "X-Robots-Tag": "noindex" },
+    });
+  const pinned = tenantConfig(ctx.tenant);
+  if (!pinned || !ctx.site.features.checkFlightPage || !fromOurPageInABrowser(ctx.req, ctx.url)) {
+    return none();
+  }
+  const rest = ctx.url.pathname.slice(RECENT_PREFIX.length);
+  const parsed = parseCheckFlightPath(`/check-flight/${rest}`);
+  if (parsed.kind !== "flight" || !parsed.date || rest !== `${parsed.fn}/${parsed.date}`) {
+    return none();
+  }
+  const { fn, date } = parsed;
+  const cfg = permalinkCarrier(pinned, fn);
+  if (!cfg) return none();
+  const legParse = parseLegQuery(
+    ctx.url.searchParams.get("origin"),
+    ctx.url.searchParams.get("destination")
+  );
+  const dated = await datedAnswer(cfg, ctx.reader, fn, date, legParse);
+  if (!dated || dated.body.error) return none();
+  const variants = buildFlightLookupVariants(cfg, fn);
+  const facts = ctx.reader.flightNumberHasData(variants)
+    ? buildFlightFacts(ctx.reader, cfg, fn, variants, legParse.leg, datedAnswerLegs(dated))
+    : undefined;
+  const answerCtx = answerContext(ctx.site, dated, facts);
+  const answer = renderFlightAnswer(dated.body, answerCtx);
+  return text(
+    JSON.stringify({
+      headline: answer.headline,
+      tone: answer.tone,
+      firm: answer.firm,
+      tails: answerTails(dated.body),
+      passed: datePassed(answerCtx),
+    }),
+    "application/json",
+    { cache: CACHE.noStore, headers: { ...BASE_RESPONSE_HEADERS, "X-Robots-Tag": "noindex" } }
+  );
 };
 
 /** `/route-planner/SFO/EWR` → `{ origin, destination }`; anything else → null. */
@@ -6458,9 +6526,13 @@ export function createApp(
   const staticFamily: Handler = (ctx) =>
     ctx.url.pathname === SHARE_TAP_PATH
       ? shareTap(ctx)
-      : ctx.url.pathname.startsWith("/static/share/")
-        ? sharePicture(ctx)
-        : staticDir(ctx);
+      : ctx.url.pathname === RECENT_TAP_PATH
+        ? recentTap(ctx)
+        : ctx.url.pathname.startsWith(RECENT_PREFIX)
+          ? recentCheckAnswer(ctx)
+          : ctx.url.pathname.startsWith("/static/share/")
+            ? sharePicture(ctx)
+            : staticDir(ctx);
   const getReader = createReaderFactory(db);
   const verifiedCrawler = createCrawlerVerifier(opts.crawlerDns);
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
@@ -6679,6 +6751,7 @@ export function createApp(
         ? "mcp"
         : url.pathname.startsWith("/check-flight/") ||
             url.pathname.startsWith("/static/share/") ||
+            url.pathname.startsWith(RECENT_PREFIX) ||
             url.pathname.startsWith("/cal/") ||
             url.pathname === "/badge.svg"
           ? "page"

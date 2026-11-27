@@ -70,12 +70,14 @@ describe("the airport tables", () => {
   test("the codes the gauge named on its first day are placed", () => {
     const countries = {
       DVO: "PH",
+      GOX: "IN",
       GYD: "AZ",
       LUN: "ZM",
       MUX: "PK",
       NCL: "GB",
       ORK: "IE",
       SKB: "KN",
+      TAS: "UZ",
       TFU: "CN",
     };
     for (const [code, country] of Object.entries(countries)) {

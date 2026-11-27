@@ -5,8 +5,9 @@ import {
   fmt,
   longDate,
   probLabel,
-  probPhrase,
   probTier,
+  shareLabel,
+  sharePhrase,
 } from "../ui/format";
 import { PROB_TIER_TONE, type Tone } from "../ui/tone-classes";
 import type { FlightFacts } from "./types";
@@ -58,8 +59,8 @@ export function usualAnswer(flight: FlightFacts): UsualAnswer {
       };
     }
     return {
-      sentence: `${capitalize(probPhrase(rule.probability))} of the ${band} aircraft that fly ${fn} have Starlink.`,
-      figure: probLabel(rule.probability),
+      sentence: `${capitalize(sharePhrase(rule.probability))} of the ${band} aircraft that fly ${fn} have Starlink.`,
+      figure: shareLabel(rule.probability),
       caption: "Of the aircraft that fly it have Starlink",
       tone: PROB_TIER_TONE[probTier(rule.probability)],
     };
@@ -106,7 +107,7 @@ function aircraftAnswer(
   }
   return {
     sentence,
-    figure: probLabel(probability),
+    figure: shareLabel(probability),
     caption: "Of the aircraft that fly it have Starlink",
     tone: PROB_TIER_TONE[probTier(probability)],
   };

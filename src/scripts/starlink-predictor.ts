@@ -50,6 +50,7 @@ import {
 import { formatFactDate } from "../airlines/rollout-facts";
 import { type StatementAnswer, statementAnswer } from "../airlines/statement-rule";
 import {
+  approxShare,
   bandLabel,
   capitalize,
   zonedClock,
@@ -67,7 +68,13 @@ import type {
 } from "../database/database";
 import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
 import type { RouteFlightLeg } from "../database/route-flights";
-import { airportDistanceMiles, detourBoundMiles, hubAllowedForTrip } from "../utils/airport-geo";
+import {
+  AIRPORT_COORDS,
+  airportDistanceMiles,
+  detourBoundMiles,
+  hubAllowedForTrip,
+} from "../utils/airport-geo";
+import { airportWithCode } from "../utils/airport-names";
 import {
   airportTimezone,
   flightDateWindow,
@@ -1943,14 +1950,14 @@ export function describeCarrierPrediction(
     );
   }
   const { sf, pen } = answer;
-  const pct = (pen.pct * 100).toFixed(0);
+  // The fleet page's percent for the same counts: a share, rounded down.
+  const lead = `${approxShare(pen.pct)} Starlink probability`;
   if (answer.aircraft) {
     const said = answer.aircraft.sentence;
-    return `~${pct}% Starlink probability: ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
+    return `${lead}: ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
   }
   // bandLabel drops the label's parentheses, so the hint is the only parenthetical.
   const band = `${bandLabel(sf.label)} aircraft${sf.flightNumberHint ? ` (${sf.flightNumberHint})` : ""}`;
-  const lead = `~${pct}% Starlink probability`;
   // A band that settles the answer gets no airline-wide rollout note: a
   // Hawaiian A330 flight has nothing to do with Alaska's 737s.
   if (pen.synthetic) {
@@ -2530,6 +2537,13 @@ function makePositioningLeg(route: string, probability: number): ItineraryLeg {
  * Every connection is gated on a geographic detour bound (airport-geo). The
  * coverage-ratio ranking is blind to geography and happily proposed OGG->SFO
  * via San Antonio; when no on-the-way routing exists, nothing IS the answer.
+ *
+ * A connection is offered only when every airport on it has coordinates, so
+ * the bound was computed rather than skipped. The flight feed hands us a new
+ * code days before anyone places it, and the gates used to pass what they
+ * could not check: DEN->EWR and EWR->LHR were offered by way of St. Kitts,
+ * with "?" for the hours. A trip that itself starts or ends at such a code
+ * keeps its nonstops, which need no geography.
  */
 export function planItinerary(
   reader: ScopedReader,
@@ -2553,12 +2567,38 @@ export interface PlanOptions {
  * Why a plan came back empty, so a page can say so instead of showing nothing:
  * "over_budget" — connections exist but all take too long against the nonstop;
  * "no_same_day" — Starlink flights reach `hubs`, but none flies on within
- * MAX_CONNECTION_HOURS of landing; "no_route" — no Starlink legs join the pair.
+ * MAX_CONNECTION_HOURS of landing; "no_route" — no Starlink legs join the pair;
+ * "unplaced_airport" — the trip starts or ends at `airports`, which have no
+ * coordinates yet, so no connection can be held to the detour bound and no
+ * nonstop with Starlink odds flies the pair.
  */
 export type EmptyPlanReason =
   | { kind: "over_budget"; budget_hours: number; nonstop_hours: number | null }
   | { kind: "no_same_day"; hubs: string[] }
-  | { kind: "no_route"; max_stops: number };
+  | { kind: "no_route"; max_stops: number }
+  | { kind: "unplaced_airport"; airports: string[] };
+
+/** Has coordinates, so the detour bound and the country gate can weigh it. */
+const isPlaced = (code: string): boolean => AIRPORT_COORDS[code] !== undefined;
+
+/**
+ * The ends of a trip that have no coordinates yet. A trip with any gets its
+ * nonstops and no connection, so an answer built on the planner must say that
+ * connections went unchecked, never that none exists.
+ */
+export function unplacedTripEnds(origin: string, destination: string): string[] {
+  return [origin, destination].map((code) => code.toUpperCase().trim()).filter((c) => !isPlaced(c));
+}
+
+/**
+ * Why a trip with an unplaced end lists no connection, for an answer that
+ * would otherwise read as "none exists": ORD to St. Kitts by way of Newark is
+ * a real routing the planner leaves out, not one it failed to find.
+ */
+export function unplacedTripNote(airports: string[]): string {
+  const names = airports.map(airportWithCode).join(" and ");
+  return `connections were not checked, because ${names} ${airports.length === 1 ? "is" : "are"} not in our airport tables yet and none can be held to how far out of the way it goes. One may exist; only nonstops are covered here`;
+}
 
 /** planItinerary, with the reason when nothing is offered. */
 export function planRoute(
@@ -2576,11 +2616,17 @@ export function planRoute(
   const enforceBudget = options.enforceTimeBudget ?? ENFORCE_ITINERARY_TIME_BUDGET;
   const maxItineraries = options.maxItineraries ?? 10;
   const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
-  const maxStops = maxStopsAsked;
   const nowSec = Math.floor(Date.now() / 1000);
 
-  // Detour gate. Unknown airports null the bound / the running path total,
-  // which disables pruning for that query / that path (fail open).
+  // An airport without coordinates can't be held to the detour bound or the
+  // domestic-hub gate, so it is never a hub, and a trip that starts or ends
+  // at one is answered with its nonstops alone.
+  const unplaced = unplacedTripEnds(orig, dest);
+  const maxStops = unplaced.length === 0 ? maxStopsAsked : 0;
+
+  // Detour gate. With every airport of a connection placed, neither the bound
+  // nor a path total is ever null where a connection is weighed; the null
+  // branches below serve the nonstop of an unplaced trip.
   const directMiles = airportDistanceMiles(orig, dest);
   const bound = directMiles !== null ? detourBoundMiles(directMiles) : null;
   const pathMiles = (flown: number | null, from: string, to: string): number | null => {
@@ -2648,7 +2694,7 @@ export function planRoute(
     budgetHours === null ||
     it.total_flight_hours === null ||
     fitsHourBudget(it, budgetHours);
-  const hubAllowed = (hub: string) => hubAllowedForTrip(orig, dest, hub);
+  const hubAllowed = (hub: string) => isPlaced(hub) && hubAllowedForTrip(orig, dest, hub);
 
   const legHours = (leg: ItineraryLeg): number | null => withDuration(leg).duration_hours;
 
@@ -3000,15 +3046,17 @@ export function planRoute(
   const result = [...fullKept, ...partialSorted.slice(0, 3)];
   if (result.length > 0) return { itineraries: result, empty: null };
   const empty: EmptyPlanReason =
-    overBudget && budgetHours !== null
-      ? {
-          kind: "over_budget",
-          budget_hours: budgetHours,
-          nonstop_hours: hasNonstop ? baseline.duration_hours : null,
-        }
-      : missedHubs.size > 0
-        ? { kind: "no_same_day", hubs: [...missedHubs].sort() }
-        : { kind: "no_route", max_stops: maxStops };
+    unplaced.length > 0 && maxStopsAsked > 0
+      ? { kind: "unplaced_airport", airports: unplaced }
+      : overBudget && budgetHours !== null
+        ? {
+            kind: "over_budget",
+            budget_hours: budgetHours,
+            nonstop_hours: hasNonstop ? baseline.duration_hours : null,
+          }
+        : missedHubs.size > 0
+          ? { kind: "no_same_day", hubs: [...missedHubs].sort() }
+          : { kind: "no_route", max_stops: maxStops };
   return { itineraries: [], empty };
 }
 
@@ -3027,6 +3075,10 @@ export function emptyPlanMessage(why: EmptyPlanReason, destination: string): str
       return why.max_stops === 0
         ? `No nonstop with ${odds} flies between these airports.`
         : `No flights with ${odds} connect these airports within ${why.max_stops} stop${why.max_stops === 1 ? "" : "s"}.`;
+    }
+    case "unplaced_airport": {
+      const odds = `Starlink odds of ${Math.round(MIN_LEG_PROBABILITY * 100)}% or more`;
+      return `${why.airports.join(" and ")} ${why.airports.length === 1 ? "is" : "are"} not in our airport tables yet, so a connection can't be checked for how far out of the way it goes and none is listed. No nonstop with ${odds} flies between these airports.`;
     }
   }
 }

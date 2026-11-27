@@ -78,10 +78,13 @@ describe("buildCardSpecs", () => {
     expect(hub.params.get("layout")).toBe("grid");
     const cards = JSON.parse(hub.params.get("cards") as string) as Array<{
       name: string;
-      pct: number;
+      pct?: number;
+      count?: number;
     }>;
     expect(cards.map((c) => c.name)).toEqual(["UNITED", "HAWAIIAN"]);
-    expect(cards[1].pct).toBe(0);
+    expect(cards[0].pct).toBe(50);
+    // Hawaiian's roster holds aircraft outside the programme: a count, no share.
+    expect(cards[1]).toEqual({ name: "HAWAIIAN", accent: expect.any(String), count: 0 });
   });
 
   test("unknown airline codes are skipped, never defaulted to another tenant", async () => {

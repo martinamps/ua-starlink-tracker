@@ -13,6 +13,7 @@ import {
   compareRoute,
   joinSentences,
   planItinerary,
+  planRoute,
   subfleetPenetration,
 } from "../src/scripts/starlink-predictor";
 import { createReaderFactory } from "../src/server/context";
@@ -501,10 +502,16 @@ describe("planItinerary geographic gates", () => {
     expect(createReaderFactory(sdb)("ALL").getServedRoutePairs()).toBeNull();
   });
 
-  test("an origin outside the coordinate table disables the detour gate, not the planner", () => {
-    // QQQ has no coordinates, so nothing can be proven a detour. The SAT→SFO
-    // leg must come back as a partial rather than the planner returning [].
-    expect(vias("QQQ", "SFO").length).toBeGreaterThan(0);
+  test("an origin outside the coordinate table is offered no connection", () => {
+    // QQQ has no coordinates, so no connection from it can be held to the
+    // detour bound. This once asserted the opposite (the gate failed open and
+    // paired every Starlink leg into SFO with a made-up QQQ positioning hop);
+    // its nonstops are what stays, in tests/planner-unplaced-hub.test.ts.
+    expect(vias("QQQ", "SFO")).toEqual([]);
+    expect(planRoute(reader, "QQQ", "SFO", NO_PROB).empty).toEqual({
+      kind: "unplaced_airport",
+      airports: ["QQQ"],
+    });
   });
 
   // Mutates the census, so it must stay LAST in this describe.

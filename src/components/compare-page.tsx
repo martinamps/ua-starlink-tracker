@@ -18,7 +18,7 @@ import { StagePill, trackedStage } from "./atoms";
 import { TypeShareTable } from "./community-airline-page";
 import type { Link } from "./layout";
 import { ButtonLink, Eyebrow, PageHeader, PageShell, Panel, StatValue } from "./layout";
-import { fmt, pct, probLabel } from "./ui/format";
+import { fmt, pct, shareLabel } from "./ui/format";
 import { Meter } from "./ui/meter";
 
 export interface CompareSide {
@@ -49,7 +49,7 @@ export interface CompareSide {
 function syntheticShare(p: number): string {
   if (p >= 1) return "All";
   if (p <= 0) return "None";
-  return probLabel(p);
+  return shareLabel(p);
 }
 
 function SidePanel({ side }: { side: CompareSide }) {

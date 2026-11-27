@@ -31,7 +31,7 @@ const count = (scope: string, action: ShareAction) =>
 
 /** The body when it is at most MAX_TAP_BODY bytes; a longer one is dropped
  * unread past that, whatever length it declared or did not. */
-async function shortBody(req: Request): Promise<string | null> {
+export async function shortBody(req: Request): Promise<string | null> {
   if (Number(req.headers.get("content-length") ?? "0") > MAX_TAP_BODY || !req.body) return null;
   const reader = req.body.getReader();
   const bytes: number[] = [];
@@ -58,7 +58,7 @@ async function shortBody(req: Request): Promise<string | null> {
  * browser and clicks the control does count: nothing here can tell it from a
  * person.
  */
-function fromOurPageInABrowser(req: Request, url: URL): boolean {
+export function fromOurPageInABrowser(req: Request, url: URL): boolean {
   return (
     req.headers.get("sec-fetch-site") === "same-origin" && classifyRequest(req, url) === "browser"
   );
