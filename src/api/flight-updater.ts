@@ -337,9 +337,11 @@ export async function checkNewPlanes(db: Database): Promise<number> {
   );
 }
 
-/** One Flightradar24 request per tick, so 3,840 a day. That figure is a
- * ceiling agreed for the vendor: a schedule change moves polls between tails
- * and never adds one (tests/flight-updater-schedule.test.ts). */
+/** One Flightradar24 request per tick, so 3,840 in a day of ticks. That
+ * figure is the ceiling agreed for the vendor: a schedule change moves polls
+ * between tails and never adds one. tests/flight-updater-schedule.test.ts
+ * holds the tick length, the one tail pickNextTail names, and the one request
+ * the running loop makes per tick. */
 export const FLIGHT_UPDATER_INTERVAL_MS = 22.5 * 1000;
 
 export type QueueTier = "starlink" | "slow_lap" | "fleet" | "community";
@@ -347,8 +349,9 @@ export type QueueTier = "starlink" | "slow_lap" | "fleet" | "community";
 /**
  * The one tail this tick polls, or none.
  *
- * 1. A slow-lap airline's tail when its slot is due: nobody reads those
- *    flights, so they get one poll a day each instead of a place in the lap.
+ * 1. A slow-lap airline's tail when one is due: no public surface reads
+ *    those flights, so the airline keeps a lap of its own
+ *    (flightPollLapHours), spread evenly, and no place in the main queue.
  * 2. Otherwise the main queue, stalest first, so no airline starves behind
  *    the UA/AS DateFound-ordered block.
  * 3. The roster fallbacks, only when the main queue has nothing due. That is
@@ -358,7 +361,7 @@ export type QueueTier = "starlink" | "slow_lap" | "fleet" | "community";
  *    nothing, and no surface reads an unlisted tail's flights.
  */
 export function pickNextTail(db: Database): { tail: string | null; tier: QueueTier } {
-  const slow = getSlowLapTailDue(db);
+  const slow = getSlowLapTailDue(db, unixNow(), FLIGHT_UPDATER_INTERVAL_MS / 1000);
   if (slow) return { tail: slow, tier: "slow_lap" };
 
   for (const tail of getStarlinkTailsByCheckAge(db)) {
@@ -381,11 +384,15 @@ export function pickNextTail(db: Database): { tail: string | null; tier: QueueTi
  * Instead of bulk updates every 8 hours, continuously updates 1 plane at a time
  * Much more polite to APIs and avoids rate limiting
  */
-export function startFlightUpdater(db: Database): JobHandle | undefined {
+export function startFlightUpdater(
+  db: Database,
+  /** A stand-in vendor, so a test can drive the loop and count its requests. */
+  deps: { api?: FlightAPI } = {}
+): JobHandle | undefined {
   const INTERVAL_MS = FLIGHT_UPDATER_INTERVAL_MS;
   const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
-  const api = createFlightAPI();
+  const api = deps.api ?? createFlightAPI();
   if (!api) {
     error("Failed to create flight API, flight updater disabled");
     return undefined;
