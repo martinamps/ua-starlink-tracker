@@ -55,8 +55,8 @@
  *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
  *                    client_class:extension                          (5)
  *   visit_source:    http.request only (classifyVisitSource): extension |
- *                    search | assistant | social | calendar | own | direct |
- *                    other | none                                    (9)
+ *                    search | assistant | mcp-link | social | calendar |
+ *                    own | direct | other | none                     (10)
  *   market:          http.request only (classifyMarket): home | abroad |
  *                    unknown, against the site's home market      (3)
  *   preload:         http.request only (classifyPreload): none | prefetch |
@@ -277,7 +277,7 @@ export function requestClientTags(req: Request, url: URL): Tags {
 // ============ Visit source ============
 
 /**
- * Where a request came from, as one of nine fixed words. The referrer, origin
+ * Where a request came from, as one of ten fixed words. The referrer, origin
  * and utm_source are read here and nowhere else, and only the word leaves:
  * no host, path or query of the referring page reaches a metric, span or log.
  */
@@ -285,6 +285,7 @@ export const VISIT_SOURCES = [
   "extension",
   "search",
   "assistant",
+  "mcp-link",
   "social",
   "calendar",
   "own",
@@ -400,10 +401,22 @@ const UTM_ALIASES: ReadonlyMap<string, OutsideSource> = new Map([
 ]);
 // The utm_sources this site writes itself: the link inside a calendar event
 // (utils/ics.ts), and the live-page line that ends an MCP answer
-// (api/mcp-live-page.ts). A person who follows the second was sent by an
-// assistant, and most MCP clients open links with no referrer.
+// (api/mcp-live-page.ts).
 const OWN_CALENDAR_UTM = "cal";
 const OWN_MCP_UTM = "mcp";
+const OWN_MCP_PARAM = `utm_source=${OWN_MCP_UTM}`;
+
+/**
+ * Whether the URL carries the live-page link's mark exactly as
+ * api/mcp-live-page.ts writes it: one utm_source, spelled `utm_source=mcp`
+ * in the query as sent. "mcp-link" has to mean our own link and nothing an
+ * assistant wrote, so another casing, an encoded spelling, padding or a
+ * repeated parameter is not the mark.
+ */
+function carriesOwnMcpMark(url: URL): boolean {
+  if (url.searchParams.getAll("utm_source").length !== 1) return false;
+  return url.search.slice(1).split("&").includes(OWN_MCP_PARAM);
+}
 
 function outsideSourceOfHost(host: string): OutsideSource | null {
   for (const [source, domains] of SOURCE_DOMAINS) {
@@ -436,7 +449,9 @@ function sourceOfUtm(raw: string | null): VisitSource | null {
   const value = raw.slice(0, 64).trim().toLowerCase();
   if (!value) return null;
   if (value === OWN_CALENDAR_UTM) return "calendar";
-  if (value === OWN_MCP_UTM) return "assistant";
+  // Reached only by a spelling carriesOwnMcpMark turned down: it is not our
+  // link as written, and it names no assistant either.
+  if (value === OWN_MCP_UTM) return "other";
   // A utm_source never proves a search visit (ads and newsletters say "google" too).
   const named = UTM_ALIASES.get(value) ?? outsideSourceOfHost(value);
   return named && named !== "search" ? named : "other";
@@ -448,9 +463,12 @@ function sourceOfUtm(raw: string | null): VisitSource | null {
  *  2. Referer (else Origin) names a search engine, assistant or
  *     social site. A search engine on /api/* is some script on that
  *     engine's page: not a search visit, and not our extension
- *     either, which sends no referrer and is known by rule 1 alone   → that class | other
+ *     either, which sends no referrer and is known by rule 1 alone.
+ *     An assistant's referrer on a URL with our own MCP mark is
+ *     still our link, shown inside that assistant                    → that class | mcp-link | other
  *  3. Referer/Origin is one of our own hosts                         → own
- *  4. utm_source: ours (cal, mcp), an assistant's or a social site's → calendar | assistant | social
+ *  4. utm_source: our MCP link's exact mark (carriesOwnMcpMark),
+ *     our calendar's, an assistant's or a social site's              → mcp-link | calendar | assistant | social
  *  5. Sec-Fetch-Site same-origin/same-site. Our pages send no
  *     referrer (Referrer-Policy: no-referrer), so this is how
  *     in-site clicks and our own scripts' calls are seen             → own
@@ -462,9 +480,14 @@ function sourceOfUtm(raw: string | null): VisitSource | null {
  * A user agent alone never makes a request "assistant": an assistant's
  * fetcher is already `client_class` claude | gptbot | perplexity, and this
  * tag is about where a visit came from, not who is asking.
+ *
+ * "assistant" and "mcp-link" are both a person sent by an assistant, kept
+ * apart by whose link they followed: "assistant" is the assistant's own
+ * citation of a page (its referrer, or the utm_source it adds), "mcp-link"
+ * the live-page link this site writes into its own MCP answers.
  */
 export function classifyVisitSource(req: Request, url: URL, clientClass: string): VisitSource {
-  // The type promises one of nine words; this holds it at run time too,
+  // The type promises one of ten words; this holds it at run time too,
   // whatever a later edit to the rules or lists lets through.
   const source: unknown = visitSourceByRule(req, url, clientClass);
   return typeof source === "string" && VISIT_SOURCE_SET.has(source)
@@ -477,7 +500,10 @@ function visitSourceByRule(req: Request, url: URL, clientClass: string): VisitSo
   const referred =
     sourceOfReferrer(req.headers.get("referer")) ?? sourceOfReferrer(req.headers.get("origin"));
   if (referred === "search") return url.pathname.startsWith("/api/") ? "other" : "search";
+  const ownMcpLink = carriesOwnMcpMark(url);
+  if (referred === "assistant" && ownMcpLink) return "mcp-link";
   if (referred && referred !== "other") return referred;
+  if (ownMcpLink) return "mcp-link";
   const utm = sourceOfUtm(url.searchParams.get("utm_source"));
   if (utm && utm !== "other") return utm;
   const fetchSite = req.headers.get("sec-fetch-site");

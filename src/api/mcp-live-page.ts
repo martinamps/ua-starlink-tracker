@@ -6,8 +6,8 @@
  * noindex: no gate passed, no link.
  *
  * `utm_source=mcp` is how the visit-source tag (observability/metrics.ts)
- * counts the person who follows one as sent by an assistant: most MCP
- * clients open links with no referrer.
+ * counts the person who follows one, as `mcp-link`: most MCP clients open
+ * links with no referrer. Only this exact spelling counts there.
  */
 import {
   CANONICAL_FLIGHT_PERMALINK,

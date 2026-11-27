@@ -1,5 +1,5 @@
 /**
- * `visit_source` on the request counter: one of nine fixed words for where a
+ * `visit_source` on the request counter: one of ten fixed words for where a
  * request came from. What this pins: the set stays closed whatever a caller
  * sends, the boundary cases land where docs/OBSERVABILITY.md says, nothing of
  * the referrer but the word is emitted, and no response changes with it.
@@ -133,12 +133,6 @@ describe("classifyVisitSource", () => {
     expect(source("/?utm_source=Perplexity")).toBe("assistant");
     expect(source("/?utm_source=reddit")).toBe("social");
     expect(source("/check-flight/UA1/2026-06-01?utm_source=cal")).toBe("calendar");
-    // The live-page line that ends an MCP answer: an assistant sent this person,
-    // whether the client sent a referrer or opened the link from a desktop app.
-    expect(source("/check-flight/UA1/2026-06-01?utm_source=mcp")).toBe("assistant");
-    expect(source("/route-planner/SFO/EWR?utm_source=MCP", { "Sec-Fetch-Site": "none" })).toBe(
-      "assistant"
-    );
     expect(source("/?utm_source=google")).toBe("other");
     expect(source("/?utm_source=newsletter")).toBe("other");
     expect(source("/?utm_source=")).toBe("none");
@@ -149,6 +143,96 @@ describe("classifyVisitSource", () => {
     expect(source("/?utm_source=chatgpt.com", { Referer: "https://www.reddit.com/" })).toBe(
       "social"
     );
+  });
+
+  test("our own MCP link reads apart from an assistant's citation", () => {
+    const flight = "/check-flight/UA1/2026-06-01?utm_source=mcp";
+    const planner = "/route-planner?origin=SFO&destination=EWR&date=2026-06-01&utm_source=mcp";
+    // Most MCP clients open links with no referrer, from a desktop app or a new tab.
+    expect(source(flight)).toBe("mcp-link");
+    expect(source(flight, { "Sec-Fetch-Site": "none" })).toBe("mcp-link");
+    expect(source(flight, { "Sec-Fetch-Site": "cross-site" })).toBe("mcp-link");
+    expect(source(planner, { "Sec-Fetch-Site": "none" })).toBe("mcp-link");
+    expect(source("/route-planner/SFO/EWR?utm_source=mcp")).toBe("mcp-link");
+    // Shown inside an assistant's web app it is still our link, not its citation.
+    expect(source(flight, { Referer: "https://claude.ai/chat/123" })).toBe("mcp-link");
+    expect(source(flight, { Referer: "https://chatgpt.com/" })).toBe("mcp-link");
+    // The assistant's own citation of the same page.
+    expect(source("/check-flight/UA1/2026-06-01", { Referer: "https://chatgpt.com/" })).toBe(
+      "assistant"
+    );
+    expect(source("/check-flight/UA1/2026-06-01?utm_source=chatgpt.com")).toBe("assistant");
+    expect(source("/check-flight/UA1/2026-06-01?utm_source=claude")).toBe("assistant");
+    // Copied on: a named search, social or own referrer outranks the mark.
+    expect(source(flight, { Referer: "https://www.reddit.com/" })).toBe("social");
+    expect(source(flight, { Referer: "https://www.google.com/" })).toBe("search");
+    expect(source(flight, { Referer: `https://${HUB_HOST}/` })).toBe("own");
+    // An unnamed referrer says nothing against it.
+    expect(source(flight, { Referer: "https://example.org/" })).toBe("mcp-link");
+    expect(source(flight, {}, "extension")).toBe("extension");
+  });
+
+  test("only the mark exactly as the link writes it is mcp-link", () => {
+    const notTheMark = [
+      "utm_source=MCP",
+      "utm_source=Mcp",
+      "utm_source=mcp%20",
+      "utm_source=%20mcp",
+      "utm_source=+mcp",
+      "utm_source=mcp+",
+      "utm_source=%6dcp",
+      "utm_source=%6D%63%70",
+      "utm_source=mcp%00",
+      "utm_source=mcp&utm_source=mcp",
+      "utm_source=mcp&utm_source=chatgpt.com",
+      "utm_source=mcp&utm_source=",
+      "utm%5Fsource=mcp",
+      "utm_source=mcp&utm%5Fsource=mcp",
+      "UTM_SOURCE=mcp",
+      "utm_source=mcp-link",
+      "utm_source=mcp.example",
+      "utm_source=mcpx",
+      "utm_source=xmcp",
+      "utm_source=mcp,mcp",
+      "utm_source=mcp;utm_source=mcp",
+      "utm_source[]=mcp",
+      "utm_source==mcp",
+      "utm_source",
+      "utm_source=",
+      "utm_medium=mcp",
+      "xutm_source=mcp",
+      `utm_source=${"mcp".repeat(2000)}`,
+      `utm_source=mcp${"a".repeat(8000)}`,
+      `utm_source=${"mcp%20".repeat(500)}`,
+      "utm_source=%E0%A4%A",
+      "utm_source=m%C2%ADcp",
+      "utm_source=ｍｃｐ",
+      "utm_source=mcp%0d%0a",
+    ];
+    for (const query of notTheMark) {
+      for (const path of ["/check-flight/UA1", "/route-planner", "/", "/api/check-flight"]) {
+        const got = source(`${path}?${query}`, { "Sec-Fetch-Site": "none" });
+        expect(got, query).not.toBe("mcp-link");
+        // A spelling of "mcp" names no assistant either.
+        expect(got, query).not.toBe("assistant");
+        expect(VISIT_SOURCES).toContain(got);
+      }
+    }
+    // A repeat that leads with an assistant's name reads as that assistant's, as before.
+    expect(source("/check-flight/UA1?utm_source=chatgpt.com&utm_source=mcp")).toBe("assistant");
+    // A fragment never reaches the server, and other parameters don't unmake the mark.
+    for (const query of [
+      "utm_source=mcp",
+      "origin=SFO&destination=EWR&utm_source=mcp",
+      "utm_source=mcp&utm_medium=anything&x=utm_source%3Dmcp",
+      "&&utm_source=mcp&",
+    ]) {
+      expect(source(`/route-planner?${query}`), query).toBe("mcp-link");
+    }
+    // The mark in a path or a value is not the parameter.
+    expect(source("/check-flight/utm_source=mcp")).toBe("none");
+    expect(source("/?q=utm_source=mcp")).toBe("none");
+    expect(source("/?next=%3Futm_source%3Dmcp")).toBe("none");
   });
 
   test("fetch metadata splits a user-started visit from an unnamed outside one and from no signal", () => {
@@ -257,6 +341,57 @@ describe("the request counter", () => {
     );
     for (const call of calls.filter((c) => c.name !== "http.request")) {
       expect("visit_source" in call.tags, call.name).toBe(false);
+    }
+  });
+
+  test("an MCP link click and a citation click read apart on the counter, and only as words", async () => {
+    const calls = captureIncrements();
+    const browser = { "User-Agent": CHROME_UA, "Sec-Fetch-Site": "none" };
+    await app.dispatch(req("/check-flight/UA1?utm_source=mcp", UA_HOST, { headers: browser }));
+    await app.dispatch(
+      req("/check-flight/UA1?utm_source=chatgpt.com", UA_HOST, { headers: browser })
+    );
+    await app.dispatch(
+      req("/check-flight/UA1", UA_HOST, {
+        headers: { ...browser, "Sec-Fetch-Site": "cross-site", Referer: "https://chatgpt.com/" },
+      })
+    );
+    await app.dispatch(req("/check-flight/UA1?utm_source=MCP", UA_HOST, { headers: browser }));
+    const http = calls.filter((c) => c.name === "http.request");
+    expect(http.map((c) => c.tags.visit_source)).toEqual([
+      "mcp-link",
+      "assistant",
+      "assistant",
+      "other",
+    ]);
+    // Same tag keys with and without the mark: the split adds a value, not a key.
+    const keys = http.map((c) => Object.keys(c.tags).sort().join());
+    expect(new Set(keys).size).toBe(1);
+    const emitted = JSON.stringify(calls);
+    for (const leak of ["utm_source", "chatgpt", "=mcp"]) {
+      expect(emitted.includes(leak), leak).toBe(false);
+    }
+  });
+
+  test("a page reached by the MCP link is the page itself, with no mark in what it prints", async () => {
+    const pages: Array<[string, string]> = [
+      ["/check-flight/UA1", ""],
+      ["/route-planner", "origin=SFO&destination=EWR"],
+      ["/", ""],
+    ];
+    for (const [path, query] of pages) {
+      const plain = await app.dispatch(req(query ? `${path}?${query}` : path, UA_HOST));
+      const marked = await app.dispatch(
+        req(`${path}?${query ? `${query}&` : ""}utm_source=mcp`, UA_HOST)
+      );
+      expect(marked.status, path).toBe(plain.status);
+      const [plainBody, markedBody] = [await plain.text(), await marked.text()];
+      expect(markedBody.includes("utm_source"), path).toBe(false);
+      const canonical = (html: string) => html.match(/<link rel="canonical"[^>]*>/)?.[0];
+      expect(canonical(markedBody), path).toBe(canonical(plainBody));
+      expect(canonical(markedBody), path).toBeDefined();
+      const robots = (html: string) => html.match(/<meta name="robots"[^>]*>/)?.[0];
+      expect(robots(markedBody), path).toBe(robots(plainBody));
     }
   });
 
