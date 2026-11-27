@@ -14,8 +14,10 @@ import {
 } from "../database/database";
 import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { countZombieChildren } from "../observability/zombies";
+import { airportTimezone } from "../utils/airport-tz";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
+import { isAirportCode } from "../utils/outside-text";
 import { type ProgressRollup, emitFleetProgressCounts } from "./fleet-progress";
 
 const EMIT_INTERVAL_MS = 5 * 60 * 1000;
@@ -190,6 +192,7 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
   }
   emitRowCounts(db);
   emitCappedFutureShare(db);
+  emitUnplacedAirports(db);
   emitConsensusHealth(db);
   emitStoredFleetProgress(db);
   emitCommunityGuides(db);
@@ -335,6 +338,57 @@ function emitCappedFutureShare(db: Database): void {
     }
   } catch (err) {
     logError("Capped-future-share query failed", err);
+  }
+}
+
+/** airline -> the codes its upcoming flights carry that no airport table holds. */
+export function unplacedAirportsByAirline(db: Database): Map<string, string[]> {
+  const rows = db
+    .query(
+      `SELECT airline, UPPER(departure_airport) AS code FROM upcoming_flights
+       UNION
+       SELECT airline, UPPER(arrival_airport) AS code FROM upcoming_flights`
+    )
+    .all() as Array<{ airline: string; code: string | null }>;
+  const byAirline = new Map<string, string[]>();
+  for (const { airline, code } of rows) {
+    const codes = byAirline.get(airline) ?? [];
+    byAirline.set(airline, codes);
+    if (code && !airportTimezone(code)) codes.push(code);
+  }
+  for (const codes of byAirline.values()) codes.sort();
+  return byAirline;
+}
+
+let lastUnplacedLogged = "";
+
+function emitUnplacedAirports(db: Database): void {
+  try {
+    const byAirline = unplacedAirportsByAirline(db);
+    const named: string[] = [];
+    for (const [airline, codes] of byAirline) {
+      metrics.gauge(GAUGES.UPCOMING_UNPLACED_AIRPORTS, codes.length, {
+        airline: normalizeAirlineTag(airline),
+      });
+      // The feed's own text, so only what has the shape of a code is logged.
+      const shown = codes.filter(isAirportCode);
+      if (codes.length > 0) {
+        named.push(
+          `${airline}: ${shown.join(" ")}${shown.length < codes.length ? " (+ malformed)" : ""}`
+        );
+      }
+    }
+    const line = named.join("; ");
+    if (line !== lastUnplacedLogged) {
+      lastUnplacedLogged = line;
+      info(
+        line
+          ? `Airport codes no table holds, in upcoming flights: ${line}`
+          : "Every upcoming flight's airports are in the tables"
+      );
+    }
+  } catch (err) {
+    logError("Unplaced-airports query failed", err);
   }
 }
 

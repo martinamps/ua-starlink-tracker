@@ -304,6 +304,7 @@ import {
   airportLocalDate,
   airportTimezone,
   flightDateWindow,
+  isPlacedAirportPair,
   isRealIsoDate,
   secondsToFirstLocalMidnight,
 } from "../utils/airport-tz";
@@ -4533,8 +4534,11 @@ const routePlannerPage: Handler = (ctx) => {
     const flightNumbers = routeFlightNumbers(ctx, board);
     // A pair with an empty board that nobody flew this week stays reachable
     // (flight permalinks link it) but doesn't index, and the sitemap skips it.
+    // Nor does a pair with an end no airport table holds: its page can name
+    // neither the place nor its local time (the sitemap's rule again).
     const indexable =
-      board.flights.length > 0 || ctx.reader.routeIsRecent(parsed.origin, parsed.destination);
+      isPlacedAirportPair(parsed.origin, parsed.destination) &&
+      (board.flights.length > 0 || ctx.reader.routeIsRecent(parsed.origin, parsed.destination));
     return renderSubPage(
       ctx,
       RoutePage,

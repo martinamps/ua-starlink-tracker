@@ -15,6 +15,11 @@
  * no longer lists take the row of the airport they belong to: KIV is
  * Chișinău's, now RMO there, and MLH is the Mulhouse code of Basel/Mulhouse
  * (BSL), named for its own city so the two rows differ.
+ * Eight codes that route pages carried bare were added from the register as
+ * published on 2026-11-27 (ACT, ANU, CLL, GEO, LNS, MDH, OWB, XMN). Two by
+ * hand: ANU's municipality is the parish (Osbourn), so it takes the island's
+ * name as AUA does, and MDH lies between the two towns it serves (the
+ * register's municipality is Murphysboro, its keyword Carbondale).
  * A wrong city is worse than a bare code: a code that is not here prints as
  * its code alone, so add one only after checking it.
  */
@@ -29,6 +34,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   ACA: ["Acapulco"],
   ACC: ["Accra"],
   ACK: ["Nantucket"],
+  ACT: ["Waco"],
   ACV: ["Arcata/Eureka"],
   ADD: ["Addis Ababa"],
   ADK: ["Adak"],
@@ -48,6 +54,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   AMM: ["Amman"],
   AMS: ["Amsterdam"],
   ANC: ["Anchorage"],
+  ANU: ["Antigua"],
   ARN: ["Stockholm", "Arlanda"],
   ASE: ["Aspen"],
   ATH: ["Athens"],
@@ -139,6 +146,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   CKY: ["Conakry"],
   CLD: ["Carlsbad, California"],
   CLE: ["Cleveland"],
+  CLL: ["College Station"],
   CLT: ["Charlotte"],
   CLY: ["Calvi"],
   CMB: ["Colombo"],
@@ -230,6 +238,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   GCM: ["Grand Cayman"],
   GDL: ["Guadalajara"],
   GEG: ["Spokane"],
+  GEO: ["Georgetown, Guyana"],
   GGE: ["Georgetown, South Carolina"],
   GIG: ["Rio de Janeiro", "Galeão"],
   GJT: ["Grand Junction"],
@@ -338,6 +347,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   LIT: ["Little Rock"],
   LJU: ["Ljubljana"],
   LNK: ["Lincoln, Nebraska"],
+  LNS: ["Lancaster, Pennsylvania"],
   LOS: ["Lagos"],
   LRD: ["Laredo"],
   LRH: ["La Rochelle"],
@@ -357,6 +367,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   MCO: ["Orlando"],
   MCT: ["Muscat"],
   MCW: ["Mason City"],
+  MDH: ["Carbondale/Murphysboro"],
   MDT: ["Harrisburg"],
   MDW: ["Chicago", "Midway"],
   MED: ["Medina"],
@@ -432,6 +443,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   OTP: ["Bucharest"],
   OTZ: ["Kotzebue"],
   OUA: ["Ouagadougou"],
+  OWB: ["Owensboro"],
   PAE: ["Everett", "Paine Field"],
   PAH: ["Paducah"],
   PAP: ["Port-au-Prince"],
@@ -593,6 +605,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   WRG: ["Wrangell"],
   WYS: ["West Yellowstone"],
   XFW: ["Hamburg", "Finkenwerder"],
+  XMN: ["Xiamen"],
   XNA: ["Northwest Arkansas"],
   XPL: ["Comayagua"],
   XWA: ["Williston"],

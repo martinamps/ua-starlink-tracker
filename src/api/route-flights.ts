@@ -135,6 +135,9 @@ export interface RouteFlightBoard {
   min_observations: number;
   flights: RouteFlightRow[];
   note: string;
+  /** Present only when no table holds the origin's zone: every clock time and
+   * day on the board is then UTC, and the page says so. */
+  utc_times?: true;
 }
 
 /** Yesterday through ~11 months out; anything else is a typo or a scrape. */
@@ -460,5 +463,6 @@ export function buildRouteFlightBoard(
     min_observations: ROUTE_BOARD_MIN_OBSERVATIONS,
     flights: rows.map(({ minutes: _, ...r }) => r),
     note: `Odds come from ${source}. Planes can be swapped before departure.`,
+    ...(zone ? {} : { utc_times: true as const }),
   };
 }

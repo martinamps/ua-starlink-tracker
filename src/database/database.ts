@@ -84,6 +84,7 @@ import type {
 } from "../types";
 import type { AircraftTypePageData } from "../types";
 import { airportCountry } from "../utils/airport-geo";
+import { isPlacedAirportPair } from "../utils/airport-tz";
 import { DB_PATH } from "../utils/constants";
 import { excludeMassWriteDays } from "../utils/install-rate";
 import type { JobStampStore } from "../utils/job-runner";
@@ -2965,6 +2966,7 @@ export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] 
   const latest = new Map<string, number>();
   const touch = (origin: string, destination: string, t: number | null) => {
     if (!isCleanAirportPair(origin, destination)) return;
+    if (!isPlacedAirportPair(origin, destination)) return;
     // Future timestamps are corrupt rows — treat as unknown, keep the route.
     const sane = t && t <= nowSec ? t : 0;
     const key = `${origin}-${destination}`;
