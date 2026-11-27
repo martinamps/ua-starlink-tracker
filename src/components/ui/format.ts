@@ -11,15 +11,25 @@ export function fmt(n: number, maximumFractionDigits = 0): string {
   return n.toLocaleString("en-US", { maximumFractionDigits });
 }
 
-/** Share as "35%", floored so no page claims more than the data: "100%" only
- * when every aircraft has it, ">99%" and "<1%" at the edges. */
+/**
+ * The one rule that turns a count into a percent, on every page, feed, JSON
+ * field and tool answer: the whole number below the share, so no surface says
+ * a share before it is reached. 100 only when every aircraft has it.
+ * Multiplied before dividing: (29 / 100) * 100 is 28.999… in floating point.
+ */
+export function pctWhole(n: number, total: number): number {
+  if (total <= 0 || n <= 0) return 0;
+  if (n >= total) return 100;
+  return Math.floor((n * 100) / total);
+}
+
+/** pctWhole as "35%" for people, with ">99%" and "<1%" at the edges where the
+ * bare number would read as all or none. */
 export function pct(n: number, total: number): string {
-  if (total <= 0) return "0%";
-  if (n >= total) return "100%";
-  const p = (n / total) * 100;
-  if (p > 99) return ">99%";
-  if (p > 0 && p < 1) return "<1%";
-  return `${Math.floor(p)}%`;
+  const whole = pctWhole(n, total);
+  if (whole === 99 && n * 100 > total * 99) return ">99%";
+  if (whole === 0 && n > 0 && total > 0) return "<1%";
+  return `${whole}%`;
 }
 
 /** A 0..1 probability as a whole percent, clamped. */

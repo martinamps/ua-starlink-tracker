@@ -10,6 +10,7 @@ import path from "node:path";
 import { type Page, chromium } from "playwright";
 import { BY_TYPE_CARD_CAPTION, trackingMethod } from "../src/airlines/published-count";
 import { AIRLINES, SITES, siteForAirline } from "../src/airlines/registry";
+import { pctWhole } from "../src/components/ui/format";
 import { isBulkGid } from "../src/database/database";
 import { denominatorIsPublishable, shareCardFile } from "../src/utils/share-cards";
 
@@ -180,7 +181,7 @@ export async function buildCardSpecs(
   // ── hub card ────────────────────────────────────────────────────────────────
   const cards = summary.airlines.map((a) => ({
     name: a.name.replace(/ Airlines?$/, "").toUpperCase(),
-    pct: Math.round(a.percentage),
+    pct: pctWhole(a.installed, a.total),
     accent: AIRLINES[a.code]?.brand.accentColor.replace("#", "") ?? "0ea5e9",
   }));
   specs.push({
@@ -243,7 +244,7 @@ export function buildShareCardSpecs(
 
   const cards = summary.airlines.map((a) => ({
     name: a.name.replace(/ Airlines?$/, "").toUpperCase(),
-    pct: Math.round(a.percentage),
+    pct: pctWhole(a.installed, a.total),
     accent: AIRLINES[a.code]?.brand.accentColor.replace("#", "") ?? "0ea5e9",
   }));
   specs.push({
