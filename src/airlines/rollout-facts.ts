@@ -1660,8 +1660,18 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     statusLabel: "No Starlink commitment",
     insteadOf: "Anuvu Dedicated Space upgrades across 100+ narrowbodies",
     summary:
-      "Turkish is upgrading more than 100 narrowbodies with Anuvu's Dedicated Space service.",
+      "Turkish says it is running a tender with low-orbit providers such as Amazon and Starlink, for use outside Turkish airspace. Today it is upgrading more than 100 narrowbodies with Anuvu's Dedicated Space service.",
     facts: [
+      {
+        // Said at the H1 2026 results briefing; reported in Turkish only. The
+        // source names Amazon and Starlink as examples, not as a shortlist.
+        fact: "In August 2026 Turkish Airlines chairman Murat Şeker said the airline is running a tender with low-orbit satellite providers such as Amazon and Starlink. Turkish rules restrict that service inside the country, so the plan is for it to switch on once aircraft leave Turkish airspace, on international flights; the airline is in talks with the transport ministry and the telecoms regulator BTK.",
+        asOf: "2026-08-11",
+        source: {
+          label: "HavaSosyalMedya (H1 2026 results briefing, in Turkish)",
+          url: "https://havasosyalmedya.com/turk-hava-yollarindan-ucak-ici-internet-icin-ara-cozum-leo-uydulari-ve-mevzuat-temaslari-surecte/",
+        },
+      },
       {
         // Past tense: a future-dated April 2026 target published in August 2026
         // reads as pending. The source has had no follow-up, so the fact says
