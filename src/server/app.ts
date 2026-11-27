@@ -1584,8 +1584,10 @@ const apiPredictFlight: Handler = ({ url, reader, getReader, tenant }) => {
  * calendar watch). Only a flight this host's permalink handler owns, in the
  * spelling it serves without a redirect; anything else (the "(any)" positioning
  * leg, another carrier's prefix) gets no link rather than a 404 or a hop.
- * Every leg of a trip carries the searched day: the planner builds connections
- * from route history, not same-day schedules, so it holds no later date to use.
+ * Only the first leg takes the searched day. The planner builds connections
+ * from route history, not same-day schedules, and most later legs fly the next
+ * day (58 of 78 live connections on 27 Nov), so a later leg links the undated
+ * page, which points on to its next departure, rather than a wrong day's answer.
  */
 function legPagePath(cfg: AirlineConfig, flightNumber: string, date: string | null): string | null {
   if (!CANONICAL_FLIGHT_PERMALINK.test(flightNumber) || isFlightZero(flightNumber)) return null;
@@ -1665,8 +1667,8 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
     targetDateUnix,
   }).map((it) => ({
     ...it,
-    legs: it.legs.map((leg) => {
-      const page = legPagePath(cfg, leg.flight_number, day);
+    legs: it.legs.map((leg, i) => {
+      const page = legPagePath(cfg, leg.flight_number, i === 0 ? day : null);
       return page ? { ...leg, page } : leg;
     }),
   }));
