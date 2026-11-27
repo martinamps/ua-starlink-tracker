@@ -130,6 +130,13 @@ import {
   guardedFlightRoutes,
 } from "./flight-verdict";
 import {
+  type LivePage,
+  flightLivePage,
+  livePageLine,
+  plannerLivePage,
+  routeLivePage,
+} from "./mcp-live-page";
+import {
   QATAR_PUBLISHED_DAYS_FORWARD,
   dohDateISO,
   qatarEquipmentClass,
@@ -254,6 +261,28 @@ function toolError(text: string, reason: ToolErrorReason): ToolResult {
   const result: ToolResult = { content: [{ type: "text", text }], isError: true };
   toolErrorReasons.set(result, reason);
   return result;
+}
+
+// The page that keeps answering what a flight tool answered, noted where the
+// tool knows its carrier and flight number; the dispatcher prints it last.
+const livePages = new WeakMap<ToolResult, LivePage>();
+
+function withLivePageNoted(result: ToolResult, page: LivePage | null): ToolResult {
+  if (page && !result.isError) livePages.set(result, page);
+  return result;
+}
+
+/** The answer's last line: its live page, after every other note. */
+function endWithLivePage(result: ToolResult, page: LivePage | null | undefined): ToolResult {
+  const last = result.content.at(-1);
+  if (!page || result.isError || !last) return result;
+  return {
+    ...result,
+    content: [
+      ...result.content.slice(0, -1),
+      { ...last, text: `${last.text}\n\n${livePageLine(page)}` },
+    ],
+  };
 }
 
 // ============================================================================
@@ -800,10 +829,14 @@ async function toolCheckFlight(
   const t = verdictTelemetry(verdict);
   recordFlightLookup("mcp", t.outcome, t.confidence, reader.scope);
   recordLegScope("mcp", verdict, cfg.code, mcpClientTags());
-  return renderCheckFlightVerdict(cfg, reader, verdict, date, {
+  const result = await renderCheckFlightVerdict(cfg, reader, verdict, date, {
     ...opts,
     liveLookup: hostReader.scope !== "ALL",
   });
+  return withLivePageNoted(
+    result,
+    opts.undated ? null : flightLivePage(cfg, reader, verdict.normalized, date)
+  );
 }
 
 /** check_flight text for a resolved verdict — exported so AF answers can be
@@ -1649,8 +1682,12 @@ async function toolPredictFlightStarlink(
   }
 
   // No flight-history model → registry-driven answer, same seam as the core.
+  const livePage = flightLivePage(cfg, reader, forPredict, givenDate || null);
   if (!cfg.flightHistoryModel) {
-    return formatCarrierPrediction(cfg, reader, forPredict, givenDate || null);
+    return withLivePageNoted(
+      formatCarrierPrediction(cfg, reader, forPredict, givenDate || null),
+      livePage
+    );
   }
 
   const pred = predictFlight(reader, forPredict);
@@ -1693,7 +1730,7 @@ async function toolPredictFlightStarlink(
     altBlock = `\n\n${buildAlternativesBlock(cfg, reader, routes, dateUnix, own)}`;
   }
 
-  return textResult(`${probLine}${altBlock}`);
+  return withLivePageNoted(textResult(`${probLine}${altBlock}`), livePage);
 }
 
 const AIRPORT_KEYS = ["origin", "destination"] as const;
@@ -2501,6 +2538,30 @@ function recordMcpToolCall(
   }
 }
 
+/**
+ * A route tool's live page, read from the same arguments the tool answered:
+ * the planner's search for an itinerary, the route page for a pair's
+ * flights. One airline's server only; the hub compares airlines and has no
+ * such page, and a one-sided search has no pair page.
+ */
+function routeToolLivePage(
+  tool: "predict_route_starlink" | "plan_starlink_itinerary" | "search_starlink_flights",
+  reader: ScopedReader,
+  args: Record<string, unknown>,
+  result: ToolResult
+): LivePage | null {
+  if (result.isError) return null;
+  const cfg = scopeCfg(reader.scope);
+  if (!cfg) return null;
+  const airports = airportArgs(tool, args, "either");
+  if ("content" in airports || !airports.origin || !airports.destination) return null;
+  if (tool === "plan_starlink_itinerary") {
+    const date = typeof args.date === "string" ? args.date.trim() : null;
+    return plannerLivePage(cfg, reader, airports.origin, airports.destination, date);
+  }
+  return routeLivePage(cfg, reader, airports.origin, airports.destination);
+}
+
 async function handleToolsCall(
   reader: ScopedReader,
   getReader: GetReader,
@@ -2520,21 +2581,23 @@ async function handleToolsCall(
   let result: ToolResult;
   try {
     switch (toolName) {
-      case "check_flight":
-        result = withHubNumberNote(await toolCheckFlight(reader, getReader, args), reader, args);
+      case "check_flight": {
+        const answer = await toolCheckFlight(reader, getReader, args);
+        result = endWithLivePage(withHubNumberNote(answer, reader, args), livePages.get(answer));
         break;
-      case "predict_flight_starlink":
-        result = withHubNumberNote(
-          await toolPredictFlightStarlink(reader, getReader, args),
-          reader,
-          args
-        );
+      }
+      case "predict_flight_starlink": {
+        const answer = await toolPredictFlightStarlink(reader, getReader, args);
+        result = endWithLivePage(withHubNumberNote(answer, reader, args), livePages.get(answer));
         break;
+      }
       case "predict_route_starlink":
         result = toolPredictRouteStarlink(reader, getReader, args);
+        result = endWithLivePage(result, routeToolLivePage(toolName, reader, args, result));
         break;
       case "plan_starlink_itinerary":
         result = toolPlanStarlinkItinerary(reader, getReader, args);
+        result = endWithLivePage(result, routeToolLivePage(toolName, reader, args, result));
         break;
       case "get_fleet_stats":
         result = toolGetFleetStats(reader);
@@ -2544,6 +2607,7 @@ async function handleToolsCall(
         break;
       case "search_starlink_flights":
         result = toolSearchStarlinkFlights(reader, args);
+        result = endWithLivePage(result, routeToolLivePage(toolName, reader, args, result));
         break;
       default: {
         recordMcpToolCall(toolName, scope, "unknown_tool", startMs, clientClass);
