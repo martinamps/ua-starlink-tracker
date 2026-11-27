@@ -7,6 +7,7 @@ import { closeFR24Transport } from "./src/api/fr24-browser-transport";
 import {
   archivePastDepartures,
   expirePassengerDedupeKeys,
+  metaJobStamps,
   migrate,
   openDatabase,
   pruneCrashRows,
@@ -98,11 +99,13 @@ const track = (handle?: JobHandle) => {
 };
 
 if (JOBS_ENABLED) {
+  const jobStamps = metaJobStamps(db);
   // updateStarlinkData (Google Sheets scrape) is UA-only — no other airline has
   // a community sheet. updateDatabase() is airline-scoped so HA rows survive.
   track(
     startJob({
       name: "sheet_scrape",
+      stamps: jobStamps,
       intervalMs: 60 * 60 * 1000,
       initialDelayMs: 0,
       run: async (ctx) => {
@@ -189,6 +192,7 @@ if (JOBS_ENABLED) {
   track(
     startJob({
       name: "ship_number_sync",
+      stamps: jobStamps,
       intervalMs: 24 * 3600 * 1000,
       initialDelayMs: 10 * 60 * 1000,
       run: () => syncShipNumbers({ db }),

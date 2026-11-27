@@ -86,6 +86,7 @@ import type { AircraftTypePageData } from "../types";
 import { airportCountry } from "../utils/airport-geo";
 import { DB_PATH } from "../utils/constants";
 import { excludeMassWriteDays } from "../utils/install-rate";
+import type { JobStampStore } from "../utils/job-runner";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { isAirportCode } from "../utils/outside-text";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
@@ -1379,6 +1380,20 @@ export function setMeta(db: Database, key: string, value: string | number, airli
     `${airline}:${key}`,
     String(value)
   );
+}
+
+/** Per-job last-start stamps in `meta`, so a restart doesn't re-run a job
+ * that isn't due (startJob's `stamps`). */
+export function metaJobStamps(db: Database): JobStampStore {
+  const key = (name: string) => `jobStartedAt:${name}`;
+  return {
+    read: (name) => {
+      const v = getMeta(db, key(name), "ALL");
+      const ms = v ? Date.parse(v) : Number.NaN;
+      return Number.isFinite(ms) ? ms : null;
+    },
+    write: (name, ms) => setMeta(db, key(name), new Date(ms).toISOString(), "ALL"),
+  };
 }
 
 /**

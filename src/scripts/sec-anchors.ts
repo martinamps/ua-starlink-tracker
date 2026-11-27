@@ -9,7 +9,12 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { getFleetAnchors, recordSecFilings, seedFleetAnchors } from "../database/database";
+import {
+  getFleetAnchors,
+  metaJobStamps,
+  recordSecFilings,
+  seedFleetAnchors,
+} from "../database/database";
 import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { FleetAnchorRow, SecFilingRow } from "../types";
@@ -205,6 +210,7 @@ export async function runSecAnchorsSync(
 export function startSecAnchorsJob(db: Database): JobHandle {
   return startJob({
     name: "sec_anchors",
+    stamps: metaJobStamps(db),
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 30 * 60 * 1000,
     run: async () => {

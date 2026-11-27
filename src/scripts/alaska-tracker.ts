@@ -32,6 +32,7 @@ import {
 import {
   equippedCountByFamily,
   initializeDatabase,
+  metaJobStamps,
   replaceFleetProgress,
   settleOfficiallyCompleteType,
 } from "../database/database";
@@ -318,6 +319,7 @@ export function startAlaskaTrackerJob(db: Database): JobHandle | undefined {
   if (!AIRLINES.AS.enabled || !TRACKER_URL) return undefined;
   return startJob({
     name: "alaska_tracker",
+    stamps: metaJobStamps(db),
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 4 * 60 * 1000,
     run: async () => {
