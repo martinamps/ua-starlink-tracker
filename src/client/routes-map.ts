@@ -5,7 +5,8 @@
  * This reads where the finger really landed (the pointer event, which the
  * browser doesn't move) and decides itself: one airport under the finger
  * opens; several are offered by code in a small chooser; none does nothing.
- * It never opens an airport the finger wasn't on.
+ * It never opens an airport the finger wasn't on. On a tablet or a phone held
+ * sideways, a finger squarely on a far busier hub opens it without asking.
  *
  * A mouse on a wider screen keeps the server's links untouched, and so does a
  * link activated with no pointer (keyboard, most screen readers). A finger is
@@ -13,9 +14,10 @@
  */
 import {
   CHOOSER_MAX,
+  type DrawnDot,
   FINGER_RADIUS_PX,
-  type MapDot,
   airportsUnderTap,
+  clearHub,
   tapIsOurs,
 } from "./routes-map-pick";
 
@@ -29,7 +31,7 @@ const CHIP =
   "flex min-h-11 flex-col items-center justify-center rounded border border-neutral bg-surface px-1 font-mono text-sm leading-tight text-primary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/50";
 const CHIP_COUNT = "text-xs text-muted tabular-nums";
 
-type Dot = MapDot & { link: SVGAElement };
+type Dot = DrawnDot & { link: SVGAElement };
 
 export function wireRoutesMap(): void {
   const map = document.querySelector<HTMLElement>(".js-map");
@@ -67,6 +69,8 @@ function wire(
         code: codeOf(link),
         x: box.left + Number(dot.getAttribute("cx")) * scale,
         y: box.top + Number(dot.getAttribute("cy")) * scale,
+        departures: Number(link.dataset.departures) || 0,
+        radius: Number(dot.getAttribute("r")) * scale,
         link,
       };
     });
@@ -169,9 +173,12 @@ function wire(
       if (!fromTap && (e.detail === 0 || !target || !map.contains(target))) return;
       const point = fromTap ?? { x: e.clientX, y: e.clientY };
       const near = airportsUnderTap(dots(), point.x, point.y);
-      const only = near.length === 1 ? near[0] : null;
-      // The browser's own choice stands when it is the one airport under the
-      // finger, so new-tab clicks and the like keep working.
+      // Upright phones always ask: there a hub's neighbours sit inside the
+      // finger's own error.
+      const only =
+        near.length === 1 ? near[0] : wide.matches ? clearHub(near, point.x, point.y) : null;
+      // The browser's own choice stands when it is the airport the finger
+      // meant, so new-tab clicks and the like keep working.
       if (only && target?.closest("a") === (only.link as Element)) return;
       e.preventDefault();
       e.stopPropagation();

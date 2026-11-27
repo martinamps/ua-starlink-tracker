@@ -10,7 +10,10 @@ import { SITES } from "../src/airlines/registry";
 import {
   CHOOSER_MAX,
   FINGER_RADIUS_PX,
+  HUB_CLEAR_PX,
+  HUB_SHARE,
   airportsUnderTap,
+  clearHub,
   tapIsOurs,
 } from "../src/client/routes-map-pick";
 import { buildRouteNetwork } from "../src/components/routes-map/network";
@@ -139,6 +142,8 @@ describe("/routes", () => {
     // role="img" would hide every link inside the picture.
     expect(map).not.toContain('role="img"');
     expect(map).toMatch(/<a href="\/routes\/SFO" aria-label="SFO: 2 Starlink departures"/);
+    // The tap script weighs a hub by the count the label states.
+    expect(map).toMatch(/<a href="\/routes\/SFO" [^>]*data-departures="2"/);
     // Busiest first: focus order follows the labels.
     expect(map.indexOf('href="/routes/SFO"')).toBeLessThan(map.indexOf('href="/routes/ORD"'));
     // The tap circle on phones: 41 map units is 12 px on a 300 px wide map.
@@ -165,11 +170,6 @@ describe("/routes", () => {
   });
 });
 
-/**
- * Hit-tests the rendered SVG the way a browser does: of the circles that take
- * input at that width, the last one painted under the point wins. Dense hubs
- * from the real map, where a quieter neighbour's dot covers a hub's centre.
- */
 describe("tapIsOurs", () => {
   test("a finger or pen is caught at every width, a mouse only on narrow screens", () => {
     for (const wide of [false, true]) {
@@ -216,6 +216,44 @@ describe("airportsUnderTap", () => {
         if (near.length === 1) expect(near).toEqual(["IAD"]);
       }
     expect(CHOOSER_MAX).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/**
+ * Hit-tests the rendered SVG the way a browser does: of the circles that take
+ * input at that width, the last one painted under the point wins. Dense hubs
+ * from the real map, where a quieter neighbour's dot covers a hub's centre.
+ */
+describe("clearHub", () => {
+  // Chicago as a tablet draws it: O'Hare's dot, Milwaukee 10 px north.
+  const ord = { code: "ORD", x: 100, y: 100, departures: 627, radius: 8.6 };
+  const mke = { code: "MKE", x: 100, y: 90, departures: 18, radius: 2.5 };
+  const sbn = { code: "SBN", x: 111, y: 104, departures: 8, radius: 2 };
+  const hub = (dots: (typeof ord)[], x: number, y: number) =>
+    clearHub(airportsUnderTap(dots, x, y), x, y)?.code ?? null;
+
+  test("a finger on a far busier hub's dot opens it", () => {
+    expect(hub([ord, mke, sbn], 100, 100)).toBe("ORD");
+    expect(hub([ord, mke, sbn], 100, 101)).toBe("ORD");
+  });
+
+  test("it asks when the finger is off the hub's dot or near another", () => {
+    expect(hub([ord, mke, sbn], 100, 90)).toBeNull();
+    expect(hub([ord, mke, sbn], 100, 96)).toBeNull();
+    expect(hub([ord, mke, sbn], 100, 110)).toBeNull();
+  });
+
+  test("it asks when the rest under the finger are not far quieter", () => {
+    expect(hub([{ ...ord, departures: 100 }, mke, sbn], 100, 100)).toBeNull();
+    expect(hub([{ ...ord, departures: 260 }, mke, sbn], 100, 100)).toBe("ORD");
+  });
+
+  test("a hub alone needs no ruling, and a dot inside the hub's keeps the chooser", () => {
+    expect(clearHub(airportsUnderTap([ord], 100, 100), 100, 100)).toBeNull();
+    const sjc = { code: "SJC", x: 104, y: 101, departures: 2, radius: 2 };
+    expect(hub([ord, sjc], 100, 100)).toBeNull();
+    expect(HUB_SHARE).toBeGreaterThanOrEqual(5);
+    expect(HUB_CLEAR_PX).toBeGreaterThanOrEqual(6);
   });
 });
 
