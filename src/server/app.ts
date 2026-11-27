@@ -320,7 +320,7 @@ import {
 } from "./respond";
 
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
-import { clientIp } from "./client-ip";
+import { type SocketPeer, clientIp, isLocalCaller } from "./client-ip";
 import { aircraftTypeParam, communityWireFields } from "./community-wire";
 import {
   type Database,
@@ -5976,7 +5976,7 @@ export interface App {
   routes: RouteTable;
   /** Every value the `route` metric tag can take — the tag's cardinality budget. */
   routeTags: readonly string[];
-  dispatch(req: Request): Promise<Response>;
+  dispatch(req: Request, server?: SocketPeer): Promise<Response>;
 }
 
 function finalizeResponse(res: Response, varyHost: boolean): Response {
@@ -6063,7 +6063,6 @@ export const API_RATE_LIMIT = 100;
 export const EXTENSION_RATE_LIMIT = 300;
 const API_RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT_LOG_INTERVAL_MS = 60_000;
-const LOCAL_IPS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 /** Any character RFC 3986 allows in neither a host nor a port. */
 const NOT_A_HOST = /[^A-Za-z0-9\-._~!$&'()*+,;=%:[\]]/;
@@ -6101,7 +6100,6 @@ export function createApp(
   };
 
   function rateLimited(ip: string, bucket: string, now: number): boolean {
-    if (LOCAL_IPS.has(ip)) return false;
     const key = `${bucket}:${ip}`;
     if (now - lastSweep > API_RATE_WINDOW_MS) {
       for (const [k, ts] of ipHits) {
@@ -6211,7 +6209,7 @@ export function createApp(
   // (fail-closed discipline), but those must still leave as a finalized 500 —
   // a raw Bun.serve 500 carries no security headers and no CORS, which the
   // extension sees as an opaque cross-origin failure.
-  async function dispatch(req: Request): Promise<Response> {
+  async function dispatch(req: Request, server?: SocketPeer): Promise<Response> {
     // Bun builds req.url from the Host header and hands over a bare path when
     // the Host is not a host ("a/b", "x.com:abc", empty), so this parse is the
     // one place a stranger's Host can throw. Outside the try it left as a raw
@@ -6247,7 +6245,7 @@ export function createApp(
       const scriptRes = clientScriptResponse(url.pathname);
       if (scriptRes) return finalizeResponse(scriptRes, false);
 
-      return finalizeResponse(await dispatchTenant(req, url), true);
+      return finalizeResponse(await dispatchTenant(req, url, server), true);
     } catch (err) {
       logError(`Unhandled error dispatching ${req.method} ${url.pathname}`, err);
       // API-shaped headers (incl. CORS) on every path: /api/* consumers need
@@ -6259,7 +6257,7 @@ export function createApp(
     }
   }
 
-  async function dispatchTenant(req: Request, url: URL): Promise<Response> {
+  async function dispatchTenant(req: Request, url: URL, server?: SocketPeer): Promise<Response> {
     const site = resolveSite(req.headers.get("host"));
 
     // Favicons and the manifest serve pre-421: browsers fetch them from any
@@ -6305,7 +6303,8 @@ export function createApp(
           ? "page"
           : null;
     const ip = clientIp(req);
-    if (meterClass) {
+    const local = isLocalCaller(ip, req, server);
+    if (meterClass && !local) {
       if (rateLimited(ip, meterClass, Date.now())) {
         // metricRoute, not the span route: the span form is "/*", and Datadog
         // strips '*' from tag values (see metricRoute). Also counted in
@@ -6364,7 +6363,7 @@ export function createApp(
       meterClass === "api" || meterClass === "ext" || meterClass === "mcp"
         ? {
             caller: meterClass === "mcp" ? "mcp" : classifyLookupCaller(req, url),
-            key: LOCAL_IPS.has(ip) ? null : `${meterClass}:${ip}`,
+            key: local ? null : `${meterClass}:${ip}`,
           }
         : null;
 
