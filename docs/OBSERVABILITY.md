@@ -246,6 +246,19 @@ card), `shed` a request over the process-wide drawing budget
 threw (logged; the request still gets the site's card). A rising `shed` count
 means something is enumerating picture addresses.
 
+The share control's tap beacon (`POST /static/share/tap`, body `sheet` or
+`copy`) rides the same family and tag. Read it with `share.control` (tags:
+`airline`, `action`): `shown` is a dated answer page served with the control
+to a browser that asked for the page itself (not a robot by its agent, not a
+preload); `sheet` and `copy` are taps, by how the tap was served. Taps over
+`shown` is the use rate on an airline site. The hub draws its control in the
+browser, so it has taps (`airline:all`) and no `shown`; set those against
+`http.request{route:/api/check-any-flight,visit_source:own}`. A tap is counted
+only for a POST with `Sec-Fetch-Site: same-origin` from a `client_class:browser`
+agent whose body is exactly one of the two words; every other POST gets the
+same empty 202 and no count. The flight, date and page are in neither the
+beacon nor the metric.
+
 To add a route, add it to `routes` (or `prefixRoutes`) in
 `src/server/app.ts` — the metric tag follows automatically. If a change would
 push the table past the budget, group the new URLs behind a prefix family

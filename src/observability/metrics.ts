@@ -68,6 +68,7 @@
  *   state:           watch.feed_fetch: prediction | yes | no | swap | none |
  *                    flown | flown_unknown                           (7)
  *   surface:         watch.cta_shown: check_flight                   (1)
+ *   action:          share.control: shown | sheet | copy (normalizeShareAction) (3)
  *   source:          source.* metrics only: SourceId in database/source-health.ts (15).
  *                    (scraper.sync and others carry their own `source` values)
  *   kind:            source.failure: error | timeout | blocked | empty | refused |
@@ -678,6 +679,17 @@ export function normalizeLegEffect(raw: string | null | undefined): string {
   return raw && LEG_EFFECTS.has(raw) ? raw : "other";
 }
 
+// share.control: `shown` is the server's own word; the other two are all a
+// browser may send, and any other text is refused, never counted.
+export const SHARE_TAP_METHODS = ["sheet", "copy"] as const;
+export type ShareTapMethod = (typeof SHARE_TAP_METHODS)[number];
+export type ShareAction = "shown" | ShareTapMethod;
+
+/** The tap's method when `raw` is exactly one of the two words, else null. */
+export function normalizeShareAction(raw: string | null | undefined): ShareTapMethod | null {
+  return SHARE_TAP_METHODS.find((m) => m === raw) ?? null;
+}
+
 /** IATA equipment codes are three alphanumerics; anything else is upstream
  * junk and must not mint a tag value. */
 export function normalizeEquipmentCodeTag(code: string | null | undefined): string {
@@ -947,6 +959,12 @@ export const COUNTERS = {
   // A QR answer hit an equipment code missing from QATAR_EQUIPMENT (answered
   // as unknown, never no) — tags: airline, code (3-char IATA code | invalid)
   QATAR_UNKNOWN_EQUIPMENT: "qatar.unknown_equipment",
+  // The share control on a flight answer (server/share-tap.ts) — tags: airline,
+  //   action (shown: a dated answer page served with the control to a browser;
+  //   sheet | copy: a tap, by how it was served). Taps over shown is the use
+  //   rate on the airline sites; the hub draws its control in the browser, so
+  //   it has taps (airline:all) and no shown. Never the flight, date or page.
+  SHARE_CONTROL: "share.control",
 } as const;
 
 /**

@@ -26,6 +26,7 @@ import { type SeatbackLiveTv, seatbackLiveTv } from "../utils/aircraft-specs";
 import { toIata } from "../utils/airport-code";
 import { esc } from "./esc";
 import { meterHtml } from "./meter";
+import { shareControlHtml } from "./share";
 
 interface WireFlight {
   tail_number?: string | null;
@@ -120,6 +121,9 @@ export interface AnswerContext {
   dayLegs?: DayLeg[];
   /** Host for webcal:// links. */
   host: string;
+  /** This answer's own page: canonical host, with its date and leg. Absent
+   * where the answer has no page of its own. */
+  shareUrl?: string;
 }
 
 export interface FlightAnswer {
@@ -191,8 +195,13 @@ const tail = (t: string | null | undefined) =>
  * Only for listed tails: a fallback segment's tail may be on no roster. */
 const listedTail = (t: string | null | undefined, ctx: AnswerContext) =>
   ctx.tailPages && t && /^N[A-Z0-9]{1,5}$/.test(t)
-    ? `<a href="/fleet/${esc(t)}" class="font-mono text-primary hover:text-accent transition-colors">${esc(t)}</a>`
+    ? `<a href="${tailPagePath(t)}" class="font-mono text-primary hover:text-accent transition-colors">${esc(t)}</a>`
     : tail(t);
+
+// Joined at run time: written as one template, the address sat whole in the
+// browser bundle, and crawlers that read scripts for links requested the
+// template itself as a page (a 404 each time).
+const tailPagePath = (t: string) => ["", "fleet", esc(t)].join("/");
 
 const typeName = (t: string | null | undefined) => (t ? ` · ${esc(aircraftName(t))}` : "");
 
@@ -573,7 +582,23 @@ function countedAnswer(
   return { tone, headline, html, firm: false };
 }
 
+/** The answer has a page worth passing on: not a failed lookup, and not a
+ * date already over, whose card says only that we can't tell. */
+export const shareOffered = (body: CheckFlightBody, ctx: AnswerContext) =>
+  !!ctx.shareUrl && !body.error && !datePassed(ctx);
+
+/** The answer card, with the share control as its last line for every verdict alike. */
 export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
+  const answer = answerCard(body, ctx);
+  if (!ctx.shareUrl || !shareOffered(body, ctx)) return answer;
+  // card() closes with the one </div> this goes in front of.
+  return {
+    ...answer,
+    html: `${answer.html.slice(0, -"</div>".length)}${shareControlHtml(ctx.shareUrl)}</div>`,
+  };
+}
+
+function answerCard(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
   const fn = ctx.flightNumber;
   const on = `${fn} on ${monthDay(ctx.date, ctx.nowSec)}`;
 

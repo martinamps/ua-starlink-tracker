@@ -167,6 +167,7 @@ import {
   forecastNote,
   inTravelOrder,
   renderFlightAnswer,
+  shareOffered,
   unansweredLegs,
 } from "../client/flight-answer";
 import AircraftTypePage from "../components/aircraft-type-page";
@@ -363,6 +364,7 @@ import {
   passengerVerifyEnabled,
 } from "./passenger-detect";
 import { planeSwapFor } from "./plane-swap";
+import { SHARE_TAP_PATH, recordShareShown, shareTap } from "./share-tap";
 import {
   bareDigitsFlight,
   checkPageFor,
@@ -4206,6 +4208,13 @@ const flightCheckElsewhere: Handler = (ctx) => {
   return notFound(ctx.site, tail ? "aircraft" : "flight");
 };
 
+/** A dated answer about to be served with its share control (share-tap.ts). */
+function countShareShown(ctx: RequestContext, dated: DatedAnswer | undefined, facts?: FlightFacts) {
+  if (dated && shareOffered(dated.body, answerContext(ctx.site, dated, facts))) {
+    recordShareShown(ctx.req, ctx.url, ctx.site);
+  }
+}
+
 const checkFlightPage: Handler = async (ctx) => {
   // Per-flight permalinks: /check-flight/UA881[/{date}] renders flight-specific
   // content + meta + Flight JSON-LD; the date-less URL is canonical so date
@@ -4295,6 +4304,7 @@ const checkFlightPage: Handler = async (ctx) => {
     );
     const dated = date ? await datedAnswer(cfg, reader, fn, date, legParse) : undefined;
     if (!reader.flightNumberHasData(variants)) {
+      countShareShown(ctx, dated);
       return renderSubPage(
         ctx,
         CheckFlightPage,
@@ -4305,6 +4315,7 @@ const checkFlightPage: Handler = async (ctx) => {
       );
     }
     const facts = buildFlightFacts(reader, cfg, fn, variants, legParse.leg, datedAnswerLegs(dated));
+    countShareShown(ctx, dated, facts);
     return renderSubPage(
       ctx,
       CheckFlightPage,
@@ -6437,7 +6448,11 @@ export function createApp(
   // image assets like the cards beside them, and the tag budget has no room
   // for a family of their own.
   const staticFamily: Handler = (ctx) =>
-    ctx.url.pathname.startsWith("/static/share/") ? sharePicture(ctx) : staticDir(ctx);
+    ctx.url.pathname === SHARE_TAP_PATH
+      ? shareTap(ctx)
+      : ctx.url.pathname.startsWith("/static/share/")
+        ? sharePicture(ctx)
+        : staticDir(ctx);
   const getReader = createReaderFactory(db);
   const verifiedCrawler = createCrawlerVerifier(opts.crawlerDns);
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;

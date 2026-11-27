@@ -3,10 +3,12 @@
 import { wireFlightSearchForms } from "../flight-search";
 import { onReady } from "../ready";
 import { wireRouteCompare } from "../route-compare";
+import { wireShareControls } from "../share";
 import { wireTailFilter } from "../tail-filter";
 
 onReady(() => {
   wireFlightSearchForms();
+  wireShareControls();
   wireRouteCompare();
   wireTailFilter();
 });
