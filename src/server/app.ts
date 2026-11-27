@@ -84,6 +84,7 @@ import {
   airlineHomeUrl,
   airlineSlug,
   brandMetadata,
+  homeMarketCountries,
   hubContentAirlines,
   hubLookupAirlines,
   isGuideStale,
@@ -252,6 +253,7 @@ import { unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   classifyLookupCaller,
+  classifyMarket,
   classifyRequest,
   classifyVisitSource,
   metrics,
@@ -324,7 +326,7 @@ import {
 } from "./respond";
 
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
-import { type SocketPeer, clientIp, isLocalCaller } from "./client-ip";
+import { type SocketPeer, cameThroughCloudflare, clientIp, isLocalCaller } from "./client-ip";
 import { aircraftTypeParam, communityWireFields } from "./community-wire";
 import {
   type Database,
@@ -557,6 +559,19 @@ function metricRoute(m: { route: string } | null): string {
   return m.route === "/static" ? "/static" : m.route;
 }
 
+const HOME_MARKETS = new Map<string, ReadonlySet<string>>();
+
+/** HTTP_REQUEST's `market` tag: is the caller in the site's home market? */
+function requestMarket(req: Request, tenant: Tenant, server?: SocketPeer): string {
+  const scope = tenantScope(tenant);
+  let home = HOME_MARKETS.get(scope);
+  if (!home) {
+    home = homeMarketCountries(scope);
+    HOME_MARKETS.set(scope, home);
+  }
+  return classifyMarket(req.headers.get("cf-ipcountry"), home, cameThroughCloudflare(req, server));
+}
+
 /** The one HTTP_REQUEST emit: every response dispatchTenant produces, 429s
  * and preflights included, is counted exactly once through here. */
 function countRequest(
@@ -564,7 +579,8 @@ function countRequest(
   url: URL,
   m: { route: string } | null,
   tenant: Tenant,
-  status: number
+  status: number,
+  server?: SocketPeer
 ): void {
   const client = requestClientTags(req, url);
   metrics.increment(COUNTERS.HTTP_REQUEST, {
@@ -575,6 +591,7 @@ function countRequest(
     airline: httpAirlineTag(tenant),
     ...client,
     visit_source: classifyVisitSource(req, url, String(client.client_class)),
+    market: requestMarket(req, tenant, server),
   });
 }
 
@@ -6402,7 +6419,7 @@ export function createApp(
           // per interval — the burst being logged must not flood the log.
           const suppressed = rateLimitLog(Object.values(tags).join("|"), Date.now());
           if (suppressed !== null) logWarn("rate limited", { ...tags, suppressed });
-          countRequest(req, url, m, tenant, 429);
+          countRequest(req, url, m, tenant, 429, server);
           return jsonError(429, "rate limit exceeded", { headers: { "Retry-After": "60" } });
         }
       }
@@ -6414,7 +6431,7 @@ export function createApp(
     // visible in dashboards; just not worth a full trace span.
     if (req.method === "OPTIONS" && (url.pathname.startsWith("/api/") || url.pathname === "/mcp")) {
       const response = corsPreflight(url.pathname);
-      countRequest(req, url, m, tenant, response.status);
+      countRequest(req, url, m, tenant, response.status, server);
       return response;
     }
 
@@ -6484,7 +6501,7 @@ export function createApp(
           // a path that matched no route — measured at ~82% of all 404s, i.e. a
           // 5.4x undercount — from every metric-backed dashboard and monitor.
           // `route` stays a bounded allowlist: unmatched collapses to "/*".
-          countRequest(req, url, m, tenant, status);
+          countRequest(req, url, m, tenant, status, server);
         }
       },
       { "span.type": "web" }

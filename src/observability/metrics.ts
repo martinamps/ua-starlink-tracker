@@ -57,6 +57,8 @@
  *   visit_source:    http.request only (classifyVisitSource): extension |
  *                    search | assistant | social | calendar | own | direct |
  *                    other | none                                    (9)
+ *   market:          http.request only (classifyMarket): home | abroad |
+ *                    unknown, against the site's home market      (3)
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | type_yes | type_no |
  *                    predicted | no_data | error                     (7)
@@ -482,6 +484,28 @@ function visitSourceByRule(req: Request, url: URL, clientClass: string): VisitSo
   return fetchSite === "none" ? "direct" : "none";
 }
 
+// ============ Market ============
+
+export type Market = "home" | "abroad" | "unknown";
+
+/**
+ * Whether a request came from the site's home market, as one of three words.
+ * The country is Cloudflare's cf-ipcountry, which only counts on a request
+ * that came through Cloudflare (`viaCloudflare`): straight to the origin,
+ * anyone can write the header. A value that is not two capital letters, and
+ * Cloudflare's own XX (unknown) and T1 (Tor), are `unknown`. Only the word
+ * leaves here: the country goes to no metric, span or log.
+ */
+export function classifyMarket(
+  country: string | null | undefined,
+  home: ReadonlySet<string>,
+  viaCloudflare: boolean
+): Market {
+  if (!viaCloudflare || typeof country !== "string") return "unknown";
+  if (!/^[A-Z]{2}$/.test(country) || country === "XX" || country === "T1") return "unknown";
+  return home.has(country) ? "home" : "abroad";
+}
+
 const LOOKUP_CALLERS = ["page", "api", "extension", "mcp", "other"] as const;
 export type LookupCaller = (typeof LOOKUP_CALLERS)[number];
 const LOOKUP_CALLER_SET: ReadonlySet<string> = new Set(LOOKUP_CALLERS);
@@ -755,7 +779,7 @@ export const COUNTERS = {
 
   // HTTP requests
   // tags: method, route (allowlisted), status_code, tenant, client_class,
-  //   visit_source (classifyVisitSource)
+  //   visit_source (classifyVisitSource), market (classifyMarket)
   HTTP_REQUEST: "http.request",
 
   // A Host header that is not a host at all, answered 400 before any tenant

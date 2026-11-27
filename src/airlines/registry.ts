@@ -12,21 +12,27 @@ import { type StatedTypeMatch, sasA320neo, virginAtlanticA350 } from "./stated-t
 // Registration patterns are stored as unanchored bodies; the anchored
 // validation pattern and the global scan pattern (for pulling registrations
 // out of prose) both derive from the same body, so they can never disagree.
-function tailPatterns(body: string): { tailPattern: RegExp; tailScanPattern: RegExp } {
+// Each register also names the countries it belongs to (ISO 3166-1 alpha-2):
+// an airline's home market is the country whose register its aircraft carry.
+function tailPatterns(
+  body: string,
+  registerCountries: readonly string[]
+): { tailPattern: RegExp; tailScanPattern: RegExp; registerCountries: readonly string[] } {
   return {
     tailPattern: new RegExp(`^${body}$`),
     tailScanPattern: new RegExp(`\\b(?:${body})\\b`, "g"),
+    registerCountries,
   };
 }
 
 // FAA N-numbers: N + 1-5 alphanumeric, first 1-9, no I/O in suffix.
-const FAA_TAIL = tailPatterns("N[1-9][0-9A-HJ-NP-Z]{0,4}");
-const QATAR_TAIL = tailPatterns("A7-[A-Z]{3}");
-const FRANCE_TAIL = tailPatterns("F-[GH][A-Z]{3}");
-const IRELAND_TAIL = tailPatterns("EI-[A-Z]{3}");
-const UK_TAIL = tailPatterns("G-[A-Z]{4}");
+const FAA_TAIL = tailPatterns("N[1-9][0-9A-HJ-NP-Z]{0,4}", ["US"]);
+const QATAR_TAIL = tailPatterns("A7-[A-Z]{3}", ["QA"]);
+const FRANCE_TAIL = tailPatterns("F-[GH][A-Z]{3}", ["FR"]);
+const IRELAND_TAIL = tailPatterns("EI-[A-Z]{3}", ["IE"]);
+const UK_TAIL = tailPatterns("G-[A-Z]{4}", ["GB"]);
 // Sweden, Norway and Denmark.
-const SCANDINAVIA_TAIL = tailPatterns("(?:SE|LN|OY)-[A-Z]{3}");
+const SCANDINAVIA_TAIL = tailPatterns("(?:SE|LN|OY)-[A-Z]{3}", ["SE", "NO", "DK"]);
 
 export type AirlineCode = string;
 
@@ -373,6 +379,10 @@ export interface AirlineConfig {
    * registrations out of prose. Safe to share:
    * String.match(/g/) and matchAll don't depend on lastIndex. */
   tailScanPattern: RegExp;
+  /** Countries of the register the tails above belong to (ISO 3166-1
+   * alpha-2), from the same tailPatterns() call. The airline's home market:
+   * the `market` tag on http.request reads it (homeMarketCountries). */
+  registerCountries: readonly string[];
   /** Rollout story — hub status card + llms.txt copy. Required so a new
    * airline without a rollout story is a compile error, not missing prose. */
   rollout: {
@@ -1876,6 +1886,16 @@ export function siteAirline(site: SiteConfig): AirlineConfig {
 export const HOST_REDIRECTS: Record<string, string> = {
   "deltastarlinktracker.com": "https://airlinestarlinktracker.com/airlines/delta",
 };
+
+/**
+ * A site's home market, as the countries of its airline's aircraft register:
+ * United, Alaska and Hawaiian are US; Qatar QA. The hub speaks for every
+ * enabled airline, so its home is the union of theirs.
+ */
+export function homeMarketCountries(scope: AirlineCode | "ALL"): ReadonlySet<string> {
+  const airlines = scope === "ALL" ? enabledAirlines() : AIRLINES[scope] ? [AIRLINES[scope]] : [];
+  return new Set(airlines.flatMap((a) => a.registerCountries));
+}
 
 export function resolveSite(host: string | null): SiteConfig | null {
   if (!host) return null;
