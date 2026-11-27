@@ -172,7 +172,7 @@ export function buildAirportBoard(
     tomorrow: tomorrowDate
       ? { date: tomorrowDate, departures: countOnLocalDay(airport, tomorrowDate, departures) }
       : null,
-    indexable: (flown?.starlink ?? 0) >= AIRPORT_INDEX_MIN_DEPARTURES,
+    indexable: meetsIndexBar(flown?.starlink ?? 0),
   };
 }
 
@@ -202,14 +202,42 @@ function todayStanding(
   };
 }
 
+const meetsIndexBar = (starlinkFlown: number) => starlinkFlown >= AIRPORT_INDEX_MIN_DEPARTURES;
+
+/**
+ * Does this airport's page index? The page's own rule, read off the memoised
+ * history first so a thin airport costs no query.
+ */
+export function airportIndexes(reader: ScopedReader, airport: string): boolean {
+  return (
+    meetsIndexBar(reader.getAirportHistory().airports.get(airport)?.starlink ?? 0) &&
+    reader.airportHasData(airport)
+  );
+}
+
 /** Airports whose page indexes: the sitemap's list, by the page's own rule. */
 export function indexableAirports(reader: ScopedReader): string[] {
-  return [...reader.getAirportHistory().airports]
-    .filter(
-      ([airport, e]) => e.starlink >= AIRPORT_INDEX_MIN_DEPARTURES && reader.airportHasData(airport)
-    )
-    .map(([airport]) => airport)
+  return [...reader.getAirportHistory().airports.keys()]
+    .filter((airport) => airportIndexes(reader, airport))
     .sort();
+}
+
+/**
+ * The first `limit` of these airports, in order, whose page indexes: links
+ * from an indexed page to a noindex one pass nothing. Stops checking once it
+ * has enough.
+ */
+export function firstIndexedAirports(
+  reader: ScopedReader,
+  airports: Iterable<string>,
+  limit: number
+): string[] {
+  const found: string[] = [];
+  for (const airport of new Set(airports)) {
+    if (found.length >= limit) break;
+    if (airportIndexes(reader, airport)) found.push(airport);
+  }
+  return found;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);
