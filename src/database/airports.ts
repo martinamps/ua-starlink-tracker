@@ -123,15 +123,15 @@ const LEFT_LOOKBACK_SEC = 26 * 3600;
  * A late swap leaves the old tail's row in the schedule until that tail is
  * refreshed, so both tails can be archived for one flight. `newer` lists the
  * numbers other tails were seen on, for the same leg and time, after this
- * tail last was (the route index finds them): the newest sighting is the
- * plane that flew it.
+ * tail last was (the (airport, time) index finds them): the newest sighting
+ * is the plane that flew it.
  */
-const LEFT_SQL = `SELECT dl.airport AS origin, dl.tail_number AS tail, dl.departed_at AS departure_time,
+export const STARLINK_FLOWN_SQL = `SELECT dl.airport AS origin, dl.tail_number AS tail, dl.departed_at AS departure_time,
        fal.flight_number AS flight_number, fal.arrival_airport AS destination,
        (SELECT group_concat(fal2.flight_number, ' ') FROM flight_assignment_log fal2
          WHERE fal2.departure_airport = fal.departure_airport
-           AND fal2.arrival_airport = fal.arrival_airport
-           AND fal2.departure_time = fal.departure_time AND fal2.airline = fal.airline
+           AND fal2.departure_time = fal.departure_time
+           AND fal2.arrival_airport = fal.arrival_airport AND fal2.airline = fal.airline
            AND fal2.tail_number <> fal.tail_number AND fal2.last_seen > fal.last_seen) AS newer
   FROM departure_log dl
   CROSS JOIN flight_assignment_log fal
@@ -140,31 +140,34 @@ const LEFT_SQL = `SELECT dl.airport AS origin, dl.tail_number AS tail, dl.depart
   WHERE dl.airline = ? AND dl.departed_at >= ? AND dl.departed_at < ?
     AND ${tailEquippedSql("dl.tail_number", "dl.airline")}`;
 
+export interface StarlinkDepartureFlown {
+  origin: string;
+  destination: string;
+  departure_time: number;
+}
+
 /**
- * Starlink departures that have already left, over the last day, from one
- * airport or from all, under the rule the scheduled count keeps: one flight
- * leaves one airport at one time once, whichever tail flew it and however it
- * is spelled, and counts only under a number the airline sells with a clean
- * destination (a positioning leg is left out here as it is there). A flight
- * seen later on another tail belongs to that tail: counted there if it has
- * Starlink, not at all if not.
+ * Starlink departures that left in [from, to), from one airport or from all,
+ * under the rule the scheduled count keeps: one flight leaves one airport at
+ * one time once, whichever tail flew it and however it is spelled, and counts
+ * only under a number the airline sells with a clean destination (a
+ * positioning leg is left out here as it is there). A flight seen later on
+ * another tail belongs to that tail: counted there if it has Starlink, not at
+ * all if not. "Already left today" and the six-day figure both read this.
  */
-export function getStarlinkDeparturesLeft(
+function getStarlinkDeparturesFlown(
   db: Database,
   airline: string,
-  nowSec = unixNow(),
+  from: number,
+  to: number,
   origin?: string
-): Array<{ origin: string; departure_time: number }> {
+): StarlinkDepartureFlown[] {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
   const permalink = canonicalPermalinkFor(cfg);
   const rows = db
-    .query(origin ? `${LEFT_SQL} AND dl.airport = ?` : LEFT_SQL)
-    .all(
-      ...(origin
-        ? [airline, nowSec - LEFT_LOOKBACK_SEC, nowSec, origin]
-        : [airline, nowSec - LEFT_LOOKBACK_SEC, nowSec])
-    ) as Array<{
+    .query(origin ? `${STARLINK_FLOWN_SQL} AND dl.airport = ?` : STARLINK_FLOWN_SQL)
+    .all(...(origin ? [airline, from, to, origin] : [airline, from, to])) as Array<{
     origin: string;
     tail: string;
     departure_time: number;
@@ -173,7 +176,7 @@ export function getStarlinkDeparturesLeft(
     newer: string | null;
   }>;
   const tails = new Set<string>();
-  const left = new Map<string, { origin: string; departure_time: number }>();
+  const flown = new Map<string, StarlinkDepartureFlown>();
   for (const r of rows) {
     const flight = slotFlightKey(r.flight_number, airline);
     if (!flight || !permalink.test(flight)) continue;
@@ -181,11 +184,25 @@ export function getStarlinkDeparturesLeft(
     if (r.newer?.split(" ").some((n) => slotFlightKey(n, airline) === flight)) continue;
     const tailKey = `${r.origin}|${r.tail}|${r.departure_time}`;
     const flightKey = `${r.origin}|${flight}|${r.departure_time}`;
-    if (tails.has(tailKey) || left.has(flightKey)) continue;
+    if (tails.has(tailKey) || flown.has(flightKey)) continue;
     tails.add(tailKey);
-    left.set(flightKey, { origin: r.origin, departure_time: r.departure_time });
+    flown.set(flightKey, {
+      origin: r.origin,
+      destination: r.destination,
+      departure_time: r.departure_time,
+    });
   }
-  return [...left.values()];
+  return [...flown.values()];
+}
+
+/** Starlink departures that have already left, over the last day. */
+export function getStarlinkDeparturesLeft(
+  db: Database,
+  airline: string,
+  nowSec = unixNow(),
+  origin?: string
+): StarlinkDepartureFlown[] {
+  return getStarlinkDeparturesFlown(db, airline, nowSec - LEFT_LOOKBACK_SEC, nowSec, origin);
 }
 
 export interface AirportDayCount {
@@ -294,26 +311,6 @@ export interface AirportHistory {
 }
 
 /**
- * The assignment log names the pair; departure_log says the time passed with
- * the tail's row still in the schedule (a late swap can leave the old tail's
- * row there too, so a swap between two Starlink planes counts twice here). Driven from the
- * log, probing departure_log on its (tail, time) index. One tail leaves one
- * airport at one time once, however many spellings logged it.
- */
-export const AIRPORT_HISTORY_SQL = `SELECT fal.departure_airport AS origin, fal.arrival_airport AS destination,
-       COUNT(DISTINCT fal.tail_number || '|' || fal.departure_time) AS n
-  FROM flight_assignment_log fal
-  WHERE fal.airline = ? AND fal.departure_time > ? AND fal.departure_time <= ?
-    AND fal.arrival_airport IS NOT NULL
-    AND EXISTS (
-      SELECT 1 FROM departure_log dl
-      WHERE dl.tail_number = fal.tail_number AND dl.departed_at = fal.departure_time
-        AND dl.airport = fal.departure_airport
-    )
-    AND ${tailEquippedSql("fal.tail_number", "fal.airline")}
-  GROUP BY 1, 2`;
-
-/**
  * Starlink departures per airport and destination over the last
  * AIRPORT_HISTORY_DAYS, for every airport at once: the page, its index rule
  * and the sitemap all read this one pass. Measured back from the airline's
@@ -326,18 +323,20 @@ export function getAirportHistory(
 ): AirportHistory {
   const anchor = Math.min(nowSec, getObservationAnchor(db, airline, nowSec) || nowSec);
   const from = anchor - AIRPORT_HISTORY_DAYS * DAY_SEC;
-  const rows = db.query(AIRPORT_HISTORY_SQL).all(airline, from, anchor) as Array<{
-    origin: string;
-    destination: string;
-    n: number;
-  }>;
+  // The window is (from, anchor]; the fold reads [from, to).
   const airports = new Map<string, AirportHistoryEntry>();
-  for (const r of rows) {
-    if (!isCleanAirportPair(r.origin, r.destination)) continue;
-    const entry = airports.get(r.origin) ?? { starlink: 0, destinations: [] };
-    entry.starlink += r.n;
-    entry.destinations.push({ destination: r.destination, starlink: r.n });
-    airports.set(r.origin, entry);
+  const byPair = new Map<string, Map<string, number>>();
+  for (const d of getStarlinkDeparturesFlown(db, airline, from + 1, anchor + 1)) {
+    const pairs = byPair.get(d.origin) ?? new Map<string, number>();
+    pairs.set(d.destination, (pairs.get(d.destination) ?? 0) + 1);
+    byPair.set(d.origin, pairs);
+  }
+  for (const [origin, pairs] of byPair) {
+    const destinations = [...pairs].map(([destination, starlink]) => ({ destination, starlink }));
+    airports.set(origin, {
+      starlink: destinations.reduce((sum, d) => sum + d.starlink, 0),
+      destinations,
+    });
   }
   for (const entry of airports.values()) {
     entry.destinations.sort(

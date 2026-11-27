@@ -19,7 +19,7 @@ import {
 } from "../src/api/airport-board";
 import {
   AIRPORT_HISTORY_DAYS,
-  AIRPORT_HISTORY_SQL,
+  STARLINK_FLOWN_SQL,
   getAirportHistory,
 } from "../src/database/airports";
 import { logFlightAssignments } from "../src/database/assignment-log";
@@ -36,8 +36,15 @@ let db: Database;
 let app: ReturnType<typeof createApp>;
 
 /** A departure `tail` flew `daysAgo` days back: logged with its pair, and archived as departed. */
-function addFlown(tail: string, fn: string, origin: string, destination: string, daysAgo: number) {
-  const departure_time = now - daysAgo * DAY + HOUR;
+function addFlown(
+  tail: string,
+  fn: string,
+  origin: string,
+  destination: string,
+  daysAgo: number,
+  hour = 1
+) {
+  const departure_time = now - daysAgo * DAY + hour * HOUR;
   logFlightAssignments(
     db,
     "UA",
@@ -74,7 +81,8 @@ beforeAll(() => {
   for (let d = 1; d < AIRPORT_HISTORY_DAYS; d++) {
     addFlown("N1VER", "UA100", "DEN", "ORD", d);
     addFlown("N2LIST", "UA200", "DEN", "SFO", d);
-    addFlown("N2LIST", "UA210", "DEN", "YYZ", d);
+    // Later that day: one plane leaves one airport at one time once.
+    addFlown("N2LIST", "UA210", "DEN", "YYZ", d, 4);
   }
   // Logged for a plane that never left on it (swapped away): not flown.
   logFlightAssignments(
@@ -276,15 +284,18 @@ describe("index rule", () => {
   });
 });
 
-describe("history query plan", () => {
-  test("probes departure_log and the listing by index, never scanning either", () => {
+describe("flown query plan", () => {
+  test("reads each table by index, never scanning one", () => {
     const plan = (
-      db.query(`EXPLAIN QUERY PLAN ${AIRPORT_HISTORY_SQL}`).all("UA", 0, now) as {
+      db.query(`EXPLAIN QUERY PLAN ${STARLINK_FLOWN_SQL}`).all("UA", 0, now) as {
         detail: string;
       }[]
     ).map((r) => r.detail);
-    expect(plan.some((d) => /SEARCH dl .*USING INDEX idx_dl_tail/.test(d))).toBe(true);
-    expect(plan.filter((d) => /SCAN (dl|_eq|_neg)\b/.test(d))).toEqual([]);
+    expect(plan.some((d) => /SEARCH dl USING INDEX idx_dl_departed/.test(d))).toBe(true);
+    expect(plan.some((d) => /SEARCH fal USING INDEX idx_fal_tail/.test(d))).toBe(true);
+    // The newer-sighting probe: the route index alone walks every row on the pair.
+    expect(plan.some((d) => /SEARCH fal2 USING INDEX idx_fal_dep_time/.test(d))).toBe(true);
+    expect(plan.filter((d) => /\bSCAN\b/.test(d))).toEqual([]);
   });
 });
 
