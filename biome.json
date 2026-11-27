@@ -66,6 +66,16 @@
   },
   "overrides": [
     {
+      "include": ["src/utils/airport-register-data.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noApproximativeNumericConstant": "off"
+          }
+        }
+      }
+    },
+    {
       "include": ["src/components/page.tsx"],
       "linter": {
         "rules": {

@@ -13,7 +13,7 @@ import {
   unnamedSentence,
 } from "../../airlines/published-count";
 import type { AirlineConfig } from "../../airlines/registry";
-import { airportPlaceName } from "../../utils/airport-names";
+import { airportPlaceName } from "../../utils/airport-places";
 import { excludeMassWriteDays } from "../../utils/install-rate";
 import { Sparkline } from "../charts/sparkline";
 import { LINK, Panel, SECTION_WIDE, StatInline } from "../layout";

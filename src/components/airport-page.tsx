@@ -8,7 +8,7 @@ import {
   airportDek,
   perDayLabel,
 } from "../api/airport-board";
-import { airportCity, airportPlaceName } from "../utils/airport-names";
+import { airportCity, airportPlaceName } from "../utils/airport-places";
 import type { Link } from "./layout";
 import { LINK, PageHeader, PageShell, Panel, SECTION, Section, StatValue, Td, Th } from "./layout";
 import { VERIFIED_LEGEND, VERIFIED_MARK } from "./route-flights-copy";

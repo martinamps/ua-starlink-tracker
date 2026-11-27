@@ -4,7 +4,7 @@ import {
   type AirportRankRow,
   type AirportRanking,
 } from "../api/airport-ranking";
-import { airportPlaceName } from "../utils/airport-names";
+import { airportPlaceName } from "../utils/airport-places";
 import { Panel, SectionTitle, Td, Th } from "./layout";
 import { fmt, monthDay, utcDateTime, weekdayDate } from "./ui/format";
 import { Meter } from "./ui/meter";

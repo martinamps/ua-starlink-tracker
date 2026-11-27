@@ -69,6 +69,7 @@
  *                    flown | flown_unknown                           (7)
  *   surface:         watch.cta_shown: check_flight                   (1)
  *   action:          share.control: shown | sheet | copy (normalizeShareAction) (3)
+ *                    recent.checks: shown | opened | cleared (normalizeRecentAction) (3)
  *   source:          source.* metrics only: SourceId in database/source-health.ts (15).
  *                    (scraper.sync and others carry their own `source` values)
  *   kind:            source.failure: error | timeout | blocked | empty | refused |
@@ -716,6 +717,16 @@ export function normalizeShareAction(raw: string | null | undefined): ShareTapMe
   return SHARE_TAP_METHODS.find((m) => m === raw) ?? null;
 }
 
+// recent.checks: all three are words a browser sends; any other text is
+// refused, never counted.
+export const RECENT_ACTIONS = ["shown", "opened", "cleared"] as const;
+export type RecentAction = (typeof RECENT_ACTIONS)[number];
+
+/** The action when `raw` is exactly one of the three words, else null. */
+export function normalizeRecentAction(raw: string | null | undefined): RecentAction | null {
+  return RECENT_ACTIONS.find((a) => a === raw) ?? null;
+}
+
 /** IATA equipment codes are three alphanumerics; anything else is upstream
  * junk and must not mint a tag value. */
 export function normalizeEquipmentCodeTag(code: string | null | undefined): string {
@@ -991,6 +1002,12 @@ export const COUNTERS = {
   //   rate on the airline sites; the hub draws its control in the browser, so
   //   it has taps (airline:all) and no shown. Never the flight, date or page.
   SHARE_CONTROL: "share.control",
+  // "Your flights" on a homepage: the dated flights a browser checked, kept in
+  // that browser (client/recent-checks.ts, server/recent-checks.ts) — tags:
+  //   airline, action (shown: the list drawn with at least one flight; opened:
+  //   a row's link followed; cleared: the list emptied by its one button).
+  //   Opened over shown is the use rate. Never a flight, a date or the list.
+  RECENT_CHECKS: "recent.checks",
 } as const;
 
 /**
@@ -1087,11 +1104,14 @@ export const GAUGES = {
   // flights instead of the nearest. tags: airline
   UPCOMING_CAPPED_FUTURE_SHARE: "upcoming.capped_future_share",
 
-  // Distinct airport codes in upcoming_flights that no airport table holds
-  // (airportTimezone): the feed's charter fields and newly issued codes. Their
-  // pages print the bare code in UTC and stay out of search until someone
-  // checks the code and adds it; the codes themselves are logged when the set
-  // changes. 0 is emitted too, so a monitor can tell "none" from "not running".
+  // Distinct airport codes in upcoming_flights that no hand table holds
+  // (isHandPlacedAirport): the feed's charter fields and newly issued codes.
+  // It counts a code the register names and times as well as one nothing
+  // holds, since neither was checked by a person: their pages print the
+  // register's name, or the bare code in UTC, and stay out of search until
+  // someone checks the code and adds it. The codes are logged, the two kinds
+  // on separate lines, when either set changes. 0 is emitted too, so a
+  // monitor can tell "none" from "not running".
   // tags: airline
   UPCOMING_UNPLACED_AIRPORTS: "upcoming.unplaced_airports",
 

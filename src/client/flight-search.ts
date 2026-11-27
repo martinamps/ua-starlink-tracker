@@ -50,7 +50,7 @@ const STATEMENT_LABELS: Record<string, [string, string]> = {
   outside_dates: ["No answer for this date", "text-muted"],
 };
 
-interface CheckAnyBody {
+export interface CheckAnyBody {
   error?: string;
   airline_info?: AirlineInfo;
   /** An airline answered from its own dated statement, by route. */
@@ -67,6 +67,7 @@ interface CheckAnyBody {
   airline?: string;
   reason?: string;
   message?: string;
+  flights?: unknown;
 }
 
 /**
@@ -197,7 +198,14 @@ export function shapeHint(raw: string, example: string): string {
   return `<span class="block text-muted">Type the airline code and number together, like ${esc(example)}.</span>`;
 }
 
-function wireCheckAny(form: HTMLFormElement): void {
+/** A check-any form's answer, as it was asked: for a page that keeps the visitor's checks. */
+export type OnChecked = (
+  form: HTMLFormElement,
+  asked: URLSearchParams,
+  answer: CheckAnyBody
+) => void;
+
+function wireCheckAny(form: HTMLFormElement, onChecked?: OnChecked): void {
   const out = document.getElementById(`${form.id}-result`);
   if (!out) return;
   const community = form.dataset.answer === "community";
@@ -266,6 +274,7 @@ function wireCheckAny(form: HTMLFormElement): void {
           (d.error ? shapeHint(typed, example) : numberNoteHtml(notes, typed)) +
           checkPageLink(d, pages, typed, params.get("date") ?? "") +
           checkPageShare(d, pages, typed, params.get("date") ?? "");
+        onChecked?.(form, params, d);
       })
       .catch(() => {
         out.textContent = "Couldn't get an answer. Check your connection and try again.";
@@ -278,7 +287,7 @@ function wireCheckAny(form: HTMLFormElement): void {
   });
 }
 
-export function wireFlightSearchForms(): void {
+export function wireFlightSearchForms(onChecked?: OnChecked): void {
   for (const el of Array.from(document.querySelectorAll("form[data-flight-search]"))) {
     const form = el as HTMLFormElement;
     // Wired once even when a page loads the script twice.
@@ -290,7 +299,7 @@ export function wireFlightSearchForms(): void {
     if (date && !date.value && form.dataset.prefillDate !== undefined) date.value = localToday();
     const mode = form.dataset.flightSearch;
     if (mode === "check-any") {
-      wireCheckAny(form);
+      wireCheckAny(form, onChecked);
       continue;
     }
     if (mode !== "permalink") continue;
