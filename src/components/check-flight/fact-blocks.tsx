@@ -41,43 +41,42 @@ export function FlightFactBlocks({
         <Section title={`Next ${fn} departures`}>
           <ul className="divide-y divide-subtle text-sm">
             {flight.upcoming.map((u) => (
-              <li
-                key={`${u.tail_number}-${u.departure_time}`}
-                className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"
-              >
-                <div className="min-w-0">
-                  <div className="text-primary">
-                    {u.departure_airport} → {u.arrival_airport}
-                    <span className="text-secondary">
-                      {" · "}
-                      {
-                        zonedDeparture(
-                          u.departure_time,
-                          u.departure_tz ?? airportTimezone(u.departure_airport)
-                        ).full
-                      }
-                    </span>
-                  </div>
-                  <div className="text-muted">
-                    {u.starlink && tailHref(site, u.tail_number) ? (
-                      <a
-                        href={tailHref(site, u.tail_number) ?? undefined}
-                        className="font-mono hover:text-accent transition-colors"
-                      >
-                        {u.tail_number}
-                      </a>
-                    ) : (
-                      <span className="font-mono">{u.tail_number}</span>
-                    )}
-                    {u.aircraft_type ? ` · ${aircraftName(u.aircraft_type)}` : ""}
-                  </div>
-                </div>
-                <span
-                  className={`shrink-0 whitespace-nowrap ${u.starlink ? "text-success" : "text-muted"}`}
-                >
-                  {u.starlink ? "Starlink" : u.wifiLabel}
-                </span>
-              </li>
+              <React.Fragment key={`${u.tail_number}-${u.departure_time}`}>
+                <li className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                  <div className="min-w-0">
+                    <div className="text-primary">
+                      {u.departure_airport} → {u.arrival_airport}
+                      <span className="text-secondary">
+                        {" · "}
+                        {
+                          zonedDeparture(
+                            u.departure_time,
+                            u.departure_tz ?? airportTimezone(u.departure_airport)
+                          ).full
+                        }
+                      </span>
+                    </div>{" "}
+                    <div className="text-muted">
+                      {u.starlink && tailHref(site, u.tail_number) ? (
+                        <a
+                          href={tailHref(site, u.tail_number) ?? undefined}
+                          className="font-mono hover:text-accent transition-colors"
+                        >
+                          {u.tail_number}
+                        </a>
+                      ) : (
+                        <span className="font-mono">{u.tail_number}</span>
+                      )}
+                      {u.aircraft_type ? ` · ${aircraftName(u.aircraft_type)}` : ""}
+                    </div>
+                  </div>{" "}
+                  <span
+                    className={`shrink-0 whitespace-nowrap ${u.starlink ? "text-success" : "text-muted"}`}
+                  >
+                    {u.starlink ? "Starlink" : u.wifiLabel}
+                  </span>
+                </li>{" "}
+              </React.Fragment>
             ))}
           </ul>
         </Section>
@@ -110,13 +109,13 @@ export function FlightFactBlocks({
                   </>
                 )}
               </p>
-            )}
+            )}{" "}
             {last && !checked && (
               <p>
                 Last verified on Starlink: <span className="font-mono">{last.tail}</span>,{" "}
                 {shortDate(last.checked_at)}.
               </p>
-            )}
+            )}{" "}
             {flight.aircraftTypes.length > 0 && (
               <p>
                 Aircraft seen on {fn}:{" "}
@@ -137,7 +136,7 @@ export function FlightFactBlocks({
                 ))}
                 .
               </p>
-            )}
+            )}{" "}
             {outlook && (
               <p id="type-outlook">
                 {countSentence(outlook.outlook, `${outlook.airline} ${outlook.short}s`)}{" "}
@@ -154,38 +153,37 @@ export function FlightFactBlocks({
             <p className="mb-3 text-sm text-muted">
               Last seen {shortDate(flight.notObservedSince)}.
             </p>
-          ) : null}
+          ) : null}{" "}
           <ul className="divide-y divide-subtle text-sm">
             {flight.routes.map((r) => {
               const lastSeen = lastSeenLabel(r.last_seen_at);
               const places = routePlaceNames(r.departure_airport, r.arrival_airport);
               return (
-                <li
-                  key={`${r.departure_airport}-${r.arrival_airport}`}
-                  className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"
-                >
-                  <div className="min-w-0">
-                    <div className="text-primary">
-                      {r.departure_airport} → {r.arrival_airport}
-                      {r.dur_sec ? (
-                        <span className="text-secondary"> · {formatDuration(r.dur_sec)}</span>
-                      ) : null}
-                    </div>
-                    {places && <div className="text-secondary">{places}</div>}
-                    <div className="text-muted">
-                      Seen {fmt(r.times)} time{r.times === 1 ? "" : "s"}
-                      {lastSeen ? ` · ${lastSeen}` : ""}
-                    </div>
-                  </div>
-                  {r.linkable ? (
-                    <a
-                      href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
-                      className="shrink-0 whitespace-nowrap text-accent hover:underline"
-                    >
-                      Plan this route
-                    </a>
-                  ) : null}
-                </li>
+                <React.Fragment key={`${r.departure_airport}-${r.arrival_airport}`}>
+                  <li className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                    <div className="min-w-0">
+                      <div className="text-primary">
+                        {r.departure_airport} → {r.arrival_airport}
+                        {r.dur_sec ? (
+                          <span className="text-secondary"> · {formatDuration(r.dur_sec)}</span>
+                        ) : null}
+                      </div>{" "}
+                      {places && <div className="text-secondary">{places}</div>}{" "}
+                      <div className="text-muted">
+                        Seen {fmt(r.times)} time{r.times === 1 ? "" : "s"}
+                        {lastSeen ? ` · ${lastSeen}` : ""}
+                      </div>
+                    </div>{" "}
+                    {r.linkable ? (
+                      <a
+                        href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
+                        className="shrink-0 whitespace-nowrap text-accent hover:underline"
+                      >
+                        Plan this route
+                      </a>
+                    ) : null}
+                  </li>{" "}
+                </React.Fragment>
               );
             })}
           </ul>

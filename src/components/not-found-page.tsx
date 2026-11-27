@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { ButtonLink, type Link, PageHeader, PageShell, primaryNavLinks } from "./layout";
 
@@ -53,18 +54,20 @@ export default function NotFoundPage({
       {choices.length > 0 && (
         <div className="relative mx-auto mb-6 flex flex-wrap justify-center gap-3 text-sm">
           {choices.map((c) => (
-            <ButtonLink key={c.href} href={c.href}>
-              {c.label}
-            </ButtonLink>
+            <Fragment key={c.href}>
+              <ButtonLink href={c.href}>{c.label}</ButtonLink>{" "}
+            </Fragment>
           ))}
         </div>
       )}
       <div className="relative mx-auto mb-12 flex flex-wrap justify-center gap-3 text-sm">
-        <ButtonLink href="/">Go to the homepage</ButtonLink>
+        <ButtonLink href="/">Go to the homepage</ButtonLink>{" "}
         {links.slice(0, 2).map((l) => (
-          <ButtonLink key={l.href} href={l.href} variant="secondary">
-            {l.label}
-          </ButtonLink>
+          <Fragment key={l.href}>
+            <ButtonLink href={l.href} variant="secondary">
+              {l.label}
+            </ButtonLink>{" "}
+          </Fragment>
         ))}
       </div>
     </PageShell>

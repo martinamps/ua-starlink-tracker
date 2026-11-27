@@ -27,37 +27,39 @@ function AirportField({
   placeholder,
 }: { id: string; name: string; label: string; placeholder: string }) {
   return (
-    <div className="flex-1 w-full min-w-0">
-      <Eyebrow as="label" htmlFor={id} className="mb-2 block">
-        {label}
-      </Eyebrow>
-      <div className="relative">
-        <input
-          type="text"
-          id={id}
-          name={name}
-          placeholder={placeholder}
-          maxLength={4}
-          className="airport-input w-full bg-base border border-neutral rounded px-3 py-3 text-primary font-mono text-lg focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
-          required
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-        />
-        {/* Above the list, so "choose one" is not covered by the choices. */}
-        <p id={`${id}-hint`} className="mt-1 text-xs text-muted empty:hidden" />
-        {/* Out of the Tab order: a list long enough to scroll is a Tab stop of
+    <>
+      <div className="flex-1 w-full min-w-0">
+        <Eyebrow as="label" htmlFor={id} className="mb-2 block">
+          {label}
+        </Eyebrow>{" "}
+        <div className="relative">
+          <input
+            type="text"
+            id={id}
+            name={name}
+            placeholder={placeholder}
+            maxLength={4}
+            className="airport-input w-full bg-base border border-neutral rounded px-3 py-3 text-primary font-mono text-lg focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+            required
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          {/* Above the list, so "choose one" is not covered by the choices. */}
+          <p id={`${id}-hint`} className="mt-1 text-xs text-muted empty:hidden" />{" "}
+          {/* Out of the Tab order: a list long enough to scroll is a Tab stop of
             its own in Chromium and Firefox, and Tab from the box would land on
             it as it hides, dropping the focus and the next keys. */}
-        <div
-          id={`${id}-list`}
-          data-label={`${label}: matching airports`}
-          className={AIRPORT_LIST}
-          tabIndex={-1}
-          hidden
-        />
-      </div>
-    </div>
+          <div
+            id={`${id}-list`}
+            data-label={`${label}: matching airports`}
+            className={AIRPORT_LIST}
+            tabIndex={-1}
+            hidden
+          />
+        </div>
+      </div>{" "}
+    </>
   );
 }
 
@@ -98,7 +100,6 @@ export default function RoutePlannerPage({
           >
             <div className="flex flex-col sm:flex-row gap-4 items-start">
               <AirportField id="origin" name="origin" label="From" placeholder="SFO" />
-
               <div className="hidden sm:flex items-center pt-11 text-muted">
                 <svg
                   width="32"
@@ -110,26 +111,25 @@ export default function RoutePlannerPage({
                 >
                   <path d="M0 6h28M24 2l6 4-6 4" stroke="currentColor" strokeWidth="1.5" />
                 </svg>
-              </div>
-
+              </div>{" "}
               <AirportField id="destination" name="destination" label="To" placeholder="JAX" />
-            </div>
-            <div id="airport-status" role="status" className="sr-only" />
+            </div>{" "}
+            <div id="airport-status" role="status" className="sr-only" />{" "}
             <div>
               <Eyebrow as="label" htmlFor="travel-date" className="mb-2 block">
                 Date
-              </Eyebrow>
+              </Eyebrow>{" "}
               <input
                 type="date"
                 id="travel-date"
                 name="date"
                 className="w-full bg-base border border-neutral rounded px-3 py-2 text-primary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
               />
-            </div>
+            </div>{" "}
             <button type="submit" className={`${buttonClass("primary", "lg")} w-full`}>
               Find flights
             </button>
-          </form>
+          </form>{" "}
           <p className="text-xs text-muted mt-3 text-center">
             Nonstops first, then connections by Starlink odds.
           </p>
@@ -150,7 +150,7 @@ export default function RoutePlannerPage({
             <p>
               Odds come from which aircraft each {shortName} flight has used recently. A connection
               can beat the nonstop when the nonstop usually gets an aircraft without Starlink.
-            </p>
+            </p>{" "}
             <p>
               Aircraft can change.{" "}
               <a href="/check-flight" className="text-accent hover:underline">

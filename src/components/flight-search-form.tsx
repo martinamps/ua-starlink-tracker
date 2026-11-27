@@ -14,7 +14,7 @@
  *  - "report" (onboard banner): no date, no navigation; the banner module
  *    owns the submit.
  */
-import type React from "react";
+import { Fragment, type ReactNode } from "react";
 import { flightInputRules } from "../airlines/flight-number";
 import { type SiteConfig, liveAirlineSites, siteAirline } from "../airlines/registry";
 import { RETIRED_CODE_NOTES } from "../airlines/untracked-airline";
@@ -69,7 +69,7 @@ export function FlightSearchForm({
   /** Screen-reader-only labels, for compact placements with their own heading. */
   hideLabels?: boolean;
   /** More fields between the date and the button. */
-  extra?: React.ReactNode;
+  extra?: ReactNode;
   className?: string;
   /** Off when the page ships a bundle that already includes the form behavior. */
   withScript?: boolean;
@@ -135,18 +135,18 @@ export function FlightSearchForm({
             />
           </div>
         )}{" "}
-        {extra}
+        {extra}{" "}
         <button type="submit" className={`${buttonClass()} min-h-11`}>
           {submitLabel}
         </button>
-      </form>
+      </form>{" "}
       {mode === "check-any" && (
         <div
           id={`${id}-result`}
           aria-live="polite"
           className="mt-3 hidden text-sm leading-relaxed text-secondary"
         />
-      )}
+      )}{" "}
       {mode === "check-any" && answer === "tracked" && (
         <div id={`${id}-route`} className="mt-3 hidden">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -156,33 +156,35 @@ export function FlightSearchForm({
                 ["destination", "To (airport code)", "JFK"],
               ] as const
             ).map(([name, text, example]) => (
-              <div key={name} className="sm:w-44">
-                <label htmlFor={`${id}-${name}`} className={LABEL}>
-                  {text}
-                </label>
-                <input
-                  type="text"
-                  id={`${id}-${name}`}
-                  name={name}
-                  form={id}
-                  disabled
-                  maxLength={4}
-                  placeholder={example}
-                  autoComplete="off"
-                  autoCapitalize="characters"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  enterKeyHint="search"
-                  className={`${FIELD_CLASS} font-mono uppercase`}
-                />
-              </div>
+              <Fragment key={name}>
+                <div className="sm:w-44">
+                  <label htmlFor={`${id}-${name}`} className={LABEL}>
+                    {text}
+                  </label>
+                  <input
+                    type="text"
+                    id={`${id}-${name}`}
+                    name={name}
+                    form={id}
+                    disabled
+                    maxLength={4}
+                    placeholder={example}
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    enterKeyHint="search"
+                    className={`${FIELD_CLASS} font-mono uppercase`}
+                  />
+                </div>{" "}
+              </Fragment>
             ))}
             <button type="submit" form={id} className={`${buttonClass()} min-h-11`}>
               Check this route
             </button>
           </div>
         </div>
-      )}
+      )}{" "}
       {mode === "check-any" && answer === "tracked" && (
         <div id={`${id}-type`} className="mt-3 hidden">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -204,13 +206,13 @@ export function FlightSearchForm({
                 enterKeyHint="search"
                 className={FIELD_CLASS}
               />
-            </div>
+            </div>{" "}
             <button type="submit" form={id} className={`${buttonClass()} min-h-11`}>
               Check this aircraft type
             </button>
           </div>
         </div>
-      )}
+      )}{" "}
       {withScript && <ClientScriptTag name="flight-search" />}
     </>
   );

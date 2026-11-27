@@ -124,7 +124,7 @@ function InvalidQueryNotice({
         <>
           <p className="text-primary">
             {`${quoted} isn't ${article(shortName)} ${shortName} flight number. This site checks ${shortName} flights only.`}
-          </p>
+          </p>{" "}
           {invalid.didYouMean && (
             <p className="mt-2 text-secondary">
               {`${shortName} flight numbers start with ${invalid.didYouMean.replace(/\d+$/, "")}. `}
@@ -133,7 +133,7 @@ function InvalidQueryNotice({
               </a>
               ?
             </p>
-          )}
+          )}{" "}
           {elsewhere && (
             // A deliberate cross-site mention, marked like the footer's.
             <p data-cross-site-links className="mt-2 text-secondary">
@@ -167,7 +167,7 @@ function InvalidQueryNotice({
           {invalid.tooManyDigits && `${shortName} flight numbers have at most four digits. `}
           Try something like <span className="font-mono">{example}</span>.
         </p>
-      )}
+      )}{" "}
       {invalid.airportHint && showRoutePlanner && (
         <p className="mt-2 text-secondary">
           Looking for an airport or a route? Try the{" "}
@@ -329,7 +329,7 @@ export default function CheckFlightPage({
               showRoutePlanner={site.features.routePlannerPage}
               showFleet={site.features.fleetPage}
             />
-          )}
+          )}{" "}
           <FlightSearchForm
             site={site}
             id="check-flight-form"
@@ -367,7 +367,7 @@ export default function CheckFlightPage({
               homepage
             </a>
             .
-          </li>
+          </li>{" "}
           {site.features.chromeExtension && (
             <li>
               Shopping on Google Flights? The free{" "}
@@ -376,7 +376,7 @@ export default function CheckFlightPage({
               </a>{" "}
               marks {shortName} flights that have Starlink.
             </li>
-          )}
+          )}{" "}
           {flight && site.features.fleetPage && (
             <li>
               See every {airlineName} aircraft on the{" "}

@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { liveAirlineSites } from "../airlines/registry";
 import { Eyebrow, LINK, Panel } from "./layout";
 
@@ -19,27 +20,29 @@ export function TrackerLinks() {
         {trackers.map(({ site, airline }) => {
           const base = `https://${site.canonicalHost}`;
           return (
-            <div key={airline.code}>
-              <a href={`${base}/`} className={`${LINK} font-semibold`}>
-                {`${airline.shortName} Starlink Tracker`}
-              </a>
-              <ul className="mt-1 space-y-1 text-sm">
-                {site.features.checkFlightPage && (
-                  <li>
-                    <a href={`${base}/check-flight`} className={LINK}>
-                      {`Does my ${airline.shortName} flight have Starlink?`}
-                    </a>
-                  </li>
-                )}
-                {site.features.fleetPage && (
-                  <li>
-                    <a href={`${base}/fleet`} className={LINK}>
-                      {`Which ${airline.shortName} planes have Starlink?`}
-                    </a>
-                  </li>
-                )}
-              </ul>
-            </div>
+            <Fragment key={airline.code}>
+              <div>
+                <a href={`${base}/`} className={`${LINK} font-semibold`}>
+                  {`${airline.shortName} Starlink Tracker`}
+                </a>{" "}
+                <ul className="mt-1 space-y-1 text-sm">
+                  {site.features.checkFlightPage && (
+                    <li>
+                      <a href={`${base}/check-flight`} className={LINK}>
+                        {`Does my ${airline.shortName} flight have Starlink?`}
+                      </a>
+                    </li>
+                  )}{" "}
+                  {site.features.fleetPage && (
+                    <li>
+                      <a href={`${base}/fleet`} className={LINK}>
+                        {`Which ${airline.shortName} planes have Starlink?`}
+                      </a>
+                    </li>
+                  )}
+                </ul>
+              </div>{" "}
+            </Fragment>
           );
         })}
       </div>

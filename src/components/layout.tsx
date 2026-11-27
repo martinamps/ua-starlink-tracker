@@ -121,9 +121,11 @@ export function Panel({
   ...rest
 }: Box & { pad?: keyof typeof PANEL_PAD }) {
   return (
-    <Tag className={`${SURFACE} ${PANEL_PAD[pad]} ${className}`} {...rest}>
-      {children}
-    </Tag>
+    <>
+      <Tag className={`${SURFACE} ${PANEL_PAD[pad]} ${className}`} {...rest}>
+        {children}
+      </Tag>{" "}
+    </>
   );
 }
 
@@ -139,10 +141,15 @@ export function Eyebrow({
   htmlFor?: string;
   children: React.ReactNode;
 }) {
+  // A block eyebrow is followed by a space: it draws nothing beside a block,
+  // and keeps the label off the next word in the page's plain text.
   return (
-    <Tag className={`${EYEBROW_TEXT} ${className}`} {...(htmlFor ? { htmlFor } : {})}>
-      {children}
-    </Tag>
+    <>
+      <Tag className={`${EYEBROW_TEXT} ${className}`} {...(htmlFor ? { htmlFor } : {})}>
+        {children}
+      </Tag>
+      {Tag !== "span" && Tag !== "label" && " "}
+    </>
   );
 }
 
@@ -150,7 +157,11 @@ export function SectionTitle({
   className = "",
   children,
 }: { className?: string; children: React.ReactNode }) {
-  return <h2 className={`${H2} ${className}`}>{children}</h2>;
+  return (
+    <>
+      <h2 className={`${H2} ${className}`}>{children}</h2>{" "}
+    </>
+  );
 }
 
 const STAT_SIZE = { md: "text-3xl", lg: "text-4xl", xl: "text-5xl sm:text-6xl" } as const;
@@ -170,12 +181,14 @@ export function StatValue({
   children: React.ReactNode;
 }) {
   return (
-    <div
-      className={`font-display ${STAT_SIZE[size]} leading-none tabular-nums ${accent ? "text-accent" : "text-primary"} ${className}`}
-    >
-      {children}
-      {unit && <span className="text-base text-muted"> {unit}</span>}
-    </div>
+    <>
+      <div
+        className={`font-display ${STAT_SIZE[size]} leading-none tabular-nums ${accent ? "text-accent" : "text-primary"} ${className}`}
+      >
+        {children}
+        {unit && <span className="text-base text-muted"> {unit}</span>}
+      </div>{" "}
+    </>
   );
 }
 
@@ -191,9 +204,11 @@ const SKIP_LINK =
  */
 export function SkipLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
-    <a href={`#${to}`} className={SKIP_LINK}>
-      {children}
-    </a>
+    <>
+      <a href={`#${to}`} className={SKIP_LINK}>
+        {children}
+      </a>{" "}
+    </>
   );
 }
 
@@ -207,9 +222,11 @@ export function TextGap() {
 /** Where a SkipLink lands: focusable by script only, so the next Tab moves on from here. */
 export function SkipTarget({ id, children }: { id: string; children: React.ReactNode }) {
   return (
-    <p id={id} tabIndex={-1} className="sr-only">
-      {children}
-    </p>
+    <>
+      <p id={id} tabIndex={-1} className="sr-only">
+        {children}
+      </p>{" "}
+    </>
   );
 }
 
@@ -274,10 +291,14 @@ export function Chip({
   size?: keyof typeof CHIP;
   children: React.ReactNode;
 }) {
+  // Chips sit in a wrapping flex row, where the space after one draws nothing
+  // and keeps its label off the next one's in the page's plain text.
   return (
-    <a href={href} className={CHIP[size]}>
-      {children}
-    </a>
+    <>
+      <a href={href} className={CHIP[size]}>
+        {children}
+      </a>{" "}
+    </>
   );
 }
 
@@ -294,13 +315,17 @@ export function PageHeader({
   children?: React.ReactNode;
 }) {
   return (
-    <header className="relative mx-auto w-full max-w-3xl pt-8 pb-6 text-center">
-      {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
-      {eyebrow && " "}
-      <h1 className={H1}>{title}</h1>{" "}
-      {dek && <p className="mx-auto mt-2 max-w-2xl text-base text-secondary text-pretty">{dek}</p>}{" "}
-      {children && <div className="mt-3">{children}</div>}
-    </header>
+    <>
+      <header className="relative mx-auto w-full max-w-3xl pt-8 pb-6 text-center">
+        {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
+        {eyebrow && " "}
+        <h1 className={H1}>{title}</h1>{" "}
+        {dek && (
+          <p className="mx-auto mt-2 max-w-2xl text-base text-secondary text-pretty">{dek}</p>
+        )}{" "}
+        {children && <div className="mt-3">{children}</div>}
+      </header>{" "}
+    </>
   );
 }
 
@@ -362,13 +387,17 @@ export function Th({
   optional?: boolean;
   children?: React.ReactNode;
 }) {
+  // The space after a cell draws nothing in a table row, and keeps the
+  // cell's last word off the next cell's first in the page's plain text.
   return (
-    <th
-      scope="col"
-      className={`${TH} ${numeric ? "text-right" : ""} ${optional ? "hidden sm:table-cell" : ""}`}
-    >
-      {children}
-    </th>
+    <>
+      <th
+        scope="col"
+        className={`${TH} ${numeric ? "text-right" : ""} ${optional ? "hidden sm:table-cell" : ""}`}
+      >
+        {children}
+      </th>{" "}
+    </>
   );
 }
 
@@ -384,11 +413,13 @@ export function Td({
   children?: React.ReactNode;
 }) {
   return (
-    <td
-      className={`${TD} ${numeric ? "text-right" : ""} ${optional ? "hidden sm:table-cell" : ""} ${className}`}
-    >
-      {children}
-    </td>
+    <>
+      <td
+        className={`${TD} ${numeric ? "text-right" : ""} ${optional ? "hidden sm:table-cell" : ""} ${className}`}
+      >
+        {children}
+      </td>{" "}
+    </>
   );
 }
 

@@ -29,6 +29,7 @@ function FlightCell({ row, board }: { row: RouteFlightRow; board: RouteFlightBoa
         <span className="text-muted sm:hidden"> · {row.aircraft_types[0]}</span>
       )}
       {marker && <span className="text-xs text-muted"> · {marker}</span>}
+      {pill && " "}
       {pill && (
         <div className="mt-1">
           <Pill tone={row.assignment?.starlink === "none" ? "neutral" : "success"}>{pill}</Pill>
@@ -77,17 +78,17 @@ export function RouteFlightsSection({
               defaultValue={board.date ?? undefined}
               className={`${FIELD_CLASS} mt-1 sm:w-auto`}
             />
-          </label>
+          </label>{" "}
           <button type="submit" className={buttonClass("secondary", "sm")}>
             Filter
-          </button>
+          </button>{" "}
           {board.date && (
             <a href={path} className={`text-xs ${LINK}`}>
               Clear
             </a>
           )}
         </form>
-      )}
+      )}{" "}
       {empty ? (
         <p className="text-sm text-secondary">
           {empty}{" "}
@@ -121,7 +122,7 @@ export function RouteFlightsSection({
             ))}
           </tbody>
         </table>
-      )}
+      )}{" "}
       <p className="mt-4 text-xs text-muted">
         {board.note}
         {hasVerifiedRow(board) && ` ${VERIFIED_LEGEND}`}

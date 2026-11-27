@@ -163,7 +163,7 @@ const NEUTRAL_CARD = "border-subtle bg-surface-elevated";
 const headlineClass = (tone: Tone) => (tone === "neutral" ? "text-primary" : TONE_TEXT[tone]);
 
 function row(label: string, valueHtml: string): string {
-  return `<div class="flex gap-3"><dt class="w-24 shrink-0 text-muted">${esc(label)}</dt><dd class="min-w-0 text-secondary">${valueHtml}</dd></div>`;
+  return `<div class="flex gap-3"><dt class="w-24 shrink-0 text-muted">${esc(label)}</dt> <dd class="min-w-0 text-secondary">${valueHtml}</dd></div> `;
 }
 
 const tail = (t: string | null | undefined) =>
@@ -191,13 +191,13 @@ function flightRows(f: WireFlight, ctx: AnswerContext): string {
     rows.push(row("Aircraft", `${listedTail(f.tail_number, ctx)}${typeName(f.aircraft_type)}`));
   }
   if (f.operated_by) rows.push(row("Operated by", esc(f.operated_by)));
-  return `<dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
+  return ` <dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
 }
 
 function liveTvLine(f: WireFlight, ctx: AnswerContext): string {
   if (!ctx.liveTv) return "";
   const tier = seatbackLiveTv(f.fleet_type, f.aircraft_type);
-  return `<p class="mt-3 text-sm text-secondary">${esc(ctx.liveTv[tier])} <a href="/live-tv" class="text-accent hover:underline">Which planes have live TV</a></p>`;
+  return ` <p class="mt-3 text-sm text-secondary">${esc(ctx.liveTv[tier])} <a href="/live-tv" class="text-accent hover:underline">Which planes have live TV</a></p>`;
 }
 
 function flightAwareLink(f: WireFlight, ctx: AnswerContext): string {
@@ -209,7 +209,7 @@ function flightAwareLink(f: WireFlight, ctx: AnswerContext): string {
     : ctx.date.replace(/-/g, "");
   const icao = (c: string) => (c.length === 3 ? `K${c}` : c);
   const url = `https://www.flightaware.com/live/flight/${encodeURIComponent(f.flight_number)}/history/${utcDate}/${icao(dep)}/${icao(arr)}`;
-  return `<p class="mt-3 text-sm"><a href="${esc(url)}" target="_blank" rel="nofollow noopener noreferrer" class="text-accent hover:underline">View on FlightAware</a></p>`;
+  return ` <p class="mt-3 text-sm"><a href="${esc(url)}" target="_blank" rel="nofollow noopener noreferrer" class="text-accent hover:underline">View on FlightAware</a></p>`;
 }
 
 function alternativesHtml(
@@ -221,10 +221,10 @@ function alternativesHtml(
   const items = list
     .map(
       (a) =>
-        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${listedTail(a.tail_number, ctx)}${typeName(a.aircraft_type)}</li>`
+        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${listedTail(a.tail_number, ctx)}${typeName(a.aircraft_type)}</li> `
     )
     .join("");
-  return `<div class="mt-4"><h3 class="text-sm font-semibold text-primary">Starlink flights on this route that day</h3><ul class="mt-1 space-y-1 text-sm text-secondary">${items}</ul></div>`;
+  return ` <div class="mt-4"><h3 class="text-sm font-semibold text-primary">Starlink flights on this route that day</h3> <ul class="mt-1 space-y-1 text-sm text-secondary">${items}</ul></div>`;
 }
 
 function routePlannerCta(
@@ -235,7 +235,7 @@ function routePlannerCta(
   const o = toIata(origin);
   const d = toIata(destination);
   if (!ctx.routePlannerEnabled || !/^[A-Z]{3}$/.test(o) || !/^[A-Z]{3}$/.test(d)) return "";
-  return `<p class="mt-3 text-sm"><a href="/route-planner/${o}/${d}" rel="nofollow" class="text-accent hover:underline">Find Starlink flights from ${o} to ${d}</a></p>`;
+  return ` <p class="mt-3 text-sm"><a href="/route-planner/${o}/${d}" rel="nofollow" class="text-accent hover:underline">Find Starlink flights from ${o} to ${d}</a></p>`;
 }
 
 /** Anchor of the calendar offer, for links from the undated flight page. */
@@ -269,7 +269,7 @@ function watchRow(ctx: AnswerContext, firm: boolean): string {
   const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
   const heading = `${CALENDAR_OFFER_ID}-title`;
   const add = '<span class="sr-only">Add to </span>';
-  return `<section id="${CALENDAR_OFFER_ID}" aria-labelledby="${heading}" class="mt-4 border-t border-subtle pt-4"><h3 id="${heading}" class="text-sm font-semibold text-primary">Add this flight to your calendar</h3><p class="mt-1 text-sm text-secondary">${firm ? CALENDAR_LEAD_FIRM : CALENDAR_LEAD_PENDING}</p><ul class="mt-3 flex flex-wrap gap-2"><li><a href="${esc(webcal)}" data-watch="webcal" class="${CALENDAR_BUTTON}">${add}Apple Calendar or Outlook</a></li><li><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="${CALENDAR_BUTTON}">${add}Google Calendar</a></li></ul><p class="mt-3 text-xs text-muted">${CALENDAR_LAG} Or <a href="${esc(path)}" data-watch="ics" download class="text-accent underline hover:no-underline">download the event as a file</a>, a one-time copy that will not update.</p></section>`;
+  return ` <section id="${CALENDAR_OFFER_ID}" aria-labelledby="${heading}" class="mt-4 border-t border-subtle pt-4"><h3 id="${heading}" class="text-sm font-semibold text-primary">Add this flight to your calendar</h3> <p class="mt-1 text-sm text-secondary">${firm ? CALENDAR_LEAD_FIRM : CALENDAR_LEAD_PENDING}</p> <ul class="mt-3 flex flex-wrap gap-2"><li><a href="${esc(webcal)}" data-watch="webcal" class="${CALENDAR_BUTTON}">${add}Apple Calendar or Outlook</a></li> <li><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="${CALENDAR_BUTTON}">${add}Google Calendar</a></li></ul> <p class="mt-3 text-xs text-muted">${CALENDAR_LAG} Or <a href="${esc(path)}" data-watch="ics" download class="text-accent underline hover:no-underline">download the event as a file</a>, a one-time copy that will not update.</p></section>`;
 }
 
 /** The page's one swap caveat: firm cards carry it, nothing else repeats it. */
@@ -277,11 +277,11 @@ const CHANGE_NOTE = "Aircraft can be swapped before departure.";
 
 /** The caveat with its remedy right under it: a calendar event that follows a swap. */
 const swapNote = (ctx: AnswerContext) =>
-  `<p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${watchRow(ctx, true)}`;
+  ` <p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${watchRow(ctx, true)}`;
 
 function card(answer: AnswerTone, headline: string, body: string): string {
   const tone = ANSWER_TONE[answer];
-  return `<div class="rounded-lg border p-5 ${TONE_CARD[tone] ?? NEUTRAL_CARD}" data-tone="${answer}"><h2 class="font-display text-xl ${headlineClass(tone)} text-balance">${wholeDates(esc(headline))}</h2>${body}</div>`;
+  return `<div class="rounded-lg border p-5 ${TONE_CARD[tone] ?? NEUTRAL_CARD}" data-tone="${answer}"><h2 class="font-display text-xl ${headlineClass(tone)} text-balance">${wholeDates(esc(headline))}</h2> ${body}</div>`;
 }
 
 function probabilityBar(p: number, answer: AnswerTone): string {
@@ -380,7 +380,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const html = card(
       "yes",
       headline,
-      `${legs}${body.message ? `<p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLine(first, ctx)}${flightAwareLink(first, ctx)}${swapNote(ctx)}`
+      `${legs}${body.message ? ` <p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLine(first, ctx)}${flightAwareLink(first, ctx)}${swapNote(ctx)}`
     );
     return { tone: "yes", headline, html, firm: true };
   }
@@ -405,7 +405,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
               : "Not checked yet"
           )
         );
-        return `<dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
+        return ` <dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
       })
       .join("");
     const tone: AnswerTone = firmNo ? "no" : "unknown";
@@ -497,7 +497,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
   // A type rule's headline is the whole answer; the API's sentence would repeat it.
   const detail = typeRule
     ? ""
-    : `${probabilityBar(pred.probability, tone)}<p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>`;
+    : `${probabilityBar(pred.probability, tone)} <p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>`;
   const html = card(tone, headline, `${detail}${watchRow(ctx, false)}`);
   return { tone, headline, html, firm: false };
 }

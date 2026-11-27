@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { AirlineProgressList, RecentInstallsFeed, completeScope } from "../../components/atoms";
 import { FlightSearchForm } from "../../components/flight-search-form";
 import {
@@ -118,7 +119,7 @@ function RouteComparePanel() {
       <Eyebrow className="mb-1">Starlink odds by airline</Eyebrow>
       <div className="text-xs font-mono text-muted leading-relaxed mb-3">
         Share of each airline's planes on this nonstop route that have Starlink today.
-      </div>
+      </div>{" "}
       <form id="hub-compare-route" className="flex flex-col sm:flex-row gap-2">
         <input
           type="text"
@@ -141,21 +142,22 @@ function RouteComparePanel() {
         <button type="submit" className={buttonClass()}>
           Compare
         </button>
-      </form>
+      </form>{" "}
       <div className="flex flex-wrap items-center gap-2 mt-2">
         {PRESET_ROUTES.map((r) => (
-          <button
-            key={`${r.o}-${r.d}`}
-            type="button"
-            data-preset-origin={r.o}
-            data-preset-dest={r.d}
-            className={chipClass("sm")}
-          >
-            {r.o} → {r.d}
-          </button>
+          <Fragment key={`${r.o}-${r.d}`}>
+            <button
+              type="button"
+              data-preset-origin={r.o}
+              data-preset-dest={r.d}
+              className={chipClass("sm")}
+            >
+              {r.o} → {r.d}
+            </button>{" "}
+          </Fragment>
         ))}
-      </div>
-      <div id="hub-compare-result" className="mt-3 hidden" />
+      </div>{" "}
+      <div id="hub-compare-result" className="mt-3 hidden" />{" "}
       <div
         id="hub-compare-footer"
         className="mt-3 text-xs font-mono text-muted leading-relaxed hidden"
@@ -189,9 +191,8 @@ const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: 
             All {AIRLINE_FACTS.length} airlines, including the ones that said no →
           </a>
         </p>
-      </section>
-      <TrackerLinks />
-      <RouteComparePanel />
+      </section>{" "}
+      <TrackerLinks /> <RouteComparePanel />
       <Panel pad="sm">
         <Eyebrow className="mb-2">Check a flight</Eyebrow>
         <FlightSearchForm
