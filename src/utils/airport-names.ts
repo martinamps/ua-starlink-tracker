@@ -23,6 +23,8 @@
  * Seven more, named by the gauge the day it went live, were added the same
  * way (DVO, GYD, LUN, MUX, NCL, ORK, TFU), each checked against a second
  * register. Chengdu has two airports, so TFU says which.
+ * SKB, named by the gauge the same day, takes the island's name as ANU does
+ * (the register's municipality is the capital, Basseterre).
  * A wrong city is worse than a bare code: a code that is not here prints as
  * its code alone, so add one only after checking it.
  */
@@ -202,8 +204,8 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   DUB: ["Dublin"],
   DUR: ["Durban"],
   DUS: ["Düsseldorf"],
-  DVO: ["Davao"],
   DVL: ["Devils Lake"],
+  DVO: ["Davao"],
   DXB: ["Dubai"],
   EAR: ["Kearney"],
   EAT: ["Wenatchee"],
@@ -550,6 +552,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   SJD: ["Los Cabos"],
   SJO: ["San José, Costa Rica"],
   SJU: ["San Juan"],
+  SKB: ["St. Kitts"],
   SKG: ["Thessaloniki"],
   SLC: ["Salt Lake City"],
   SLN: ["Salina"],

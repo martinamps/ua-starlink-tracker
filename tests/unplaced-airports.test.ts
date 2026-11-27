@@ -75,6 +75,7 @@ describe("the airport tables", () => {
       MUX: "PK",
       NCL: "GB",
       ORK: "IE",
+      SKB: "KN",
       TFU: "CN",
     };
     for (const [code, country] of Object.entries(countries)) {
