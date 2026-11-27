@@ -42,6 +42,7 @@ import {
   ensureAirlinePrefix,
   flightInputRules,
   icaoCallsignToIata,
+  isFlightZero,
   marketedRowFlightNumber,
   permalinkCarrier,
   stripFlightNumberZeros,
@@ -3374,7 +3375,9 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   }
   const date = second && isRealIsoDate(second) ? second : null;
   const fn = stripFlightNumberZeros(icaoCallsignToIata(canonicalFlightInput(raw)));
-  if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw, date };
+  if (!CANONICAL_FLIGHT_PERMALINK.test(fn) || isFlightZero(fn)) {
+    return { kind: "invalid", raw, date };
+  }
   return { kind: "flight", raw, fn, date };
 }
 
@@ -3826,6 +3829,9 @@ function typedOnCheckFlight(
   | Response
   | Pick<InvalidFlightQuery, "reason" | "elsewhere" | "didYouMean" | "tooManyDigits">
   | null {
+  // Flight 0 is the plain not-a-flight-number 404 under every spelling, never
+  // another airline's flight or a look-alike's suggestion.
+  if (isFlightZero(raw)) return null;
   const datePath = date ? `/${date}` : "";
   const digits = bareDigitsFlight(pinned, raw);
   if (digits) {

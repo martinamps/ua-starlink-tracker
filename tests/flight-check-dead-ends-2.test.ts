@@ -11,6 +11,7 @@
 
 import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { isFlightZero } from "../src/airlines/flight-number";
 import { AIRLINES, SITES } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
 import {
@@ -177,6 +178,39 @@ describe("digits where a flight goes", () => {
     expect(bareDigitsFlight(AIRLINES.UA, "0")).toBeNull();
     expect(bareDigitsFlight(AIRLINES.UA, "0000")).toBeNull();
     expect(bareDigitsFlight(AIRLINES.UA, "0654")).toBe("UA654");
+  });
+
+  test("flight 0 behind any code is no flight either: the same 404 on every host", async () => {
+    const zeros = [
+      "UA0",
+      "UA000",
+      "ua0",
+      "UAL0",
+      "AS0",
+      "ASA0",
+      "US0",
+      "United%200",
+      "UA0/2026-12-01",
+    ];
+    for (const host of [UA, AS, HUB]) {
+      for (const typed of zeros) {
+        const label = `${host} ${typed}`;
+        const { res, body } = await page(`/check-flight/${typed}`, host);
+        expect(res.status, label).toBe(404);
+        expect(res.headers.get("location"), label).toBeNull();
+        expect(robotsOf(body), label).toContain("noindex");
+        // Never sent on as another airline's flight, which would 404 there too.
+        expect(body, label).not.toMatch(/Check [A-Z]{2}0 on the/);
+      }
+    }
+    // A real flight that ends in zeros keeps its page.
+    expect((await get("/check-flight/UA10", UA)).status).toBe(200);
+    expect((await get("/check-flight/AS100", AS)).status).toBe(200);
+    expect(isFlightZero("UA0")).toBe(true);
+    expect(isFlightZero("9E000")).toBe(true);
+    expect(isFlightZero("united 0")).toBe(true);
+    expect(isFlightZero("UA10")).toBe(false);
+    expect(isFlightZero("0")).toBe(false);
   });
 
   test("five digits that are a tail we track, with or without UA, go to the tail", async () => {
