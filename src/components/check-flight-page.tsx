@@ -101,6 +101,7 @@ export function answerContext(
     routePlannerEnabled: site.features.routePlannerPage,
     tailPages: site.features.tailPages,
     host: site.canonicalHost,
+    ...(dated.dayLegs?.length ? { dayLegs: dated.dayLegs } : {}),
   };
 }
 

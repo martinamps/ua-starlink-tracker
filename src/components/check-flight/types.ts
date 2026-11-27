@@ -1,4 +1,4 @@
-import type { CheckFlightBody } from "../../client/flight-answer";
+import type { CheckFlightBody, DayLeg } from "../../client/flight-answer";
 import type { TypeOutlookRef } from "../outlook-copy";
 
 export interface FlightRouteFact {
@@ -137,6 +137,8 @@ export interface DatedAnswer {
    * the browser re-check asks the API for the same leg. */
   leg?: { origin?: string; destination?: string };
   body: CheckFlightBody;
+  /** With no leg chosen: the date's legs the answer may not cover (flightDayLegs). */
+  dayLegs?: DayLeg[];
   /** A change of aircraft on the answered departure, from our own log. */
   swap?: PlaneSwap | null;
 }

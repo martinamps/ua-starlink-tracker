@@ -120,6 +120,7 @@ import {
   carrierReader,
   decideCarrier,
   firstReadField,
+  flightDayLegs,
   fr24DegradedNote,
   isPlausibleFlightNumber,
   legField,
@@ -160,7 +161,14 @@ import {
   routeBoardDateOk,
 } from "../api/route-flights";
 import { clientScriptResponse } from "../client/bundle";
-import { datePassed, forecastNote, renderFlightAnswer } from "../client/flight-answer";
+import {
+  type DayLeg,
+  datePassed,
+  forecastNote,
+  inTravelOrder,
+  renderFlightAnswer,
+  unansweredLegs,
+} from "../client/flight-answer";
 import AircraftTypePage from "../components/aircraft-type-page";
 import {
   AirlineDetailPage,
@@ -254,7 +262,7 @@ import {
   ROUTE_AIRPORT_RE,
 } from "../database/database";
 import { contradictingWifi } from "../database/sql/equipped";
-import { unixNow } from "../database/sql/windows";
+import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   classifyLookupCaller,
@@ -3645,15 +3653,22 @@ function buildFlightFacts(
  */
 function datedAnswerLegs(dated: DatedAnswer | undefined): LegQuery[] {
   if (!dated || dated.leg) return [];
-  const legs: LegQuery[] = [];
-  for (const f of dated.body.flights ?? []) {
+  const flights = dated.body.flights ?? [];
+  const named: { origin: string; destination: string; departure_time?: number | null }[] = [];
+  for (const f of flights) {
     if (!f.departure_airport || !f.arrival_airport) continue;
-    const leg = legOf({
-      departure_airport: f.departure_airport,
-      arrival_airport: f.arrival_airport,
+    named.push({
+      origin: toIata(f.departure_airport),
+      destination: toIata(f.arrival_airport),
+      departure_time: f.departure_time,
     });
-    if (!legs.some((l) => l.origin === leg.origin && l.destination === leg.destination)) {
-      legs.push(leg);
+  }
+  // A yes for some legs only names the others too, so they are listed with it.
+  if (dated.body.hasStarlink === true) named.push(...unansweredLegs(flights, dated.dayLegs));
+  const legs: LegQuery[] = [];
+  for (const { origin, destination } of inTravelOrder(named)) {
+    if (!legs.some((l) => l.origin === origin && l.destination === destination)) {
+      legs.push({ origin, destination });
     }
   }
   return legs;
@@ -4031,12 +4046,14 @@ async function datedAnswer(
       date
     );
     const body = checkFlightBody(cfg, reader, verdict, date, {}) as DatedAnswer["body"];
+    const dayLegs = datedDayLegs(cfg, reader, flightNumber, date, body, legParse);
     return {
       flightNumber,
       date,
       daysOut: verdict.window.daysOut,
       ...(legParse.leg ? { leg: legParse.leg } : {}),
       body,
+      ...(dayLegs.length > 0 ? { dayLegs } : {}),
       swap: planeSwapFor(
         reader,
         verdict,
@@ -4048,6 +4065,45 @@ async function datedAnswer(
     logError(`Dated answer failed for ${flightNumber} ${date}`, err);
     return undefined;
   }
+}
+
+/**
+ * The date's legs a page with no leg chosen has to tell its answer apart
+ * from. A yes keeps only the legs it does not cover, so a page whose yes
+ * covers the day carries none. An answer the browser may still firm up keeps
+ * every leg: the API's yes lists Starlink legs only. A no names its own aircraft.
+ */
+function datedDayLegs(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  date: string,
+  body: DatedAnswer["body"],
+  legParse: LegParse
+): DayLeg[] {
+  if (legParse.leg || body.error || body.hasStarlink === false || cfg.statementRule) return [];
+  const now = unixNow();
+  const legs = flightDayLegs(cfg, reader, flightNumber, date, now);
+  // The number's recent routes say a leg exists and nothing of its aircraft:
+  // the only trace of a leg flown by a plane we hold no schedule for.
+  for (const r of reader.getFlightRoutePairs(buildFlightLookupVariants(cfg, flightNumber))) {
+    const seen = r.last_seen_at ?? 0;
+    if (r.scheduled !== 1 && (seen > now || seen < now - TRAILING_WINDOW_SEC)) continue;
+    const origin = toIata(r.departure_airport);
+    const destination = toIata(r.arrival_airport);
+    if (!/^[A-Z]{3}$/.test(origin) || !/^[A-Z]{3}$/.test(destination)) continue;
+    if (legs.some((l) => l.origin === origin && l.destination === destination)) continue;
+    legs.push({
+      origin,
+      destination,
+      departure_time: null,
+      tail: null,
+      starlink: null,
+      dated: false,
+    });
+  }
+  if (body.hasStarlink === true) return unansweredLegs(body.flights, legs);
+  return legs.length > 1 ? legs : [];
 }
 
 /**

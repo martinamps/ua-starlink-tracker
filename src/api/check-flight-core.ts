@@ -29,6 +29,8 @@ import {
   publicAirlines,
   verifierReadsWifi,
 } from "../airlines/registry";
+import type { DayLeg } from "../client/flight-answer";
+import type { AssignmentLogRow } from "../database/assignment-log";
 import type {
   DepartureSlot,
   FlightAssignmentRow,
@@ -743,42 +745,7 @@ export async function resolveFlightVerdict(
   if (cfg.code === "QR") return resolveQatarLeg(reader, normalized, date, window, now, deps);
   if (cfg.statementRule) return statementVerdict(cfg, reader, normalized, date, window, now, deps);
 
-  const variants = buildAirlineFlightNumberVariants(cfg, normalized);
-
-  // Query is last_updated DESC, so dedupe by departure_time keeps the
-  // most-recent row after an aircraft swap; then keep only rows whose
-  // departure-airport local date matches the queried date.
-  const seen = new Set<number>();
-  const onDate = (r: { departure_airport: string; departure_time: number }) =>
-    matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
-  const unequipped = cfg.communitySource
-    ? reader.getUnequippedAssignments(variants, window.queryStart, window.queryEnd).filter(onDate)
-    : [];
-  // Only community carriers poll non-★ tails, so only they can hold a newer
-  // non-★ row that supersedes a ★ row for the same departure (a swap).
-  const supersededAt = new Map<number, number>();
-  for (const u of unequipped) {
-    supersededAt.set(
-      u.departure_time,
-      Math.max(u.last_updated, supersededAt.get(u.departure_time) ?? 0)
-    );
-  }
-  const scheduled = reader
-    .getFlightAssignments(variants, window.queryStart, window.queryEnd)
-    .filter((r) => {
-      if (seen.has(r.departure_time)) return false;
-      seen.add(r.departure_time);
-      return true;
-    })
-    .filter(onDate)
-    .filter((r) => r.last_updated >= (supersededAt.get(r.departure_time) ?? 0));
-  // An answer made with no live lookup (the hub, a page's first paint) reads
-  // what an earlier lookup stored: a listed tail it named after our last read
-  // of that tail's schedule is on the flight as far as we know.
-  const rows =
-    scheduled.length === 0 && deps.lookupTail === null
-      ? reader.getListedSightings(variants, window.queryStart, window.queryEnd).filter(onDate)
-      : scheduled;
+  const { rows, unequipped } = assignmentRowsOn(cfg, reader, normalized, date, window, deps);
 
   const leg = deps.leg;
   if (!leg) {
@@ -875,6 +842,141 @@ export async function resolveFlightVerdict(
     verdict = { ...verdict, pred: { ...verdict.pred, confidence: "low" } };
   }
   return { ...verdict, leg: resolution };
+}
+
+/**
+ * The schedule rows a date's answer is read from: the newest row of each
+ * departure on the airport's local date, and for a community-source carrier
+ * its unequipped rows beside them.
+ */
+function assignmentRowsOn(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  normalized: string,
+  date: string,
+  window: FlightDateWindow,
+  deps: Pick<ResolveDeps, "lookupTail">
+): { rows: FlightAssignmentRow[]; unequipped: UnequippedAssignment[] } {
+  const variants = buildAirlineFlightNumberVariants(cfg, normalized);
+
+  // Query is last_updated DESC, so dedupe by departure_time keeps the
+  // most-recent row after an aircraft swap; then keep only rows whose
+  // departure-airport local date matches the queried date.
+  const seen = new Set<number>();
+  const onDate = (r: { departure_airport: string; departure_time: number }) =>
+    matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
+  const unequipped = cfg.communitySource
+    ? reader.getUnequippedAssignments(variants, window.queryStart, window.queryEnd).filter(onDate)
+    : [];
+  // Only community carriers poll non-★ tails, so only they can hold a newer
+  // non-★ row that supersedes a ★ row for the same departure (a swap).
+  const supersededAt = new Map<number, number>();
+  for (const u of unequipped) {
+    supersededAt.set(
+      u.departure_time,
+      Math.max(u.last_updated, supersededAt.get(u.departure_time) ?? 0)
+    );
+  }
+  const scheduled = reader
+    .getFlightAssignments(variants, window.queryStart, window.queryEnd)
+    .filter((r) => {
+      if (seen.has(r.departure_time)) return false;
+      seen.add(r.departure_time);
+      return true;
+    })
+    .filter(onDate)
+    .filter((r) => r.last_updated >= (supersededAt.get(r.departure_time) ?? 0));
+  // An answer made with no live lookup (the hub, a page's first paint) reads
+  // what an earlier lookup stored: a listed tail it named after our last read
+  // of that tail's schedule is on the flight as far as we know.
+  const rows =
+    scheduled.length === 0 && deps.lookupTail === null
+      ? reader.getListedSightings(variants, window.queryStart, window.queryEnd).filter(onDate)
+      : scheduled;
+  return { rows, unequipped };
+}
+
+/**
+ * Every leg our own tables hold under the number for that date, from its
+ * schedule rows and logged lookups, for a page that answers the whole number:
+ * a yes names only its Starlink legs, and a traveller on another leg must not
+ * read it as theirs. No lookup is made. Empty for carriers answered by rule,
+ * not by tail.
+ */
+export function flightDayLegs(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  date: string,
+  now = unixNow()
+): DayLeg[] {
+  const window = flightDateWindow(date, now);
+  if (!window || cfg.code === "QR" || cfg.statementRule) return [];
+  const normalized = ensureAirlinePrefix(cfg, flightNumber);
+  const variants = buildAirlineFlightNumberVariants(cfg, normalized);
+  const legs = new Map<string, DayLeg>();
+  const add = (
+    from: string | null | undefined,
+    to: string | null | undefined,
+    rest: Omit<DayLeg, "origin" | "destination">
+  ) => {
+    const origin = normalizeAirportCode(from);
+    const destination = normalizeAirportCode(to);
+    if (!origin || !destination || origin === destination) return;
+    const key = `${origin}>${destination}`;
+    if (!legs.has(key)) legs.set(key, { origin, destination, ...rest });
+  };
+  // A tail off our Starlink list is a no only once its own check settled that.
+  const settledNo = (tail: string) =>
+    reader.assignedTails.getFleetEntryByTail(tail)?.starlink_status === "negative" ? false : null;
+
+  const { rows } = assignmentRowsOn(cfg, reader, normalized, date, window, { lookupTail: null });
+  // Roster tails off the Starlink list, where the carrier's schedule holds
+  // them: the answer reads these for a community-source carrier only, but a
+  // leg they fly exists for any carrier.
+  const unequipped = reader
+    .getUnequippedAssignments(variants, window.queryStart, window.queryEnd)
+    .filter((u) =>
+      matchesLocalDate(date, u.departure_airport, u.departure_time, window.start, window.end)
+    );
+  for (const r of [...rows].sort((a, b) => a.departure_time - b.departure_time)) {
+    add(r.departure_airport, r.arrival_airport, {
+      departure_time: r.departure_time,
+      tail: r.tail_number,
+      starlink: rowOutcome(r) === "yes",
+      dated: true,
+    });
+  }
+  for (const u of unequipped) {
+    add(u.departure_airport, u.arrival_airport, {
+      departure_time: u.departure_time,
+      tail: u.tail_number,
+      starlink: settledNo(u.tail_number),
+      dated: true,
+    });
+  }
+  const sightings = new Map(
+    reader
+      .getAssignmentHistory(variants, date)
+      .map((h) => [`${h.departure_airport}|${h.tail_number}`, h] as const)
+  );
+  for (const l of reader.getLoggedAircraft(variants, date)) {
+    const seen = sightings.get(`${l.departure_airport}|${l.tail_number}`) as
+      | (AssignmentLogRow & { withdrawn_at?: number | null })
+      | undefined;
+    const departure_time = seen?.departure_time ?? null;
+    // A listed tail still on the leg has a schedule row above; one found only
+    // in the log is from before a swap, as is a tail a later lookup no longer
+    // returned. The leg stands and its plane doesn't.
+    add(
+      l.departure_airport,
+      l.arrival_airport,
+      l.equipped || seen?.withdrawn_at
+        ? { departure_time, tail: null, starlink: null, dated: true }
+        : { departure_time, tail: l.tail_number, starlink: settledNo(l.tail_number), dated: true }
+    );
+  }
+  return [...legs.values()];
 }
 
 /**
