@@ -3531,7 +3531,8 @@ function buildFlightFacts(
   cfg: AirlineConfig,
   flightNumber: string,
   variants: string[],
-  leg?: LegQuery
+  leg?: LegQuery,
+  dateLegs: LegQuery[] = []
 ): FlightFacts {
   const history = reader.getFlightHistorySummary(variants);
   // Airport codes feed markup and JSON-LD; only use rows that look like real
@@ -3598,6 +3599,16 @@ function buildFlightFacts(
     });
     routes.sort((a, b) => Number(onLeg(b, opened)) - Number(onLeg(a, opened)));
   }
+  // A dated page answers for its date, not for now: the legs that date's
+  // answer names lead, in departure order, so the structured data and the
+  // airport whose clock reads the date belong to the day asked about.
+  if (!leg && dateLegs.length > 0) {
+    const rank = (r: (typeof routes)[number]) => {
+      const i = dateLegs.findIndex((l) => onLeg(r, l));
+      return i < 0 ? dateLegs.length : i;
+    };
+    routes.sort((a, b) => rank(a) - rank(b));
+  }
   const primary = routes[0] ?? null;
   const siblings = primary
     ? reader
@@ -3624,6 +3635,26 @@ function buildFlightFacts(
     siblings,
     notObservedSince: notObservedSince(reader, routes, upcoming.length > 0, now),
   };
+}
+
+/**
+ * The legs a dated answer names an aircraft on, in departure order; none for
+ * a page scoped to one leg, which already answers for that leg alone.
+ */
+function datedAnswerLegs(dated: DatedAnswer | undefined): LegQuery[] {
+  if (!dated || dated.leg) return [];
+  const legs: LegQuery[] = [];
+  for (const f of dated.body.flights ?? []) {
+    if (!f.departure_airport || !f.arrival_airport) continue;
+    const leg = legOf({
+      departure_airport: f.departure_airport,
+      arrival_airport: f.arrival_airport,
+    });
+    if (!legs.some((l) => l.origin === leg.origin && l.destination === leg.destination)) {
+      legs.push(leg);
+    }
+  }
+  return legs;
 }
 
 /** The leg a route row or departure flies, as onLeg matches it. */
@@ -3870,18 +3901,25 @@ function flightPageMeta(
   // or assistant who opened this date reads this date's answer.
   const ownDate = datedPageLines(ctx.site, facts, dated);
 
-  const pageJsonLd = route
-    ? jsonLdBlock({
+  // A date whose answer names two legs gets a Flight for each, as its
+  // description names each leg's plane; every other page names its one leg.
+  const dateLegs = datedAnswerLegs(dated);
+  const dateRoutes =
+    dateLegs.length > 1 ? facts.routes.filter((r) => dateLegs.some((l) => onLeg(r, l))) : [];
+  const pageJsonLd = (dateRoutes.length > 1 ? dateRoutes : route ? [route] : [])
+    .map((r) =>
+      jsonLdBlock({
         "@context": "https://schema.org",
         "@type": "Flight",
         name: `${cfg.name} ${flightNumber}`,
         flightNumber: flightNumber.replace(cfg.iata, ""),
         provider: { "@type": "Airline", name: cfg.name, iataCode: cfg.iata },
-        departureAirport: { "@type": "Airport", iataCode: route.departure_airport },
-        arrivalAirport: { "@type": "Airport", iataCode: route.arrival_airport },
+        departureAirport: { "@type": "Airport", iataCode: r.departure_airport },
+        arrivalAirport: { "@type": "Airport", iataCode: r.arrival_airport },
         url: `https://${ctx.site.canonicalHost}/check-flight/${flightNumber}`,
       })
-    : "";
+    )
+    .join("");
 
   // The route pair carries both the WiFi intent and the flight-status intent
   // people actually type, and it fits well inside the ~60 chars Google renders
@@ -4195,7 +4233,7 @@ const checkFlightPage: Handler = async (ctx) => {
         { popular: reader.getPopularFlights(), noindex: true, dated, unknownFlight: fn }
       );
     }
-    const facts = buildFlightFacts(reader, cfg, fn, variants, legParse.leg);
+    const facts = buildFlightFacts(reader, cfg, fn, variants, legParse.leg, datedAnswerLegs(dated));
     return renderSubPage(
       ctx,
       CheckFlightPage,
@@ -6078,8 +6116,15 @@ async function sharePictureFor(
       ? parseLegQuery(r.leg.origin ?? null, r.leg.destination ?? null)
       : { leg: undefined };
     if (r.leg && !legParse.leg) return null;
-    const facts = buildFlightFacts(ctx.reader, cfg, fn, variants, legParse.leg);
     const dated = r.date ? await datedAnswer(cfg, ctx.reader, fn, r.date, legParse) : undefined;
+    const facts = buildFlightFacts(
+      ctx.reader,
+      cfg,
+      fn,
+      variants,
+      legParse.leg,
+      datedAnswerLegs(dated)
+    );
     return flightSharePicture(ctx.site, facts, dated, legParse.leg);
   }
   if (r.kind === "tail") {
