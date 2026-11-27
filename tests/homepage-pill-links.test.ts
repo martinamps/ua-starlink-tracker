@@ -81,6 +81,7 @@ const seedFlightTimes = {
   QX2304: soon(2),
   OO3053: soon(3),
   SKW3133: soon(4),
+  ASA800: soon(3),
 };
 
 /**
@@ -110,6 +111,12 @@ function seedDb() {
   });
   addFlight(db, "N999HA", "HA11", "HNL", seedFlightTimes.HA11, {
     arrivalAirport: "LAX",
+    airline: "HA",
+  });
+  // Since the merger Hawaiian metal also flies Alaska's AS800-999, which the
+  // feed stores as Alaska's radio callsign: no one can book "ASA800".
+  addFlight(db, "N999HA", "ASA800", "LAX", seedFlightTimes.ASA800, {
+    arrivalAirport: "KOA",
     airline: "HA",
   });
 
@@ -386,6 +393,10 @@ describe("sites without a flight-permalink page keep pills outbound", () => {
     expect(pillFor(pills, "UA4757")?.href).toBe("https://www.flightaware.com/live/flight/OO4757");
     expect(pillFor(pills, "AS2304")?.href).toBe("https://www.flightaware.com/live/flight/QX2304");
     expect(pillFor(pills, "HA11")).toBeDefined();
+    // A Hawaiian row flying Alaska's callsign prints the Alaska number.
+    expect(pillFor(pills, "AS800")?.href).toBe("https://www.flightaware.com/live/flight/ASA800");
+    expect(pills.filter((p) => /^[A-Z]{3}\d+$/.test(p.number))).toEqual([]);
+    expect(searchFinds(searchIndexFor(html, "N999HA"), "AS800")).toBe(true);
     expect(pillFor(pills, "AS3053")?.href).toBe("https://www.flightaware.com/live/flight/OO3053");
     expect(pills.filter((p) => /^(OO|SKW)\d+$/.test(p.number))).toEqual([]);
     // The hub has no flight page of its own: a typed flight hops to its
