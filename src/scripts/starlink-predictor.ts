@@ -48,7 +48,7 @@ import {
 } from "../airlines/registry";
 import { formatFactDate } from "../airlines/rollout-facts";
 import { type StatementAnswer, statementAnswer } from "../airlines/statement-rule";
-import { bandLabel, capitalize } from "../components/ui/format";
+import { bandLabel, capitalize, zonedClock, zonedMinutes } from "../components/ui/format";
 import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
 import type { AirlineTypeCount } from "../database/airline-count";
 import type {
@@ -61,7 +61,13 @@ import type {
 import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
 import type { RouteFlightLeg } from "../database/route-flights";
 import { airportDistanceMiles, detourBoundMiles, hubAllowedForTrip } from "../utils/airport-geo";
-import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
+import {
+  airportTimezone,
+  flightDateWindow,
+  localDateISO,
+  matchesLocalDate,
+  zonedWallTimeSec,
+} from "../utils/airport-tz";
 import { plainTypeName } from "../utils/outside-text";
 import { memo, perOwner } from "../utils/ttl-cache";
 import {
@@ -2221,6 +2227,12 @@ export type ItineraryLeg = BasePrediction & {
   confirmed?: boolean;
   // duration_hours was backfilled by routeHours() rather than observed on this flight.
   duration_estimated?: boolean;
+  /** Usual local departure at the leg's origin ("8:15 AM"), when one is on record. */
+  typical_departure?: string;
+  /** Usual local arrival at the leg's destination, from the departure plus duration. */
+  typical_arrival?: string;
+  /** Origin-local date the leg flies on, given a searched date: a later leg can be the next day. */
+  date?: string;
 };
 
 export interface Itinerary {
@@ -2237,107 +2249,163 @@ export interface Itinerary {
   // ranking metric: maximizing raw eSL hours pathologically prefers 10h 3-stop
   // routes over a 1h 92% direct. Coverage ratio treats them fairly.
   coverage_ratio: number | null;
+  /**
+   * "same_day": every leg has a usual time and each connection leaves at least
+   * MIN_CONNECTION_MINUTES after the previous leg usually lands. "unknown": a
+   * leg has no time on record (or is an any-flight positioning leg), so the
+   * connection could not be checked.
+   */
+  schedule?: "same_day" | "unknown";
+  /** Minutes on the ground at each stop, in order; null where unknown. */
+  connection_minutes?: Array<number | null>;
+  /** First usual departure to last usual arrival, layovers included; null if any part is unknown. */
+  elapsed_hours?: number | null;
+}
+
+/** One flight number on one pair, before its odds are dated. */
+interface EdgeOption {
+  /** The number as stored, keying confirmed assignments. */
+  stored: string;
+  /** History-only prediction (flight_number is the UA spelling). */
+  hist: BasePrediction;
+  route: string;
+  departure: string;
+  arrival: string;
+  duration_hours: number | null;
+  /** Usual departure, minutes after local midnight at the origin; null when unknown. */
+  minutes: number | null;
 }
 
 /**
- * Build the Starlink route adjacency graph: for each airport, the best
- * (highest-probability) flight number to each reachable destination.
+ * Every flight number on each pair, best odds first. A connection has to pick
+ * the flight that leaves after the previous one lands, not the best number on
+ * the pair; keeping one edge per pair is what showed itineraries whose second
+ * flight had left before the first one landed.
+ */
+type RouteGraph = Map<string, Map<string, EdgeOption[]>>;
+
+/**
+ * Same-day assignments on VERIFIED-Starlink tails (verified_wifi = 'Starlink',
+ * not NULL — spreadsheet-listed-but-unverified planes don't get the confirmed
+ * tier), keyed flight|dep|arr. Only valid for a date our upcoming_flights
+ * snapshot covers; outside it the map is simply empty.
+ */
+function confirmedEdgesOn(reader: ScopedReader, date: string): Map<string, "express" | "mainline"> {
+  const out = new Map<string, "express" | "mainline">();
+  const window = flightDateWindow(date);
+  if (!window) return out;
+  // Match rows on the departure airport's LOCAL date over the widened bounds,
+  // same as check-flight core — a strict UTC day window drops verified evening
+  // departures (SFO 6pm = 01:00Z next day) and seeds the wrong day's tail.
+  for (const r of reader.getConfirmedStarlinkEdges(window.queryStart, window.queryEnd)) {
+    if (!matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)) {
+      continue;
+    }
+    out.set(
+      `${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`,
+      r.fleet === "mainline" ? "mainline" : "express"
+    );
+  }
+  return out;
+}
+
+const nextIsoDate = (date: string) =>
+  new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * Build the Starlink route adjacency graph: for each airport, every flight
+ * number to each reachable destination that clears the odds floor on some day
+ * the trip can fly.
  *
  * Probability comes from TWO sources, in priority order:
- *  1. CONFIRMED assignment: if the flight is on a verified-Starlink tail in our
- *     current upcoming_flights snapshot, use CONFIRMED_EDGE_PROBABILITY (0.95).
- *     The flight number's history is irrelevant — we KNOW the near-term answer.
+ *  1. CONFIRMED assignment: if the flight is on a verified-Starlink tail on
+ *     the day the leg flies, in our current upcoming_flights snapshot.
  *  2. Historical prediction: predictFlight() from the verification log.
  *
  * Without (1), a flight like UA1358 ORD→MIA (0% history, but literally on a
  * Starlink plane tomorrow) gets filtered out and the planner says "no path."
+ * Without a searched date, (1) is skipped: today's tail assignment has no
+ * bearing on an undated trip.
  */
 function buildRouteGraph(
   reader: ScopedReader,
   minLegProb: number,
-  targetDateUnix?: number
-): Map<string, Map<string, ItineraryLeg>> {
+  confirmedOn: (date: string) => Map<string, "express" | "mainline">,
+  searchedDate: string | null
+): RouteGraph {
   const rows = reader.getRouteGraphEdges();
+  // A later leg can fly the day after the searched one (a red-eye, a late
+  // connection), so a flight confirmed on either day is worth keeping.
+  const seedDays = searchedDate ? [searchedDate, nextIsoDate(searchedDate)] : [];
 
-  // Confirmed-edge seeding is only valid when the target date is covered by
-  // our upcoming_flights snapshot. Outside that window, today's tail
-  // assignment has no bearing — a mainline flight rotates tails freely.
-  // Without a target date (e.g. exploratory planning), skip confirmed seeding
-  // and rely on historical prediction, which is honest about uncertainty.
-  // Confirmed-edge seeding: same-day assignments on VERIFIED-Starlink tails only
-  // (verified_wifi = 'Starlink', not NULL — spreadsheet-listed-but-unverified
-  // planes don't get the confirmed tier). Fleet-aware swap discount applied.
-  const confirmedEdges = new Map<string, "express" | "mainline">();
-  if (targetDateUnix !== undefined) {
-    // targetDateUnix is noon UTC of the traveler's date (flightDateWindow.mid),
-    // so its UTC date IS the queried date. Match rows on the departure
-    // airport's LOCAL date over the widened bounds, same as check-flight core
-    // — a strict UTC day window drops verified evening departures (SFO 6pm =
-    // 01:00Z next day) and seeds the wrong day's tail instead.
-    const date = new Date(targetDateUnix * 1000).toISOString().slice(0, 10);
-    const window = flightDateWindow(date);
-    if (window) {
-      const confirmedRows = reader.getConfirmedStarlinkEdges(window.queryStart, window.queryEnd);
-      for (const r of confirmedRows) {
-        if (
-          !matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)
-        ) {
-          continue;
-        }
-        const fleet = r.fleet === "mainline" ? "mainline" : "express";
-        confirmedEdges.set(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`, fleet);
-      }
-    }
-  }
-
-  const graph = new Map<string, Map<string, ItineraryLeg>>();
+  const graph: RouteGraph = new Map();
   for (const r of rows) {
     const dep = r.departure_airport;
     const arr = r.arrival_airport;
     // A row whose origin equals its destination is bad upstream data; letting
     // it into the graph is what let the planner emit self-loop legs.
     if (!dep || !arr || dep === arr) continue;
-    const uaNum = uaPrefix(r.flight_number);
-    const confirmedFleet = confirmedEdges.get(`${r.flight_number}|${dep}|${arr}`);
+    const key = `${r.flight_number}|${dep}|${arr}`;
+    const hist = predictLegOrFlight(reader, uaPrefix(r.flight_number), dep, arr);
+    const confirmedSomeDay = seedDays.some((d) => confirmedOn(d).has(key));
+    if (hist.probability < minLegProb && !confirmedSomeDay) continue;
 
-    let pred: BasePrediction;
-    if (confirmedFleet) {
-      // Use the MAX of (historical prediction, confirmed swap-adjusted) —
-      // a flight with 100% history shouldn't drop to 90% just because it's
-      // also in the snapshot.
-      const hist = predictLegOrFlight(reader, uaNum, dep, arr);
-      const confirmedP = CONFIRMED_PROB[confirmedFleet];
-      pred =
-        hist.probability >= confirmedP
-          ? hist
-          : {
-              flight_number: uaNum,
-              probability: confirmedP,
-              confidence: "high",
-              // Was omitted, which tsc flags: BasePrediction requires it and
-              // the field was simply missing from the wire response.
-              method: "confirmed_assignment",
-              n_observations: 1,
-            };
-    } else {
-      pred = predictLegOrFlight(reader, uaNum, dep, arr);
-    }
-
-    if (pred.probability < minLegProb) continue;
-
+    const zone = airportTimezone(dep);
+    const option: EdgeOption = {
+      stored: r.flight_number,
+      hist,
+      route: `${dep}-${arr}`,
+      departure: dep,
+      arrival: arr,
+      duration_hours: r.avg_duration_sec > 0 ? r.avg_duration_sec / 3600 : null,
+      minutes: zone && r.departure_time ? zonedMinutes(r.departure_time, zone) : null,
+    };
     if (!graph.has(dep)) graph.set(dep, new Map());
     const edges = graph.get(dep)!;
-    const existing = edges.get(arr);
-    if (!existing || pred.probability > existing.probability) {
-      edges.set(arr, {
-        ...pred,
-        route: `${dep}-${arr}`,
-        duration_hours: r.avg_duration_sec > 0 ? r.avg_duration_sec / 3600 : null,
-        confirmed: confirmedFleet !== undefined,
-      });
+    const list = edges.get(arr);
+    if (list) list.push(option);
+    else edges.set(arr, [option]);
+  }
+  for (const edges of graph.values()) {
+    for (const list of edges.values()) {
+      list.sort((a, b) => b.hist.probability - a.hist.probability);
     }
   }
   return graph;
+}
+
+/**
+ * The option's odds on the day it flies: the MAX of its history and the
+ * swap-adjusted confirmed tier (a flight with 100% history shouldn't drop to
+ * 90% just because it's also in the snapshot). Null when below the floor.
+ */
+function datedLeg(
+  option: EdgeOption,
+  date: string | null,
+  confirmedOn: (date: string) => Map<string, "express" | "mainline">,
+  minLegProb: number
+): ItineraryLeg | null {
+  const fleet = date
+    ? confirmedOn(date).get(`${option.stored}|${option.departure}|${option.arrival}`)
+    : undefined;
+  const confirmedP = fleet ? CONFIRMED_PROB[fleet] : 0;
+  const pred: BasePrediction =
+    fleet && option.hist.probability < confirmedP
+      ? {
+          flight_number: option.hist.flight_number,
+          probability: confirmedP,
+          confidence: "high",
+          method: "confirmed_assignment",
+          n_observations: 1,
+        }
+      : option.hist;
+  if (pred.probability < minLegProb) return null;
+  return {
+    ...pred,
+    route: option.route,
+    duration_hours: option.duration_hours,
+    confirmed: fleet !== undefined,
+  };
 }
 
 function computeItinerary(legs: ItineraryLeg[], coverage: "full" | "partial"): Itinerary {
@@ -2441,7 +2509,24 @@ export function planItinerary(
     return remaining !== null && flown + remaining > bound;
   };
 
-  const graph = buildRouteGraph(reader, minLegProb, options.targetDateUnix);
+  // targetDateUnix is noon UTC of the traveler's date (flightDateWindow.mid),
+  // so its UTC date IS the queried date.
+  const searchedDate =
+    options.targetDateUnix !== undefined
+      ? new Date(options.targetDateUnix * 1000).toISOString().slice(0, 10)
+      : null;
+  const confirmedMemo = new Map<string, Map<string, "express" | "mainline">>();
+  const confirmedOn = (date: string) => {
+    let m = confirmedMemo.get(date);
+    if (!m) {
+      m = confirmedEdgesOn(reader, date);
+      confirmedMemo.set(date, m);
+    }
+    return m;
+  };
+  const graph = buildRouteGraph(reader, minLegProb, confirmedOn, searchedDate);
+  // Usual times are clock times; an undated search lays them on today.
+  const clockDate = searchedDate ?? new Date().toISOString().slice(0, 10);
   const itineraries: Itinerary[] = [];
   const positioningPrior = loadFleetPriors(reader).mainline;
 
@@ -2479,11 +2564,134 @@ export function planItinerary(
     elapsedHours(it) <= budgetHours;
   const hubAllowed = (hub: string) => hubAllowedForTrip(orig, dest, hub);
 
+  const legHours = (leg: ItineraryLeg): number | null => withDuration(leg).duration_hours;
+
+  /**
+   * Lay an option on the clock. The first leg leaves at its usual time on the
+   * searched day; a later one at its first usual departure at least
+   * MIN_CONNECTION_MINUTES after the previous leg lands, and no more than
+   * MAX_CONNECTION_HOURS after: past that the trip waits overnight, which
+   * nobody booking a connection means. Null when the option can't connect.
+   */
+  const schedule = (
+    option: EdgeOption,
+    landed: number | null
+  ): { depart: number; arrive: number | null; date: string } | null => {
+    const zone = airportTimezone(option.departure);
+    if (!zone || option.minutes === null) return null;
+    let depart: number;
+    if (landed === null) {
+      depart = zonedWallTimeSec(clockDate, option.minutes, zone);
+    } else {
+      const ready = landed + MIN_CONNECTION_MINUTES * 60;
+      const day = localDateISO(ready, zone);
+      depart = zonedWallTimeSec(day, option.minutes, zone);
+      if (depart < ready) depart = zonedWallTimeSec(nextIsoDate(day), option.minutes, zone);
+      if (depart - landed > MAX_CONNECTION_HOURS * 3600) return null;
+    }
+    const date = localDateISO(depart, zone);
+    const probe = datedLeg(option, searchedDate ? date : null, confirmedOn, minLegProb);
+    const hours = probe ? legHours(probe) : null;
+    return { depart, arrive: hours === null ? null : depart + hours * 3600, date };
+  };
+
+  const timedLeg = (
+    leg: ItineraryLeg,
+    slot: { depart: number; arrive: number | null; date: string } | null
+  ): ItineraryLeg => {
+    if (!slot) return leg;
+    const [from, to] = leg.route.split("-");
+    const toZone = airportTimezone(to);
+    return {
+      ...leg,
+      typical_departure: zonedClock(slot.depart, airportTimezone(from)),
+      ...(slot.arrive !== null && toZone
+        ? { typical_arrival: zonedClock(slot.arrive, toZone) }
+        : {}),
+      ...(searchedDate ? { date: slot.date } : {}),
+    };
+  };
+
+  /**
+   * The legs a state can take to `next`. From the origin, every flight number
+   * (the trip can start at any hour). After a timed leg, the best odds among
+   * flights that connect; failing that, the best untimed flight, marked
+   * unchecked; failing that, none: the pair has no same-day connection.
+   * After an untimed leg, the best odds as before, unchecked.
+   */
+  type Step = {
+    leg: ItineraryLeg;
+    slot: { depart: number; arrive: number | null; date: string } | null;
+  };
+  const stepsTo = (options: EdgeOption[], state: SearchState): Step[] => {
+    const first = state.legs.length === 0;
+    if (first || state.landed !== null) {
+      const timed: Step[] = [];
+      for (const option of options) {
+        const slot = schedule(option, state.landed);
+        if (!slot) continue;
+        const leg = datedLeg(option, searchedDate ? slot.date : null, confirmedOn, minLegProb);
+        if (leg) timed.push({ leg: timedLeg(leg, slot), slot });
+      }
+      if (!first && timed.length > 0) {
+        timed.sort(
+          (a, b) => b.leg.probability - a.leg.probability || a.slot!.depart - b.slot!.depart
+        );
+        return [timed[0]];
+      }
+      const untimed = options
+        .filter((o) => o.minutes === null || !airportTimezone(o.departure))
+        .map((o) => datedLeg(o, searchedDate, confirmedOn, minLegProb))
+        .filter((l): l is ItineraryLeg => l !== null);
+      if (first) return [...timed, ...untimed.map((leg) => ({ leg, slot: null }))];
+      return untimed.length > 0 ? [{ leg: untimed[0], slot: null }] : [];
+    }
+    for (const option of options) {
+      const leg = datedLeg(option, searchedDate, confirmedOn, minLegProb);
+      if (leg) return [{ leg, slot: null }];
+    }
+    return [];
+  };
+
   // --- BFS up to maxStops+1 legs ---
-  type SearchState = { airport: string; legs: ItineraryLeg[]; joint: number; flown: number | null };
-  let frontier: SearchState[] = [{ airport: orig, legs: [], joint: 1, flown: 0 }];
-  const seenPaths = new Set<string>();
-  const fulls: Itinerary[] = [];
+  type SearchState = {
+    airport: string;
+    legs: ItineraryLeg[];
+    joint: number;
+    flown: number | null;
+    /** Usual landing of the last leg (unix); null when unknown or before the first leg. */
+    landed: number | null;
+    departed: number | null;
+    waits: Array<number | null>;
+    /** Every leg so far has a usual time and connects. */
+    timed: boolean;
+  };
+  let frontier: SearchState[] = [
+    {
+      airport: orig,
+      legs: [],
+      joint: 1,
+      flown: 0,
+      landed: null,
+      departed: null,
+      waits: [],
+      timed: true,
+    },
+  ];
+  // Every timing of a path (one per first-leg flight), until the budget is
+  // known: the best odds can sit on a timing whose layover runs over it.
+  const variantsByPath = new Map<string, Itinerary[]>();
+  // A connection that is known to work beats better odds on one that may not;
+  // a nonstop has nothing to connect, so its best odds win.
+  const better = (a: Itinerary, b: Itinerary): boolean => {
+    if (a.via.length > 0 && a.schedule !== b.schedule) return a.schedule === "same_day";
+    if (Math.abs(a.joint_probability - b.joint_probability) > 1e-9) {
+      return a.joint_probability > b.joint_probability;
+    }
+    return (
+      (a.elapsed_hours ?? Number.POSITIVE_INFINITY) < (b.elapsed_hours ?? Number.POSITIVE_INFINITY)
+    );
+  };
 
   for (let depth = 0; depth <= maxStops; depth++) {
     const nextFrontier: SearchState[] = [];
@@ -2491,7 +2699,7 @@ export function planItinerary(
       const edges = graph.get(state.airport);
       if (!edges) continue;
 
-      for (const [nextAirport, leg] of edges.entries()) {
+      for (const [nextAirport, options] of edges.entries()) {
         if (nextAirport === orig) continue;
         if (state.legs.some((l) => l.route.split("-")[1] === nextAirport)) continue;
         if (nextAirport !== dest && !hubAllowed(nextAirport)) continue;
@@ -2499,27 +2707,58 @@ export function planItinerary(
         const flown = pathMiles(state.flown, state.airport, nextAirport);
         if (exceedsBound(flown, nextAirport)) continue;
 
-        const newLegs = [...state.legs, leg];
-        const newJoint = state.joint * leg.probability;
+        for (const { leg, slot } of stepsTo(options, state)) {
+          const first = state.legs.length === 0;
+          const next: SearchState = {
+            airport: nextAirport,
+            legs: [...state.legs, leg],
+            joint: state.joint * leg.probability,
+            flown,
+            landed: slot?.arrive ?? null,
+            departed: first ? (slot?.depart ?? null) : state.departed,
+            waits: first
+              ? []
+              : [
+                  ...state.waits,
+                  slot && state.landed !== null
+                    ? Math.round((slot.depart - state.landed) / 60)
+                    : null,
+                ],
+            timed: state.timed && slot !== null && slot.arrive !== null,
+          };
 
-        if (nextAirport === dest) {
-          const pathKey = newLegs.map((l) => l.route).join("|");
-          if (!seenPaths.has(pathKey)) {
-            seenPaths.add(pathKey);
-            fulls.push(build(newLegs, "full"));
+          if (nextAirport === dest) {
+            const pathKey = next.legs.map((l) => l.route).join("|");
+            const it: Itinerary = {
+              ...build(next.legs, "full"),
+              schedule: next.timed ? "same_day" : "unknown",
+              connection_minutes: next.waits,
+              elapsed_hours:
+                next.timed && next.departed !== null && next.landed !== null
+                  ? (next.landed - next.departed) / 3600
+                  : null,
+            };
+            const held = variantsByPath.get(pathKey);
+            if (held) held.push(it);
+            else variantsByPath.set(pathKey, [it]);
+          } else if (depth < maxStops) {
+            nextFrontier.push(next);
           }
-        } else if (depth < maxStops) {
-          nextFrontier.push({ airport: nextAirport, legs: newLegs, joint: newJoint, flown });
         }
       }
     }
     nextFrontier.sort((a, b) => b.joint - a.joint);
-    frontier = nextFrontier.slice(0, 200);
+    frontier = nextFrontier.slice(0, FRONTIER_LIMIT);
   }
-  const connections = fulls.filter((it) => it.via.length > 0);
+  const connections = [...variantsByPath.values()].flat().filter((it) => it.via.length > 0);
   if (!hasNonstop || (!firmNonstop && !connections.some(withinBudget))) {
     budgetFromFastest(connections);
   }
+  const fulls = [...variantsByPath.values()].map((variants) => {
+    const fitting = variants.filter(withinBudget);
+    const pool = fitting.length > 0 ? fitting : variants;
+    return pool.reduce((best, it) => (better(it, best) ? it : best));
+  });
   itineraries.push(...fulls.filter(withinBudget));
 
   // --- Partial-coverage baselines (both directions) ---
@@ -2542,8 +2781,17 @@ export function planItinerary(
     const isServed = (a: string, b: string) => served === null || served.has(`${a}-${b}`);
 
     // Direction "in": (any) orig→hub, then Starlink hub→dest
+    // A positioning leg is "any flight", so its connection can't be checked;
+    // the Starlink leg is its pair's best odds on the searched day, as before.
+    const bestOn = (options: EdgeOption[] | undefined): ItineraryLeg | null => {
+      for (const option of options ?? []) {
+        const leg = datedLeg(option, searchedDate, confirmedOn, minLegProb);
+        if (leg) return timedLeg(leg, schedule(option, null));
+      }
+      return null;
+    };
     for (const [hub, edges] of graph.entries()) {
-      const leg = edges.get(dest);
+      const leg = bestOn(edges.get(dest));
       // hub === dest as well as hub === orig: without the former the planner
       // emitted a MIA-MIA self-loop leg ("fly ORD->MIA, then fly MIA->MIA").
       if (!leg || leg.probability < minLegProb || hub === orig || hub === dest) continue;
@@ -2554,8 +2802,9 @@ export function planItinerary(
     // Direction "out": Starlink orig→hub, then (any) hub→dest
     const outEdges = graph.get(orig);
     if (outEdges) {
-      for (const [hub, leg] of outEdges.entries()) {
-        if (hub === dest || leg.probability < minLegProb) continue;
+      for (const [hub, options] of outEdges.entries()) {
+        const leg = bestOn(options);
+        if (hub === dest || !leg || leg.probability < minLegProb) continue;
         if (!hubOnPath(hub) || !isServed(hub, dest) || !hubAllowed(hub)) continue;
         if (fulls.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
         candidates.push({ starlinkLeg: leg, hub, direction: "out" });
@@ -2569,13 +2818,18 @@ export function planItinerary(
       return bH - aH;
     });
 
-    const partials = candidates.map((c) =>
-      build(
-        c.direction === "in"
-          ? [makePositioningLeg(`${orig}-${c.hub}`, positioningPrior), c.starlinkLeg]
-          : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`, positioningPrior)],
-        "partial"
-      )
+    const partials = candidates.map(
+      (c): Itinerary => ({
+        ...build(
+          c.direction === "in"
+            ? [makePositioningLeg(`${orig}-${c.hub}`, positioningPrior), c.starlinkLeg]
+            : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`, positioningPrior)],
+          "partial"
+        ),
+        schedule: "unknown",
+        connection_minutes: [null],
+        elapsed_hours: null,
+      })
     );
     const partialsEmptied = itineraries.length === 0 && !partials.some(withinBudget);
     if (!firmNonstop && (budgetHours === null || partialsEmptied)) budgetFromFastest(partials);
@@ -2640,8 +2894,18 @@ export function planItinerary(
 export const ENFORCE_ITINERARY_TIME_BUDGET = true;
 const BUDGET_FACTOR = 1.5;
 const BUDGET_SLACK_HOURS = 2.5;
-// Minimum connection time per stop; total_flight_hours is airborne time only.
+// Minimum connection time per stop when the legs' times are unknown;
+// total_flight_hours is airborne time only.
 const LAYOVER_HOURS = 1.0;
+// A connection must leave this long after the previous leg usually lands.
+// Times are usual ones, not today's schedule, so this is United's domestic
+// minimum (~45 min at its hubs) with room for a late first leg.
+const MIN_CONNECTION_MINUTES = 60;
+// Longer than this on the ground is an overnight stay, not a connection.
+const MAX_CONNECTION_HOURS = 6;
+// Search states kept per depth; the first leg now branches on every flight
+// number, so the cap is wider than the one state per pair it once held.
+const FRONTIER_LIMIT = 600;
 const MULTI_STOP_MIN_GAIN_HOURS = 1.0;
 const STOP_PENALTY = 0.04;
 // Block-time estimate when no flight has been observed on a pair: cruise at
@@ -2660,8 +2924,9 @@ export function itineraryHourBudget(baselineHours: number): number {
   return Math.max(BUDGET_FACTOR * baselineHours, baselineHours + BUDGET_SLACK_HOURS);
 }
 
-/** Flying time plus a minimum connection per stop. */
+/** Door to door at the legs' usual times; else flying time plus a minimum connection per stop. */
 export function elapsedHours(it: Itinerary): number {
+  if (typeof it.elapsed_hours === "number") return it.elapsed_hours;
   return (it.total_flight_hours ?? 0) + LAYOVER_HOURS * it.via.length;
 }
 

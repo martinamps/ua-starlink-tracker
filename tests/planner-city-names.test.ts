@@ -231,9 +231,9 @@ describe("the planner page", () => {
       expect(ownCode).not.toContain(name);
       expect(page).not.toContain(name);
     }
-    // The page's own script grew by the loader (and the legs' page links)
-    // alone; the names table would add some 17 KB.
-    expect(ownCode.length).toBeLessThan(19_500);
+    // The page's own script grew by the loader, the legs' page links and
+    // their usual times alone; the names table would add some 17 KB.
+    expect(ownCode.length).toBeLessThan(20_500);
   });
 
   test("the airports the airline flies lead the list: codes only, from the page's own routes", () => {

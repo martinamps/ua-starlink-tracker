@@ -745,6 +745,40 @@ export function matchesLocalDate(
   return departureTimeSec >= fallbackStart && departureTimeSec < fallbackEnd;
 }
 
+const wallCache = new Map<string, Intl.DateTimeFormat>();
+
+/** Minutes after the UTC epoch day's midnight, as the zone's wall clock reads `sec`. */
+function wallMinutes(sec: number, timeZone: string): number {
+  let fmt = wallCache.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    wallCache.set(timeZone, fmt);
+  }
+  const parts = fmt.formatToParts(new Date(sec * 1000));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+  return Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute")) / 60000;
+}
+
+/**
+ * The UTC instant of a wall-clock time (minutes after midnight) on `date` in
+ * `timeZone`. Two passes, so a date that a DST change splits settles on the
+ * offset in force at the answer; a skipped wall time lands within the hour.
+ */
+export function zonedWallTimeSec(date: string, minutes: number, timeZone: string): number {
+  const target = Date.parse(`${date}T00:00:00Z`) / 60000 + minutes;
+  let sec = target * 60;
+  for (let pass = 0; pass < 2; pass++) sec += (target - wallMinutes(sec, timeZone)) * 60;
+  return sec;
+}
+
 /** First UTC instant after `date` ends locally at the airport; unmapped
  * airports get the latest end any zone can have (UTC-12). */
 export function localDayEndSec(iata: string, date: string): number {
