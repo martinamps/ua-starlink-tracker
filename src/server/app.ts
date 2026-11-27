@@ -165,6 +165,7 @@ import {
 import { clientScriptResponse } from "../client/bundle";
 import {
   type DayLeg,
+  answerTails,
   datePassed,
   forecastNote,
   inTravelOrder,
@@ -368,7 +369,8 @@ import {
   passengerVerifyEnabled,
 } from "./passenger-detect";
 import { planeSwapFor } from "./plane-swap";
-import { SHARE_TAP_PATH, recordShareShown, shareTap } from "./share-tap";
+import { RECENT_PREFIX, RECENT_TAP_PATH, recentTap } from "./recent-checks";
+import { SHARE_TAP_PATH, fromOurPageInABrowser, recordShareShown, shareTap } from "./share-tap";
 import {
   bareDigitsFlight,
   checkPageFor,
@@ -4363,6 +4365,66 @@ const checkFlightPage: Handler = async (ctx) => {
   });
 };
 
+/**
+ * GET /static/recent/{FN}/{YYYY-MM-DD}[?origin=&destination=]: what the
+ * flight's own dated page says right now, for one row of the homepage's
+ * remembered flights (src/client/recent-checks.ts).
+ *
+ * Built the way the page builds its card (datedAnswer, then the same context
+ * and renderer), so the row and the page cannot word one answer two ways, a
+ * yes for some legs only included. From the database alone, like the page's
+ * first render: a homepage opening must not spend a live aircraft lookup.
+ * `tails` and `firm` are what the row's change note compares; `passed` tells
+ * the browser to drop a flight whose date is over at its own airport.
+ *
+ * Answered only for a browser on this host's own pages, in the flight's one
+ * canonical spelling; everything else is the same bare 404.
+ */
+const recentCheckAnswer: Handler = async (ctx) => {
+  if (ctx.req.method !== "GET") return methodNotAllowed(["GET"]);
+  const none = () =>
+    text("Not found", "text/plain; charset=utf-8", {
+      status: 404,
+      cache: CACHE.noStore,
+      headers: { ...BASE_RESPONSE_HEADERS, "X-Robots-Tag": "noindex" },
+    });
+  const pinned = tenantConfig(ctx.tenant);
+  if (!pinned || !ctx.site.features.checkFlightPage || !fromOurPageInABrowser(ctx.req, ctx.url)) {
+    return none();
+  }
+  const rest = ctx.url.pathname.slice(RECENT_PREFIX.length);
+  const parsed = parseCheckFlightPath(`/check-flight/${rest}`);
+  if (parsed.kind !== "flight" || !parsed.date || rest !== `${parsed.fn}/${parsed.date}`) {
+    return none();
+  }
+  const { fn, date } = parsed;
+  const cfg = permalinkCarrier(pinned, fn);
+  if (!cfg) return none();
+  const legParse = parseLegQuery(
+    ctx.url.searchParams.get("origin"),
+    ctx.url.searchParams.get("destination")
+  );
+  const dated = await datedAnswer(cfg, ctx.reader, fn, date, legParse);
+  if (!dated || dated.body.error) return none();
+  const variants = buildFlightLookupVariants(cfg, fn);
+  const facts = ctx.reader.flightNumberHasData(variants)
+    ? buildFlightFacts(ctx.reader, cfg, fn, variants, legParse.leg, datedAnswerLegs(dated))
+    : undefined;
+  const answerCtx = answerContext(ctx.site, dated, facts);
+  const answer = renderFlightAnswer(dated.body, answerCtx);
+  return text(
+    JSON.stringify({
+      headline: answer.headline,
+      tone: answer.tone,
+      firm: answer.firm,
+      tails: answerTails(dated.body),
+      passed: datePassed(answerCtx),
+    }),
+    "application/json",
+    { cache: CACHE.noStore, headers: { ...BASE_RESPONSE_HEADERS, "X-Robots-Tag": "noindex" } }
+  );
+};
+
 /** `/route-planner/SFO/EWR` → `{ origin, destination }`; anything else → null. */
 export function parseRoutePath(pathname: string): { origin: string; destination: string } | null {
   const rest = pathname.slice("/route-planner".length).replace(/^\/+|\/+$/g, "");
@@ -6464,9 +6526,13 @@ export function createApp(
   const staticFamily: Handler = (ctx) =>
     ctx.url.pathname === SHARE_TAP_PATH
       ? shareTap(ctx)
-      : ctx.url.pathname.startsWith("/static/share/")
-        ? sharePicture(ctx)
-        : staticDir(ctx);
+      : ctx.url.pathname === RECENT_TAP_PATH
+        ? recentTap(ctx)
+        : ctx.url.pathname.startsWith(RECENT_PREFIX)
+          ? recentCheckAnswer(ctx)
+          : ctx.url.pathname.startsWith("/static/share/")
+            ? sharePicture(ctx)
+            : staticDir(ctx);
   const getReader = createReaderFactory(db);
   const verifiedCrawler = createCrawlerVerifier(opts.crawlerDns);
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
@@ -6685,6 +6751,7 @@ export function createApp(
         ? "mcp"
         : url.pathname.startsWith("/check-flight/") ||
             url.pathname.startsWith("/static/share/") ||
+            url.pathname.startsWith(RECENT_PREFIX) ||
             url.pathname.startsWith("/cal/") ||
             url.pathname === "/badge.svg"
           ? "page"

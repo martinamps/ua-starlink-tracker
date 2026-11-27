@@ -6,6 +6,7 @@
 import React from "react";
 import { AIRLINES, SITES, type SiteConfig, liveAirlineSites } from "../airlines/registry";
 import { type ClientScript, clientScriptSrc } from "../client/bundle";
+import { EYEBROW_TEXT, PANEL_PAD, SURFACE } from "./ui/box-classes";
 import { fmt } from "./ui/format";
 
 /** A page's browser bundle, content-hashed; nothing when it isn't built. */
@@ -98,9 +99,7 @@ function SiteBar({ site, currentPath }: { site: SiteConfig; currentPath?: string
 }
 
 /** Small uppercase label above a panel's content. */
-const EYEBROW_TEXT = "font-mono text-xs uppercase tracking-wider text-muted";
 export const EYEBROW = `mb-3 ${EYEBROW_TEXT}`;
-const SURFACE = "rounded-lg border border-subtle bg-surface";
 export const PANEL = `${SURFACE} p-5`;
 /** Section frames for bodies that don't use <Section>: reading width and data width. */
 export const SECTION = "relative mx-auto mb-8 w-full max-w-3xl";
@@ -131,8 +130,6 @@ function headingWords(title: React.ReactNode): React.ReactNode {
 }
 
 type Box = React.HTMLAttributes<HTMLElement> & { as?: "div" | "section" | "nav" | "aside" };
-
-const PANEL_PAD = { md: "p-5", sm: "p-4 sm:p-5", none: "" } as const;
 
 /** The surface card. Padding is a prop, not a className, so it never fights p-5. */
 export function Panel({

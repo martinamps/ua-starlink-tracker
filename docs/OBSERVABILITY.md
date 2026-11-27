@@ -268,6 +268,23 @@ agent whose body is exactly one of the two words; every other POST gets the
 same empty 202 and no count. The flight, date and page are in neither the
 beacon nor the metric.
 
+"Your flights" on a homepage (the dated flights a browser checked, kept in
+that browser's localStorage; `src/client/recent-checks.ts`) rides the same
+family and tag with two addresses, both answered only for a `Sec-Fetch-Site:
+same-origin` request from a `client_class:browser` agent. `GET
+/static/recent/{FN}/{date}` returns the flight page's own headline for one
+row, from the database alone: it is not counted as a flight lookup, a share
+control shown or a calendar offer shown, and it makes no live aircraft lookup.
+`POST /static/recent/tap` (body `shown`, `opened` or `cleared`) feeds
+`recent.checks` (tags: `airline`, `action`): `shown` is a homepage that drew
+the list with at least one flight, `opened` a row's link followed, `cleared`
+the list emptied by its button. `opened` over `shown` is the use rate; `shown`
+over homepage visits is how many visitors come back with a flight kept. The
+hub's rows ask `/api/check-any-flight`, so they do appear in
+`http.request{route:/api/check-any-flight,visit_source:own}`. No flight, date
+or list is in the beacon or the metric, and the list itself never leaves the
+browser.
+
 To add a route, add it to `routes` (or `prefixRoutes`) in
 `src/server/app.ts` — the metric tag follows automatically. If a change would
 push the table past the budget, group the new URLs behind a prefix family
