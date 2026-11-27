@@ -7,12 +7,12 @@
  */
 import type { RouteFlightBoard } from "../api/route-flights";
 import {
+  flightLabel,
   formatDuration,
   monthDay,
   probLabel,
   probTier,
   seenOnDays,
-  shareLabel,
   weekdayName,
 } from "../components/ui/format";
 import { orList, placeCodeAirports } from "../utils/airport-aliases";
@@ -57,6 +57,8 @@ interface Baseline {
   duration_hours?: number;
   duration_source?: "great_circle" | "sparse_history" | string;
   probability: number;
+  /** 0 when `probability` is a fleet share; absent from an answer cached before the key. */
+  n_observations?: number;
   expected_starlink_hours: number;
 }
 
@@ -103,7 +105,7 @@ function legFlight(leg: Leg): string {
 function renderLeg(leg: Leg): string {
   const color = probColor(leg.probability);
   const [from, to] = leg.route.split("-").map(esc);
-  const odds = `<div class="flex items-center gap-2">${probBars(leg.probability, color)}<span class="text-xs w-10 text-right tabular-nums" style="color:${color}">${leg.flight_number === "(any)" ? shareLabel(leg.probability) : probLabel(leg.probability)}</span></div>`;
+  const odds = `<div class="flex items-center gap-2">${probBars(leg.probability, color)}<span class="text-xs w-10 text-right tabular-nums" style="color:${color}">${flightLabel(leg.probability, leg.n_observations)}</span></div>`;
   if (leg.flight_number === "(any)") {
     return `<div class="flex items-center justify-between py-2 border-l-2 border-subtle pl-3 ml-1"><div class="text-sm"><div class="font-mono text-muted">${from} → ${to}</div><div class="text-xs text-muted">Any flight works for this leg</div></div>${odds}</div>`;
   }
@@ -188,7 +190,9 @@ function renderItinerary(it: Itinerary, rank: number): string {
   const origin = esc(legs[0].route.split("-")[0]);
   const dest = esc(legs[legs.length - 1].route.split("-")[1]);
   const headerP = full ? it.joint_probability : it.at_least_one_probability;
-  const headerPct = probLabel(headerP);
+  // A nonstop is one flight: its own number, a share until it has history.
+  const headerPct =
+    legs.length === 1 ? flightLabel(headerP, legs[0].n_observations) : probLabel(headerP);
   const headerLabel = full ? (direct ? "Starlink" : "all legs") : "at least one leg";
   const headerColor = probColor(headerP);
   const flying =
@@ -211,14 +215,18 @@ function baselineHtml(b: Baseline | undefined): string {
     b.duration_source === "sparse_history"
       ? "Nonstop seen only occasionally (may not run on your date): ~"
       : "Nonstop baseline: ~";
-  return `<div class="text-xs text-muted mb-3 leading-relaxed">${label}${probLabel(b.probability)} Starlink · ~${fmtHours(b.expected_starlink_hours)} Starlink of ~${fmtHours(b.duration_hours)} flying</div>`;
+  return `<div class="text-xs text-muted mb-3 leading-relaxed">${label}${flightLabel(b.probability, b.n_observations ?? 1)} Starlink · ~${fmtHours(b.expected_starlink_hours)} Starlink of ~${fmtHours(b.duration_hours)} flying</div>`;
 }
 
 /**
  * Itineraries ranked as the API ranks them. When the nonstop board above has
  * rows, an empty plan says nothing more: the board already answers.
  */
-function renderResults(out: HTMLElement, data: PlanBody, boardHasRows: boolean): void {
+export function renderResults(
+  out: Pick<HTMLElement, "innerHTML">,
+  data: PlanBody,
+  boardHasRows: boolean
+): void {
   const itins = data.itineraries ?? [];
   if (itins.length === 0) {
     if (boardHasRows) {

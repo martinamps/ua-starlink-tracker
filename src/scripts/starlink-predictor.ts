@@ -3200,6 +3200,9 @@ export interface RouteBaseline {
   /** Observed nonstop flight number, when one exists in the schedule snapshot. */
   flight_number: string | null;
   probability: number;
+  /** Departures behind `probability`; 0 when it is a fleet share (the nonstop
+   * has no history, or none is on record), which prints rounded down. */
+  n_observations: number;
   duration_hours: number;
   /**
    * "great_circle" = no United nonstop has ever been observed on the pair; the
@@ -3222,13 +3225,13 @@ export function routeBaseline(
   if (duration === null) return null;
   const edge = reader.getDirectRouteEdge(o, d);
   const flightNumber = edge ? uaPrefix(edge.flight_number) : null;
-  const probability = flightNumber
-    ? predictLegOrFlight(reader, flightNumber, o, d).probability
-    : mainlineFleetRate(reader);
+  const pred = flightNumber ? predictLegOrFlight(reader, flightNumber, o, d) : null;
+  const probability = pred ? pred.probability : mainlineFleetRate(reader);
   return {
     route: `${o}-${d}`,
     flight_number: flightNumber,
     probability,
+    n_observations: pred ? pred.n_observations : 0,
     duration_hours: duration.hours,
     duration_source: duration.source,
     expected_starlink_hours: probability * duration.hours,
