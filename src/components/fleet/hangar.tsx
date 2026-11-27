@@ -83,13 +83,13 @@ export function TailGrid({
   /** The legend's wording for each square's title, where the page has its own. */
   labels?: Record<WifiProvider, string>;
   anchorBase?: string;
-  /** "sm" packs ten 8px cells per hangar block; "lg" wraps 12px cells to the container. */
+  /** "sm" packs ten 8px cells per hangar block (wider on phones); "lg" wraps 12px cells to the container. */
   size?: "sm" | "lg";
 }) {
+  // "sm" is the hangar's: ten columns from 768px, the block's full width
+  // below it (.fam-grid), where a ten-wide strip left most of a phone blank.
   const grid =
-    size === "sm"
-      ? "grid grid-cols-[repeat(10,8px)] gap-[2px]"
-      : "grid grid-cols-[repeat(auto-fill,12px)] gap-[3px]";
+    size === "sm" ? "fam-grid grid gap-[2px]" : "grid grid-cols-[repeat(auto-fill,12px)] gap-[3px]";
   const cell = size === "sm" ? "w-2 h-2" : "w-3 h-3";
   return (
     <div className={grid}>
@@ -163,14 +163,24 @@ function FamilyBlock({
   const spec = AIRCRAFT_SPECS[fam.family];
   const name = familyLabel(fam.family, typeLinks);
   const specId = `spec-${fam.family.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  // One link per block, placed by CSS: beside the name on a phone, under the
+  // squares from 768px. The other copy is display:none, so neither a reader
+  // nor the keyboard meets it twice.
+  const details = (className: string) =>
+    typeLink && (
+      <a href={`/fleet/${typeLink.slug}`} className={className}>
+        Details →
+      </a>
+    );
+  // Always open: on a phone the blocks were folded shut, so the picture the
+  // section exists for showed only after eighteen taps.
   return (
-    <details
-      className="fam-block bg-surface border border-subtle rounded"
+    <div
+      className="bg-surface border border-subtle rounded"
       id={typeLink ? `fam-${typeLink.slug}` : undefined}
-      open
     >
-      <summary className="fam-summary list-none flex items-start justify-between gap-2 p-2">
-        <div className="min-w-0">
+      <div className="fam-head flex items-start justify-between gap-2 p-2">
+        <div className="fam-title min-w-0">
           <span
             className={`spec-trigger relative block font-display text-sm ${
               spec ? "text-secondary hover:text-accent cursor-help" : "text-secondary"
@@ -188,27 +198,13 @@ function FamilyBlock({
             )}
           </span>
         </div>
-        <svg
-          className="fam-caret w-3 h-3 text-muted shrink-0"
-          viewBox="0 0 16 16"
-          fill="currentColor"
-          aria-hidden="true"
-        >
-          <path d="M8 11L3 6h10z" />
-        </svg>
-      </summary>
+        {details("fam-details-head shrink-0 text-xs text-accent hover:underline")}
+      </div>
       <div className="px-2 pb-2">
         <TailGrid tails={fam.tails} marks={marks} labels={labels} />
-        {typeLink && (
-          <a
-            href={`/fleet/${typeLink.slug}`}
-            className="block mt-2 text-xs text-accent hover:underline"
-          >
-            Details →
-          </a>
-        )}
+        {details("fam-details-foot mt-2 text-xs text-accent hover:underline")}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -281,14 +277,6 @@ export function HangarFloor({
           />
         ))}
       </div>
-      <script
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
-        dangerouslySetInnerHTML={{
-          // From 768px the blocks are always open and a mouse can't fold
-          // them, so the keyboard doesn't stop on a fold control either.
-          __html: `if(matchMedia('(max-width:767px)').matches)document.querySelectorAll('.fam-block').forEach(d=>d.removeAttribute('open'));else document.querySelectorAll('.fam-summary').forEach(s=>{s.tabIndex=-1})`,
-        }}
-      />
     </section>
   );
 }

@@ -169,6 +169,26 @@ describe("names told to assistive technology", () => {
       expect(text).toContain(`aria-describedby="${id}"`);
     }
   });
+
+  test("the hangar shows every block open, with no fold to tap and no inline script", async () => {
+    const { text } = await bodyOf(app, "/fleet", UNITED);
+    const start = text.indexOf('class="fam-container');
+    const end = text.indexOf("</section>", start);
+    expect(start).toBeGreaterThan(-1);
+    const hangar = text.slice(start, end);
+    expect(hangar).not.toContain("<details");
+    expect(hangar).not.toContain("<script");
+    expect(hangar).toContain('class="fam-grid ');
+    // Each type link is drawn twice, one copy for each width; the stylesheet
+    // hides the head copy from 768px and the foot copy below it.
+    const head = count(hangar, /class="fam-details-head /g);
+    expect(head).toBeGreaterThan(0);
+    expect(count(hangar, /class="fam-details-foot /g)).toBe(head);
+    const css = readFileSync(join(ROOT, "src/styles/tailwind.css"), "utf8");
+    expect(css).toMatch(/\.fam-details-head \{\s*display: none;/);
+    expect(css).toMatch(/min-width: 768px\)[^@]*\.fam-details-foot \{\s*display: block;/);
+    expect(css).toMatch(/max-width: 767px\)[^@]*\.fam-details-foot \{\s*display: none;/);
+  });
 });
 
 describe("controls", () => {
