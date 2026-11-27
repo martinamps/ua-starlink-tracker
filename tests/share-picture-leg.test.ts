@@ -69,10 +69,13 @@ describe("leg-scoped flight page share picture", () => {
     expect(yes.alt).toStartWith("Yes");
     expect(no.alt).toStartWith("No");
 
-    // The Starlink leg's answer is the plain page's answer, so its picture is
-    // the same drawing; the other leg's picture is not.
+    // The plain page answers for both legs, so it is neither leg's yes or no,
+    // and its picture is neither leg's drawing.
+    expect(plain.alt).toContain("SBA → SFO (N22222");
+    expect(plain.alt).toContain("not on SFO → IAH (N11111)");
+    expect(plain.alt).not.toStartWith("Yes");
     const plainPng = await bytes(plain.path);
-    expect((await bytes(yes.path)).equals(plainPng)).toBe(true);
+    expect((await bytes(yes.path)).equals(plainPng)).toBe(false);
     expect((await bytes(no.path)).equals(plainPng)).toBe(false);
   });
 

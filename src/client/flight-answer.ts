@@ -79,7 +79,20 @@ export interface CheckFlightBody {
   sameDayAlternatives?: WireAlternative[];
 }
 
-type AnswerTone = "yes" | "no" | "likely" | "maybe" | "unlikely" | "unknown";
+type AnswerTone = "yes" | "partial" | "no" | "likely" | "maybe" | "unlikely" | "unknown";
+
+/** One leg of the number on the date asked, as the server's own tables hold it. */
+export interface DayLeg {
+  origin: string;
+  destination: string;
+  departure_time: number | null;
+  /** The aircraft we hold on the leg that date, if any. */
+  tail: string | null;
+  /** Null for an aircraft we haven't checked, and for a leg with none known. */
+  starlink: boolean | null;
+  /** Held for this date; false for a leg known only from the number's recent routes. */
+  dated: boolean;
+}
 
 export interface AnswerContext {
   flightNumber: string;
@@ -103,6 +116,8 @@ export interface AnswerContext {
   routePlannerEnabled: boolean;
   /** /fleet/{tail} serves on this host, for the planes we list. */
   tailPages: boolean;
+  /** The date's legs beyond those a yes names, on a page with no leg chosen. */
+  dayLegs?: DayLeg[];
   /** Host for webcal:// links. */
   host: string;
 }
@@ -114,6 +129,8 @@ export interface FlightAnswer {
   html: string;
   /** True when the answer names an assigned aircraft; a live re-check can't improve it. */
   firm: boolean;
+  /** A partial answer's Starlink legs ("ORD → FLL"), for surfaces that print a figure. */
+  yesLegs?: string[];
 }
 
 const WATCH_MAX_DAYS_OUT = 330;
@@ -145,6 +162,7 @@ function wifiPhrase(v: string | null | undefined): string {
 
 const ANSWER_TONE: Record<AnswerTone, Tone> = {
   yes: "success",
+  partial: "warn",
   likely: "success",
   maybe: "warn",
   no: "neutral",
@@ -209,21 +227,174 @@ const legLabel = (f: WireFlight) => {
   return dep && arr ? `${dep} → ${arr}` : null;
 };
 
+type Pair = { origin: string; destination: string };
+
+const flightPair = (f: WireFlight): Pair | null => {
+  const origin = toIata(f.departure_airport);
+  const destination = toIata(f.arrival_airport);
+  return origin && destination ? { origin, destination } : null;
+};
+
+const pairLabel = (p: Pair) => `${p.origin} → ${p.destination}`;
+const samePair = (a: Pair, b: Pair) => a.origin === b.origin && a.destination === b.destination;
+
+/**
+ * How each flight's leg reads in the answer. One leg held twice that date on
+ * two planes (two departures, or a swap whose new row is minutes off the old)
+ * would print one label twice, so those carry their departure time.
+ */
+function legLabels(flights: WireFlight[], ctx: AnswerContext): (string | null)[] {
+  return flights.map((f) => {
+    const leg = legLabel(f);
+    if (!leg || !f.departure_time) return leg;
+    const twice = flights.some(
+      (o) => o !== f && legLabel(o) === leg && o.tail_number !== f.tail_number
+    );
+    return twice ? `${leg} ${departs(f.departure_time, f.departure_airport, ctx).time}` : leg;
+  });
+}
+
 /**
  * The aircraft a yes names. A number can fly two legs in a day on two planes,
  * and a traveller is on one of them: each leg then carries its own plane, in
  * departure order. One plane, on one leg or on all of them, is named alone.
  */
-function yesPlanes(flights: WireFlight[]): string | null {
+function yesPlanes(flights: WireFlight[], ctx: AnswerContext): string | null {
   const tails = new Set(flights.map((f) => f.tail_number).filter(Boolean));
   if (tails.size < 2) return flights[0]?.tail_number ?? null;
+  const labels = legLabels(flights, ctx);
   return flights
-    .filter((f) => f.tail_number)
-    .map((f) => {
-      const leg = legLabel(f);
-      return leg ? `${leg} on ${f.tail_number}` : f.tail_number;
-    })
+    .flatMap((f, i) =>
+      f.tail_number ? [labels[i] ? `${labels[i]} on ${f.tail_number}` : f.tail_number] : []
+    )
     .join(", ");
+}
+
+/**
+ * The date's legs a yes does not cover: a yes lists Starlink legs only, so a
+ * leg on another aircraft, or one whose aircraft we don't hold, is absent
+ * from it. Dated legs always count. A leg known only from the number's recent
+ * routes counts when it connects to a leg already held, and no held leg
+ * already fills that place: routes that don't connect are other days'
+ * routings. Empty when the yes names no leg to tell the others from.
+ */
+export function unansweredLegs(
+  flights: WireFlight[] | undefined,
+  dayLegs: DayLeg[] | undefined
+): DayLeg[] {
+  if (!flights?.length || !dayLegs?.length) return [];
+  const answered: Pair[] = [];
+  for (const f of flights) {
+    const p = flightPair(f);
+    if (!p) return [];
+    answered.push(p);
+  }
+  const others: DayLeg[] = [];
+  const held = () => [...answered, ...others];
+  const fresh = (l: DayLeg) => l.origin !== l.destination && !held().some((h) => samePair(h, l));
+  for (const l of dayLegs) if (l.dated && fresh(l)) others.push(l);
+  const connects = (l: DayLeg) =>
+    held().some(
+      (h) =>
+        (l.destination === h.origin && !held().some((o) => o.destination === h.origin)) ||
+        (l.origin === h.destination && !held().some((o) => o.origin === h.destination))
+    );
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const l of dayLegs) {
+      if (!l.dated && fresh(l) && connects(l)) {
+        others.push(l);
+        grew = true;
+      }
+    }
+  }
+  return others;
+}
+
+/**
+ * Legs in the order they are flown: by departure time where every leg has
+ * one, else by how they connect (a leg nothing else arrives at leads).
+ */
+export function inTravelOrder<T extends Pair & { departure_time?: number | null }>(legs: T[]): T[] {
+  if (legs.every((l) => l.departure_time)) {
+    return [...legs].sort((a, b) => (a.departure_time ?? 0) - (b.departure_time ?? 0));
+  }
+  const left = [...legs];
+  const out: T[] = [];
+  while (left.length > 0) {
+    const last = out[out.length - 1];
+    const i = Math.max(
+      0,
+      last
+        ? left.findIndex((l) => l.origin === last.destination)
+        : left.findIndex((l) => !left.some((o) => o !== l && o.destination === l.origin))
+    );
+    out.push(...left.splice(i, 1));
+  }
+  return out;
+}
+
+/** The legs a yes does not cover, placed in travel order around the legs it does. */
+function uncoveredInOrder(flights: WireFlight[], dayLegs: DayLeg[] | undefined): DayLeg[] {
+  const others = unansweredLegs(flights, dayLegs);
+  if (others.length < 2) return others;
+  const covered = flights.flatMap((f) => {
+    const p = flightPair(f);
+    return p ? [{ ...p, departure_time: f.departure_time }] : [];
+  });
+  return inTravelOrder<Pair & { departure_time?: number | null }>([...covered, ...others]).filter(
+    (l): l is DayLeg => others.includes(l as DayLeg)
+  );
+}
+
+/** What we hold of a leg the yes does not cover, as a clause of the headline. */
+function otherLegClause(l: DayLeg): string {
+  const leg = pairLabel(l);
+  if (!l.tail) return `we have no aircraft for ${leg} yet`;
+  return l.starlink === false
+    ? `not on ${leg} (${l.tail})`
+    : `${leg} is on ${l.tail}, which we haven't checked`;
+}
+
+/**
+ * The headline of a yes that holds for some of the date's legs only. It names
+ * the legs it is for and says what we hold of each other leg, and never
+ * opens with a yes: a traveller on the other leg would read it as theirs.
+ */
+function partialHeadline(
+  on: string,
+  flights: WireFlight[],
+  others: DayLeg[],
+  status: string,
+  ctx: AnswerContext
+): string {
+  const labels = legLabels(flights, ctx);
+  const tails = new Set(flights.map((f) => f.tail_number).filter(Boolean));
+  const [onlyTail] = tails;
+  const yes =
+    tails.size === 1
+      ? `${[...new Set(labels)].join(" and ")} (${onlyTail}, ${status})`
+      : `${flights.map((f, i) => (f.tail_number ? `${labels[i]} on ${f.tail_number}` : labels[i])).join(", ")} (${status})`;
+  const clauses = others.map(otherLegClause);
+  const nos = clauses.filter((c) => c.startsWith("not on "));
+  const rest = clauses.filter((c) => !c.startsWith("not on "));
+  return `${on} has Starlink on ${yes}${nos.map((c) => `, ${c}`).join("")}${rest.map((c) => `; ${c}`).join("")}`;
+}
+
+/** The legs a partial yes does not cover, each with what we hold and its own page. */
+function otherLegsHtml(others: DayLeg[], ctx: AnswerContext): string {
+  const blocks = others
+    .map((l) => {
+      const href = `/check-flight/${encodeURIComponent(ctx.flightNumber)}/${encodeURIComponent(ctx.date)}?origin=${encodeURIComponent(l.origin)}&destination=${encodeURIComponent(l.destination)}`;
+      const rows = [
+        row("Route", esc(pairLabel(l))),
+        row("Aircraft", l.tail ? tail(l.tail) : "Not known to us yet"),
+        ...(l.tail ? [row("Wi-Fi", l.starlink === false ? "No Starlink" : "Not checked yet")] : []),
+      ];
+      return ` <dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl> <p class="mt-3 text-sm"><a href="${esc(href)}" rel="nofollow" class="text-accent hover:underline">Check ${esc(pairLabel(l))} on its own</a></p>`;
+    })
+    .join("");
+  return ` <div class="mt-4"><h3 class="text-sm font-semibold text-primary">${others.length === 1 ? "The other leg" : "The other legs"} that day</h3>${blocks}</div>`;
 }
 
 /** Live TV goes by aircraft type: legs on types that differ each get their own line. */
@@ -231,12 +402,13 @@ function liveTvLines(flights: WireFlight[], ctx: AnswerContext): string {
   const first = flights[0] ?? {};
   if (!ctx.liveTv) return "";
   const tier = (f: WireFlight) => seatbackLiveTv(f.fleet_type, f.aircraft_type);
-  const labelled = flights.filter((f) => legLabel(f));
-  if (labelled.length < 2 || labelled.every((f) => tier(f) === tier(labelled[0]))) {
+  const labels = legLabels(flights, ctx);
+  const labelled = flights.flatMap((f, i) => (labels[i] ? [{ f, label: labels[i] }] : []));
+  if (labelled.length < 2 || labelled.every(({ f }) => tier(f) === tier(labelled[0].f))) {
     return liveTvLine(first, ctx);
   }
   return labelled
-    .map((f, i) => liveTvLine(f, ctx, `${legLabel(f)}: `, i === labelled.length - 1))
+    .map(({ f, label }, i) => liveTvLine(f, ctx, `${label}: `, i === labelled.length - 1))
     .join("");
 }
 
@@ -423,14 +595,26 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const flights = body.flights ?? [];
     const first = flights[0] ?? {};
     const verified = body.confidence !== "likely";
-    const headline = `Yes — ${on} has Starlink (${[yesPlanes(flights), verified ? "verified" : (ctx.listedStatus ?? "listed, not yet verified")].filter(Boolean).join(", ")})`;
+    const status = verified ? "verified" : (ctx.listedStatus ?? "listed, not yet verified");
+    const others = uncoveredInOrder(flights, ctx.dayLegs);
+    const partial = others.length > 0;
+    const headline = partial
+      ? partialHeadline(on, flights, others, status, ctx)
+      : `Yes — ${on} has Starlink (${[yesPlanes(flights, ctx), status].filter(Boolean).join(", ")})`;
     const legs = flights.map((f) => flightRows(f, ctx)).join("");
+    const tone: AnswerTone = partial ? "partial" : "yes";
     const html = card(
-      "yes",
+      tone,
       headline,
-      `${legs}${body.message ? ` <p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLines(flights, ctx)}${flightAwareLink(first, ctx)}${swapNote(ctx)}`
+      `${legs}${body.message ? ` <p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLines(flights, ctx)}${flightAwareLink(first, ctx)}${partial ? otherLegsHtml(others, ctx) : ""}${swapNote(ctx)}`
     );
-    return { tone: "yes", headline, html, firm: true };
+    return {
+      tone,
+      headline,
+      html,
+      firm: true,
+      ...(partial ? { yesLegs: [...new Set(flights.map((f) => legLabel(f) ?? ""))] } : {}),
+    };
   }
 
   const segments = body.fallback?.segments ?? [];

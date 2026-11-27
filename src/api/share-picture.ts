@@ -86,6 +86,8 @@ const ANSWER_FIGURE: Record<
   { figure: string | null; tone: Tone; caption: string }
 > = {
   yes: { figure: "Yes", tone: "success", caption: FLIGHT_QUESTION },
+  // A yes for some legs prints those legs, never a bare yes.
+  partial: { figure: null, tone: "warn", caption: "The leg we know has Starlink" },
   no: { figure: "No", tone: "neutral", caption: FLIGHT_QUESTION },
   // A forecast prints its odds, never a yes.
   likely: { figure: null, tone: PROB_TIER_TONE.likely, caption: ODDS_CAPTION },
@@ -111,14 +113,23 @@ function datedFlightShareAnswer(
   const answer = renderFlightAnswer(dated.body, ctx);
   const shape = ANSWER_FIGURE[answer.tone];
   const p = dated.body.prediction?.probability;
-  const figure = shape.figure ?? (typeof p === "number" ? probLabel(p) : null);
+  const legs = answer.yesLegs ?? [];
+  const figure =
+    shape.figure ??
+    (answer.tone === "partial"
+      ? legs.length === 1
+        ? legs[0]
+        : `${legs.length} legs`
+      : typeof p === "number"
+        ? probLabel(p)
+        : null);
   if (figure === null) return null;
   return {
     subject: dated.flightNumber,
     context: shortDate(dated.date),
     figure,
     tone: shape.tone,
-    caption: shape.caption,
+    caption: legs.length > 1 ? "Legs we know have Starlink" : shape.caption,
     sentence: answer.headline,
   };
 }
