@@ -320,7 +320,6 @@ import {
 } from "./respond";
 
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
-import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
 import { clientIp } from "./client-ip";
 import { aircraftTypeParam, communityWireFields } from "./community-wire";
 import {
@@ -1734,11 +1733,10 @@ const apiMismatches: Handler = ({ reader }) => {
 
 const apiFleetDiscovery: Handler = ({ reader }) => {
   const stats = reader.getFleetDiscoveryStats();
-  const spreadsheetCache = getSpreadsheetCacheTails();
-  const cacheInfo = getSpreadsheetCacheInfo();
+  const sheet = reader.getSheetListedTails();
   const confirmed = reader.getConfirmedFleetTails();
   const newDiscoveries = confirmed
-    .filter((p) => !spreadsheetCache.has(p.tail_number))
+    .filter((p) => !sheet.tails.has(p.tail_number))
     .map((p) => ({
       tail_number: p.tail_number,
       aircraft_type: p.aircraft_type,
@@ -1760,11 +1758,9 @@ const apiFleetDiscovery: Handler = ({ reader }) => {
   const response = {
     discovered_not_in_spreadsheet: newDiscoveries,
     spreadsheet_cache: {
-      size: cacheInfo.size,
-      updated_at: cacheInfo.updatedAt,
-      updated_at_formatted: cacheInfo.updatedAt
-        ? new Date(cacheInfo.updatedAt).toISOString()
-        : null,
+      size: sheet.tails.size,
+      updated_at: sheet.updatedAt ?? 0,
+      updated_at_formatted: sheet.updatedAt ? new Date(sheet.updatedAt).toISOString() : null,
     },
     verification: {
       total_fleet: stats.total_fleet,

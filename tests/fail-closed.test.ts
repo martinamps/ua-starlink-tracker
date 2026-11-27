@@ -27,6 +27,7 @@ import {
   getMeta,
   getNextAlaskaVerifyTarget,
   getNextPlanesToVerify,
+  getSheetListedTails,
   getStarlinkPlanes,
   getVerificationObservations,
   reconcileTypeDeterministicFleets,
@@ -41,7 +42,6 @@ import { checkOne } from "../src/scripts/alaska-verifier";
 import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
 import { runSheetScrape } from "../src/scripts/sheet-scrape";
 import type { FleetStats } from "../src/types";
-import { isInSpreadsheetCache, updateSpreadsheetCache } from "../src/utils/utils";
 import type { fetchAllSheets } from "../src/utils/utils";
 import { addFleet, addFlight, addQatarRow, makeSyntheticDb, stubPredict, utc } from "./helpers";
 
@@ -898,14 +898,20 @@ describe("runSheetScrape refusal still runs maintenance", () => {
       fleetStats: STATS,
     })) as unknown as typeof fetchAllSheets;
 
-    updateSpreadsheetCache(["N12345"]);
+    updateDatabase(
+      db,
+      900,
+      [{ TailNumber: "N12345", WiFi: "StrLnk", sheet_gid: "200", fleet: "express" }],
+      STATS,
+      "UA"
+    );
     const result = await runSheetScrape(db, emptySheets);
 
     expect(result.outcome).toBe("refused");
     expect(fleetRow(db, "A7-ALA").starlink_status).toBe("confirmed");
-    // Cache shares the DB refusal decision — a refused replace must not
-    // desync /api/fleet-discovery by emptying or replacing the cache.
-    expect(isInSpreadsheetCache("N12345")).toBe(true);
+    // /api/fleet-discovery reads the stored roster, so a refused replace
+    // leaves its sheet list as the last accepted read left it.
+    expect(getSheetListedTails(db).tails.has("N12345")).toBe(true);
     db.close();
   });
 
