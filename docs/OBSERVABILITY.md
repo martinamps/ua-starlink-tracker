@@ -100,7 +100,7 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 
 ### Visit source (`http.request` only)
 
-`visit_source` says where a request came from, as one of nine fixed words
+`visit_source` says where a request came from, as one of ten fixed words
 (`classifyVisitSource` in `src/observability/metrics.ts`). The first rule that
 fires wins:
 
@@ -108,7 +108,8 @@ fires wins:
 |---|---|
 | `extension` | `client_class` is `extension` or `other-extension`: the extension's own marks (its version param or its origin) and nothing else |
 | `search` | Referer (else Origin) host is a search engine's results host, on any path but `/api/*`: `google.com` and Google's country hosts (bare or `www.`), Bing, DuckDuckGo, `search.yahoo.com` and its country hosts, Yandex, Baidu, Ecosia, Brave Search, Kagi, Startpage, Qwant, `search.naver.com`, `search.aol.com`, or the Google app on Android. Exact hosts: a portal's mail, news, finance, blog and forum hosts are `other` |
-| `assistant` | Referer host or `utm_source` names an assistant: ChatGPT, Claude, Perplexity, Gemini, Copilot, Grok, Meta AI, Mistral, DeepSeek, Poe, You, Phind. Also `utm_source=mcp`, the live-page link this site writes at the end of an MCP flight or route answer (`src/api/mcp-live-page.ts`) |
+| `assistant` | Referer host or `utm_source` names an assistant: ChatGPT, Claude, Perplexity, Gemini, Copilot, Grok, Meta AI, Mistral, DeepSeek, Poe, You, Phind. This is the assistant's own citation of a page |
+| `mcp-link` | The URL carries the mark of the live-page link this site writes at the end of an MCP flight or route answer (`src/api/mcp-live-page.ts`): exactly one `utm_source`, spelled `utm_source=mcp` in the query as sent. Another casing (`MCP`), an encoded spelling (`%6dcp`), padding or a repeated parameter is not the mark and reads `other`. An assistant's Referer on such a URL is still `mcp-link` (our link, shown inside that assistant); a search, social or own Referer outranks the mark, as it does any copied `utm_source` |
 | `social` | Referer host or `utm_source` names a social site or forum: Facebook, Instagram, Threads, X/Twitter, Reddit, LinkedIn, YouTube, TikTok, Bluesky, Pinterest, Hacker News, FlyerTalk |
 | `calendar` | `utm_source=cal`, the link this site writes into its own calendar events |
 | `own` | Referer/Origin is one of our hosts, or `Sec-Fetch-Site` is `same-origin`/`same-site`. Our pages send `Referrer-Policy: no-referrer`, so the fetch-metadata header is what marks in-site clicks, assets and our own scripts' API calls |
@@ -116,13 +117,21 @@ fires wins:
 | `direct` | `Sec-Fetch-Site: none`: typed, bookmarked, or opened from an app outside the browser |
 | `none` | No signal at all: most robots and scripts, and browsers too old to send fetch metadata |
 
-**Budget: 9 values, closed.** An unknown host or `utm_source` is `other`, never a
+**Budget: 10 values, closed.** An unknown host or `utm_source` is `other`, never a
 new value; to recognise a new site, add its host to one of the lists. The lists
 a visitor's value is looked up in are `Map`s and `Set`s, and
-`classifyVisitSource` turns anything outside the nine into `other` before it
+`classifyVisitSource` turns anything outside the ten into `other` before it
 returns.
 Only the word is emitted: the referrer's host, path and query are read inside
 `classifyVisitSource` and go to no metric, span or log.
+
+`assistant` and `mcp-link` are both a person sent by an assistant, split by
+whose link they followed. Until `mcp-link` shipped, both read `assistant`, so
+`visit_source:assistant` counts from before and after that deploy are not
+comparable; `visit_source:assistant OR visit_source:mcp-link` is the series
+that runs unbroken across it. The mark is a caller's to write, so `mcp-link`
+is a ceiling on real clicks of our link: read it with `client_class:browser`,
+on the routes the links point at (`/check-flight`, `/route-planner`).
 
 A user agent alone never makes a request `assistant`. An assistant's fetcher is
 already `client_class:claude|gptbot|perplexity`; `visit_source:assistant` is a
@@ -203,7 +212,7 @@ A robot can send the header like any other; it only moves its requests out of
 Daily page arrivals on the United site from the US, by preload:
 
 ```
-sum:starlink.http.request{tenant:ua AND client_class:browser AND market:home AND method:get AND status_code:200 AND (visit_source:search OR visit_source:assistant OR visit_source:social) AND NOT route:/api* AND NOT route:/static AND NOT route:unmatched AND NOT route:/feed.xml AND NOT route:/robots.txt AND NOT route:/sitemap.xml AND NOT route:/llms.txt AND NOT route:/badge.svg AND NOT route:/data/starlink-tails.csv AND NOT route:/cal AND NOT route:/embed} by {preload}.as_count().rollup(sum, 86400)
+sum:starlink.http.request{tenant:ua AND client_class:browser AND market:home AND method:get AND status_code:200 AND (visit_source:search OR visit_source:assistant OR visit_source:mcp-link OR visit_source:social) AND NOT route:/api* AND NOT route:/static AND NOT route:unmatched AND NOT route:/feed.xml AND NOT route:/robots.txt AND NOT route:/sitemap.xml AND NOT route:/llms.txt AND NOT route:/badge.svg AND NOT route:/data/starlink-tails.csv AND NOT route:/cal AND NOT route:/embed} by {preload}.as_count().rollup(sum, 86400)
 ```
 
 ### Rate-limit log
