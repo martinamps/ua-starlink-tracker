@@ -34,6 +34,7 @@ export {
   requestClientTags,
   mcpClientTags,
   classifyMcpClient,
+  isOwnMonitorAgent,
   bucketDaysOut,
   normalizeLegMatch,
   normalizeLegReason,

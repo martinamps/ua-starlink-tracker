@@ -62,3 +62,20 @@ describe("MCP analytics event address", () => {
     expect(forwardedFor({})).toBeNull();
   });
 });
+
+describe("MCP analytics event for the team's own live check", () => {
+  test("sends nothing, so a check run is never a visitor", () => {
+    let sent = 0;
+    globalThis.fetch = (async () => {
+      sent++;
+      return new Response(null, { status: 202 });
+    }) as unknown as typeof fetch;
+    process.env.NODE_ENV = "production";
+    const headers = { "User-Agent": "Mozilla/5.0 Chrome/131.0 ua-starlink-live-check/2 (bot)" };
+    trackMcpEvent(new Request("https://unitedstarlinktracker.com/mcp", { headers }), ANALYTICS, {
+      method: "tools/call",
+      tool: "check_flight",
+    });
+    expect(sent).toBe(0);
+  });
+});
