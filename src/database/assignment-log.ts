@@ -55,6 +55,8 @@ export const ASSIGNMENT_LOG_DDL = `
     ON flight_assignment_log(departure_airport, arrival_airport);
   CREATE INDEX IF NOT EXISTS idx_fal_tail
     ON flight_assignment_log(tail_number, departure_time);
+  CREATE INDEX IF NOT EXISTS idx_fal_dep_time
+    ON flight_assignment_log(departure_airport, departure_time);
   CREATE TABLE IF NOT EXISTS flown_assignments (
     airline TEXT NOT NULL,
     flight_number TEXT NOT NULL,

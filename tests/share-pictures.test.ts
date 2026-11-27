@@ -55,8 +55,15 @@ let app: ReturnType<typeof createApp>;
 
 const get = (path: string, host = UA, init?: RequestInit) => app.dispatch(req(path, host, init));
 
-function addFlown(tail: string, fn: string, origin: string, destination: string, daysAgo: number) {
-  const departure_time = now - daysAgo * DAY + HOUR;
+function addFlown(
+  tail: string,
+  fn: string,
+  origin: string,
+  destination: string,
+  daysAgo: number,
+  hour = 1
+) {
+  const departure_time = now - daysAgo * DAY + hour * HOUR;
   logFlightAssignments(
     db,
     "UA",
@@ -105,7 +112,8 @@ beforeAll(() => {
   addFlight(db, "N1VER", "UA101", "DEN", now + 30 * HOUR, { arrivalAirport: "ORD" });
   for (let d = 1; d < 7; d++) {
     addFlown("N1VER", "UA100", "DEN", "ORD", d);
-    addFlown("N1VER", "UA110", "DEN", "SFO", d);
+    // Later that day: one plane leaves one airport at one time once.
+    addFlown("N1VER", "UA110", "DEN", "SFO", d, 4);
   }
 
   // N4VIA: on the roster, settled on another provider: served, not indexed.

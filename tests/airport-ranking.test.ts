@@ -17,6 +17,7 @@ import { buildAirportBoard } from "../src/api/airport-board";
 import { AIRPORT_RANK_MIN_DEPARTURES, buildAirportRanking } from "../src/api/airport-ranking";
 import {
   getAirportDayCounts,
+  getAirportHistory,
   getStarlinkDeparturesLeft,
   nextLocalDay,
 } from "../src/database/airports";
@@ -275,10 +276,25 @@ describe("a late swap", () => {
     expect(today(swapDb, dep + 120)).toMatchObject({ left: 1, toGo: 0, departures: 1 });
   });
 
+  // The six-day figure ends at the newest observation: one after departure.
+  const observeAfter = (swapDb: Database) =>
+    addFlight(swapDb, "N37502", "UA1300", "DEN", dep + 5 * HOUR, { lastUpdated: dep + 90 });
+
+  test("is one flight in the six-day figure too, as in what already left", () => {
+    const swapDb = seed("N37502", true);
+    archivePastDepartures(swapDb, dep + 60);
+    observeAfter(swapDb);
+    const ord = getAirportHistory(swapDb, "UA", dep + 120).airports.get("ORD");
+    expect(ord).toEqual({ starlink: 1, destinations: [{ destination: "DEN", starlink: 1 }] });
+    expect(ord?.starlink).toBe(today(swapDb, dep + 120)?.left);
+  });
+
   test("onto a plane without Starlink is no Starlink departure once it is seen", () => {
     const swapDb = seed("N99NOT", false);
     archivePastDepartures(swapDb, dep + 60);
     expect(today(swapDb, dep + 120)?.left ?? 0).toBe(0);
+    observeAfter(swapDb);
+    expect(getAirportHistory(swapDb, "UA", dep + 120).airports.has("ORD")).toBe(false);
   });
 });
 
