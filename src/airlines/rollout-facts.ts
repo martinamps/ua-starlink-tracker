@@ -673,8 +673,16 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // client) also gives a flight number and an end-2026 fleet share; neither
     // appears on a readable copy, so neither is published here.
     summary:
-      "Free Starlink in every cabin on all eight A321XLRs (completed November 12, 2026) and on several A350s and A330s. First flight June 23, 2026 (A330-300 EC-MAA, Madrid to Sao Paulo); part of IAG's 500+ aircraft Starlink deal.",
+      "Free Starlink in every cabin on all eight A321XLRs (completed November 12, 2026) and on several A350s and A330s. First flight June 23, 2026 (A330-300 EC-MAA, Madrid to Sao Paulo); part of IAG's 500+ aircraft Starlink deal. Iberia Express switched it on November 26, 2026 on its first two A320-family jets.",
     facts: [
+      {
+        fact: "Iberia Express switched on free Starlink Wi-Fi on its first two aircraft on November 26, 2026, on flights to Mallorca and Gran Canaria. It plans to fit its whole Airbus A320-family fleet in the coming months, free for every passenger regardless of cabin.",
+        asOf: "2026-11-26",
+        source: {
+          label: "Europa Press (in Spanish)",
+          url: "https://www.europapress.es/economia/noticia-iberia-express-estrena-jueves-vuelos-canarias-baleares-conexion-wifi-starlink-20261126172913.html",
+        },
+      },
       {
         fact: "Iberia Express starts installing Starlink on its first aircraft in the coming days and expects to equip 16 of its Airbus A321neo and A320ceo within two months, free for every passenger regardless of cabin, on routes linking Madrid with the Canary and Balearic Islands.",
         asOf: "2026-11-18",
