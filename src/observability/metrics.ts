@@ -205,10 +205,24 @@ const NAMED_SCRAPER_AGENTS = /\bPageIndexer\b/i;
 // past this cap the rest is never read, so a huge value costs nothing to class.
 const MAX_UA_LENGTH = 512;
 
+// The team's own post-deploy check names itself in its agent. It is `bot`, not
+// a class of its own (the client_class budget is spent), so it leaves the
+// browser and MCP-client counts that reach is judged by. Anyone can copy the
+// name: that only moves their requests out of those counts. `bot` is metered,
+// budgeted and served exactly like any other non-browser caller.
+const OWN_MONITOR_AGENT = /\bua-starlink-live-check\b/i;
+
+export function isOwnMonitorAgent(ua: string | null | undefined): boolean {
+  return (
+    !!ua && OWN_MONITOR_AGENT.test(ua.length > MAX_UA_LENGTH ? ua.slice(0, MAX_UA_LENGTH) : ua)
+  );
+}
+
 export function classifyUserAgent(raw: string | null | undefined): string {
   if (!raw) return "unknown";
   const ua = raw.length > MAX_UA_LENGTH ? raw.slice(0, MAX_UA_LENGTH) : raw;
   if (/UA-Starlink-Extension|starlink-tracker-ext/i.test(ua)) return "extension";
+  if (OWN_MONITOR_AGENT.test(ua)) return "bot";
   if (KNOWN_SCRAPER_AGENTS.has(ua) || NAMED_SCRAPER_AGENTS.test(ua)) return "scraper";
   for (const [bucket, re] of NAMED_CRAWLERS) {
     if (re.test(ua)) return bucket;
@@ -517,6 +531,7 @@ const MCP_CLIENTS: ReadonlyArray<readonly [string, RegExp]> = [
 /** claude | chatgpt | cursor | vscode | bot | other | unknown */
 export function classifyMcpClient(ua: string | null | undefined): string {
   if (!ua) return "unknown";
+  if (isOwnMonitorAgent(ua)) return "bot";
   for (const [bucket, re] of MCP_CLIENTS) {
     if (re.test(ua)) return bucket;
   }
