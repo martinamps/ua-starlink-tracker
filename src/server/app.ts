@@ -3584,7 +3584,20 @@ function buildFlightFacts(
   // permalink existence gate, so every link resolves. The reader is always
   // single-airline here — the hub 404s /check-flight/*.
   // A leg asked for answers from its own next departure, or opens with none.
+  // With none asked, the page opens on the soonest departure, and that
+  // departure's leg leads the routes: the title, description, JSON-LD and
+  // share picture all read routes[0], so they name the leg the answer is for.
   const nextOnLeg = leg ? slots.find((s) => onLeg(s, leg)) : slots[0];
+  const nextAssigned = nextOnLeg
+    ? assignedDeparture(cfg, reader, flightNumber, nextOnLeg, now)
+    : null;
+  if (!leg && nextAssigned) {
+    const opened = legOf({
+      departure_airport: nextAssigned.origin,
+      arrival_airport: nextAssigned.destination,
+    });
+    routes.sort((a, b) => Number(onLeg(b, opened)) - Number(onLeg(a, opened)));
+  }
   const primary = routes[0] ?? null;
   const siblings = primary
     ? reader
@@ -3607,9 +3620,17 @@ function buildFlightFacts(
       : null,
     routes,
     upcoming,
-    nextAssigned: nextOnLeg ? assignedDeparture(cfg, reader, flightNumber, nextOnLeg, now) : null,
+    nextAssigned,
     siblings,
     notObservedSince: notObservedSince(reader, routes, upcoming.length > 0, now),
+  };
+}
+
+/** The leg a route row or departure flies, as onLeg matches it. */
+function legOf(r: { departure_airport: string; arrival_airport: string | null }): LegQuery {
+  return {
+    origin: toIata(r.departure_airport),
+    destination: r.arrival_airport ? toIata(r.arrival_airport) : undefined,
   };
 }
 
