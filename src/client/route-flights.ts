@@ -34,7 +34,7 @@ function row(r: RouteFlightRow, board: RouteFlightBoard): string {
     ? `<div class="mt-1"><span class="shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" style="${pillStyle(toneColor(tone))}">${esc(pill)}</span></div>`
     : "";
   const types = r.aircraft_types.length ? esc(r.aircraft_types.join(", ")) : "—";
-  return `<tr class="align-top"><td class="${TD} pr-3"><a href="/check-flight/${esc(r.flight_number)}" class="font-mono text-primary hover:text-accent transition-colors">${esc(r.flight_number)}</a>${time}${type}${mark}${assigned}</td><td class="${TD} hidden sm:table-cell pr-3 text-secondary">${types}</td><td class="${TD} text-right">${oddsCellHtml(r)}</td></tr>`;
+  return `<tr class="align-top"><td class="${TD} pr-3"><a href="/check-flight/${esc(r.flight_number)}${board.date ? `/${esc(board.date)}` : ""}" class="font-mono text-primary hover:text-accent transition-colors">${esc(r.flight_number)}</a>${time}${type}${mark}${assigned}</td><td class="${TD} hidden sm:table-cell pr-3 text-secondary">${types}</td><td class="${TD} text-right">${oddsCellHtml(r)}</td></tr>`;
 }
 
 /**

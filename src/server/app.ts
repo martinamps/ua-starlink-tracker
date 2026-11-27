@@ -45,6 +45,7 @@ import {
   isFlightZero,
   marketedRowFlightNumber,
   permalinkCarrier,
+  permalinkFlightNumber,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
@@ -1577,6 +1578,22 @@ const apiPredictFlight: Handler = ({ url, reader, getReader, tenant }) => {
   });
 };
 
+/**
+ * Additive `page` on a planner leg: this host's answer page for the flight,
+ * dated when the search was (the dated view holds the plane-swap answer and the
+ * calendar watch). Only a flight this host's permalink handler owns, in the
+ * spelling it serves without a redirect; anything else (the "(any)" positioning
+ * leg, another carrier's prefix) gets no link rather than a 404 or a hop.
+ * Every leg of a trip carries the searched day: the planner builds connections
+ * from route history, not same-day schedules, so it holds no later date to use.
+ */
+function legPagePath(cfg: AirlineConfig, flightNumber: string, date: string | null): string | null {
+  if (!CANONICAL_FLIGHT_PERMALINK.test(flightNumber) || isFlightZero(flightNumber)) return null;
+  if (permalinkCarrier(cfg, flightNumber) !== cfg) return null;
+  if (permalinkFlightNumber(cfg, flightNumber) !== flightNumber) return null;
+  return `/check-flight/${flightNumber}${date && isRealIsoDate(date) ? `/${date}` : ""}`;
+}
+
 const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   const cfg = tenantConfig(tenant);
   // Hub: fail closed like the disabled route-planner page (routePlannerPage is
@@ -1641,11 +1658,18 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   const dateParam = url.searchParams.get("date");
   const targetDateUnix =
     dateParam && routeBoardDateOk(dateParam) ? flightDateWindow(dateParam)?.mid : undefined;
+  const day = targetDateUnix !== undefined ? dateParam : null;
   const itineraries = planItinerary(reader, from, to, {
     maxItineraries: 12,
     maxStops,
     targetDateUnix,
-  });
+  }).map((it) => ({
+    ...it,
+    legs: it.legs.map((leg) => {
+      const page = legPagePath(cfg, leg.flight_number, day);
+      return page ? { ...leg, page } : leg;
+    }),
+  }));
   // Additive: the nonstop every connection is measured against (null when the
   // pair's duration is unknowable, i.e. an airport outside the coordinate table).
   const baseline = routeBaseline(reader, from, to);

@@ -397,6 +397,37 @@ describe("board behavior (synthetic)", () => {
     expect(check.prediction.probability).toBeCloseTo(fromBoard ?? -1, 6);
   });
 
+  test("each planner leg links its own answer page, dated as searched, and the page serves", async () => {
+    type PlanLeg = { flight_number: string; page?: string };
+    const legsOf = async (query: string) =>
+      (
+        (await jsonOf(sapp, `/api/plan-route?${query}`, UA)) as {
+          itineraries: Array<{ legs: PlanLeg[] }>;
+        }
+      ).itineraries.flatMap((it) => it.legs);
+    const date = isoDateDaysAgo(-20, now);
+    const dated = await legsOf(`origin=ORD&destination=IAD&date=${date}`);
+    const undated = await legsOf("origin=ORD&destination=IAD");
+    const outOfWindow = await legsOf("origin=ORD&destination=IAD&date=2026-02-30");
+    expect(dated.length).toBeGreaterThan(0);
+    for (const leg of dated) {
+      if (leg.flight_number === "(any)") expect(leg.page).toBeUndefined();
+      else expect(leg.page).toBe(`/check-flight/${leg.flight_number}/${date}`);
+    }
+    for (const leg of [...undated, ...outOfWindow]) {
+      if (leg.flight_number !== "(any)")
+        expect(leg.page).toBe(`/check-flight/${leg.flight_number}`);
+    }
+    for (const leg of dated.filter((l) => l.page)) {
+      const res = await sapp.dispatch(
+        req(leg.page ?? "", UA, {
+          headers: { Accept: "text/html", "x-forwarded-for": "127.0.0.1" },
+        })
+      );
+      expect(res.status).toBe(200);
+    }
+  });
+
   test("a leg that changed metal reads its new mix, and every surface agrees", async () => {
     const date = isoDateDaysAgo(-20, now);
     const r = row(board(date, "SFO", "DEN"), "UA400");
