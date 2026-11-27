@@ -160,6 +160,7 @@ import {
   routeBoardDateOk,
 } from "../api/route-flights";
 import { clientScriptResponse } from "../client/bundle";
+import { datePassed, forecastNote, renderFlightAnswer } from "../client/flight-answer";
 import AircraftTypePage from "../components/aircraft-type-page";
 import {
   AirlineDetailPage,
@@ -172,6 +173,7 @@ import {
 } from "../components/airlines-page";
 import { paceWindowSpan } from "../components/charts/rollout-math";
 import CheckFlightPage, {
+  answerContext,
   type AssignedDeparture,
   type DatedAnswer,
   type FlightFacts,
@@ -240,6 +242,7 @@ import {
   coldShare,
   flightShare,
   fmt,
+  monthDay,
   pct as pctLabel,
   probPhrase,
   zonedDeparture,
@@ -2623,7 +2626,7 @@ The homepage element with HTML id \`starlink-stat\` gives the count: how many ${
     : `https://${host}/check-flight`;
   const howToAnswerEntries = [
     features.checkFlightPage
-      ? `**"Does flight ${iata}123 on ${exampleDateLabel} have Starlink?"** → Within ~2 days of departure, ${checkFlightExampleUrl} has a firm answer based on the assigned aircraft. Further out, give the probability and note it firms up ~48h before departure. Link the page so the user can re-check.`
+      ? `**"Does flight ${sampleFlight ?? `${iata}123`} on ${exampleDateLabel} have Starlink?"** → Within ~2 days of departure, ${checkFlightExampleUrl} has a firm answer based on the assigned aircraft. Further out, give the probability and note it firms up ~48h before departure. Link the page so the user can re-check.`
       : null,
     features.routePlannerPage
       ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner compares the nonstop with Starlink connections (up to 2 stops, only when the extra travel time is modest), ranked by the share of flying time expected on Starlink.`
@@ -3768,6 +3771,60 @@ function flightMetaAnswer(
   return "";
 }
 
+/** What a dated page says about its own date, for its title and description:
+ * the answer card's headline, the sentence the page, its share picture and
+ * the browser re-check all print. A link shared in a message, or fetched by
+ * an assistant for someone asking about that day, shows these lines, so they
+ * must not offer odds where the page gives a yes or no. A page scoped to one
+ * leg names that leg in its title, as the undated leg page does: two legs of
+ * one number can answer yes and no on the same day. Null where the date has
+ * no answer of its own (an error, or a date already over at the airport):
+ * the flight's undated lines stand. */
+export function datedPageLines(
+  site: SiteConfig,
+  facts: FlightFacts,
+  dated: DatedAnswer | undefined
+): { title: string; description: string } | null {
+  if (!dated || dated.body.error) return null;
+  const answerCtx = answerContext(site, dated, facts);
+  if (datePassed(answerCtx)) return null;
+  const answer = renderFlightAnswer(dated.body, answerCtx);
+  const forecast =
+    answer.tone === "likely" || answer.tone === "maybe" || answer.tone === "unlikely";
+  // The card's own caveat, so the preview never promises what the card doesn't.
+  const after = answer.firm
+    ? " Aircraft can be swapped before departure."
+    : forecast
+      ? ` ${forecastNote(dated.body, answerCtx)}`
+      : "";
+  const day = monthDay(dated.date, answerCtx.nowSec);
+  // The template inserts meta values as they are, and the headline carries a
+  // tail number read from outside feeds: nothing in it may close the attribute
+  // or open a tag. An apostrophe ("doesn't") is safe in both places. The
+  // description is cut to length first, so the cut never splits an entity.
+  const safe = (s: string) =>
+    s.replace(
+      /[&"<>]/g,
+      (c) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[c] as string
+    );
+  return {
+    title: safe(
+      `Does ${dated.flightNumber}${datedLegLabel(facts, dated.leg)} on ${day} Have Starlink Wi-Fi?`
+    ),
+    description: safe(clampMetaDescription(`${answer.headline}.${after}`)),
+  };
+}
+
+/** The asked leg as a title names it: the flight's own route row when it flies
+ * that leg (buildFlightFacts puts it first), else the parsed airports. */
+function datedLegLabel(facts: FlightFacts, leg: LegQuery | undefined): string {
+  if (!leg) return "";
+  const route = facts.routes[0];
+  if (route && onLeg(route, leg)) return ` (${route.departure_airport} → ${route.arrival_airport})`;
+  if (leg.origin && leg.destination) return ` (${leg.origin} → ${leg.destination})`;
+  return leg.origin ? ` (from ${leg.origin})` : leg.destination ? ` (to ${leg.destination})` : "";
+}
+
 function flightPageMeta(
   ctx: RequestContext,
   reader: ScopedReader,
@@ -3788,6 +3845,9 @@ function flightPageMeta(
     !dated && facts.nextAssigned
       ? firmDescription(facts, facts.nextAssigned, META_DESCRIPTION_MAX)
       : null;
+  // A search engine keeps the undated page these canonicalize to; a person
+  // or assistant who opened this date reads this date's answer.
+  const ownDate = datedPageLines(ctx.site, facts, dated);
 
   const pageJsonLd = route
     ? jsonLdBlock({
@@ -3805,14 +3865,17 @@ function flightPageMeta(
   // The route pair carries both the WiFi intent and the flight-status intent
   // people actually type, and it fits well inside the ~60 chars Google renders
   // once the brand suffix is gone (Google appends the site name itself).
+  const title = ownDate?.title ?? `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`;
   return {
-    siteTitle: `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`,
+    siteTitle: title,
     siteDescription:
+      ownDate?.description ??
       firm ??
       `Does ${cfg.name} ${flightNumber}${routeLabel} have free Starlink Wi-Fi?${answer} Pick a date for a firm answer once aircraft assignments publish.`,
     keywords: `${flightNumber} starlink, does ${flightNumber} have wifi, ${flightNumber} wifi, ${cfg.name} ${flightNumber} starlink`,
-    ogTitle: `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`,
+    ogTitle: title,
     ogDescription:
+      ownDate?.description ??
       firm ??
       `${cfg.name} ${flightNumber}${routeLabel}.${answer || " Check it for Starlink Wi-Fi by date."}`,
     pageJsonLd,

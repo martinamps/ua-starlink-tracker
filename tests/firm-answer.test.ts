@@ -288,7 +288,10 @@ describe("flight page search description", () => {
     expect(short.length).toBeLessThanOrEqual(MAX);
   });
 
-  test("a dated page's description is unchanged: its canonical is the undated page", async () => {
+  // Search keeps the undated page this canonicalizes to; a link shared in a
+  // message, or fetched by an assistant for that day, shows the dated page's
+  // own description, which gives that date's answer (dated-page-meta.test.ts).
+  test("a dated page describes its own date, and still canonicalizes to the undated page", async () => {
     const db = makeSyntheticDb();
     verifiedTail(db, "N601UX");
     addFlight(db, "N601UX", FN, "DEN", T, { arrivalAirport: "EWR", lastUpdated: SEEN });
@@ -297,7 +300,8 @@ describe("flight page search description", () => {
       `/check-flight/${FN}/${airportLocalDate("DEN", T)}`
     );
     expect(html).toContain(`rel="canonical" href="https://${UA_HOST}/check-flight/${FN}"`);
-    expect(description).toStartWith(`Does United Airlines ${FN}`);
+    expect(description).toStartWith(`Yes — ${FN} on `);
+    expect(description).not.toContain("Pick a date");
     db.close();
   });
 });

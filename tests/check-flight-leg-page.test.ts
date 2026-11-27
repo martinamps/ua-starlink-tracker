@@ -76,6 +76,59 @@ describe("leg-scoped flight page (synthetic)", () => {
     expect(canonical(scoped.text)).toBe(`https://${UA_HOST}/check-flight/UA2305`);
   });
 
+  test("each leg's dated preview names its leg and gives that leg's answer", async () => {
+    const lines = async (q: string) => {
+      const { text } = await page(`/check-flight/UA2305/${date}${q}`);
+      const meta = (name: string) =>
+        text.match(new RegExp(`<meta (?:name|property)="${name}" content="([^"]*)"`))?.[1] ?? "";
+      return {
+        title: title(text),
+        description: meta("description"),
+        ogTitle: meta("og:title"),
+        ogDescription: meta("og:description"),
+      };
+    };
+    const sfoIah = await lines("?origin=SFO&destination=IAH");
+    const sbaSfo = await lines("?origin=SBA&destination=SFO");
+    expect(sfoIah.title).toMatch(
+      /^Does UA2305 \(SFO → IAH\) on \w{3} \d{1,2} Have Starlink Wi-Fi\?$/
+    );
+    expect(sbaSfo.title).toMatch(
+      /^Does UA2305 \(SBA → SFO\) on \w{3} \d{1,2} Have Starlink Wi-Fi\?$/
+    );
+    expect(sfoIah.description).toMatch(/^Yes — UA2305 on \w{3} \d{1,2} has Starlink \(N11111/);
+    expect(sbaSfo.description).toMatch(
+      /^No — UA2305 on \w{3} \d{1,2} doesn(&#x27;|')t have Starlink/
+    );
+    for (const l of [sfoIah, sbaSfo]) {
+      expect(l.ogTitle).toBe(l.title);
+      expect(l.ogDescription).toBe(l.description);
+    }
+    // A plain date names no leg.
+    expect(title((await page(`/check-flight/UA2305/${date}`)).text)).toMatch(
+      /^Does UA2305 on \w{3} \d{1,2} Have Starlink Wi-Fi\?$/
+    );
+  });
+
+  test("hostile leg input lands nothing raw in the head", async () => {
+    for (const q of [
+      '?origin="><script>x</script>&destination=IAH',
+      "?origin=SFO&destination=%22%3E%3Cimg%20src%3Dx%3E",
+      "?origin=S%26O&destination=IAH",
+    ]) {
+      const { status, text } = await page(
+        `/check-flight/UA2305/${date}${q.replace(/"/g, "%22").replace(/</g, "%3C").replace(/>/g, "%3E")}`
+      );
+      expect(status).toBe(200);
+      // Title, every meta and the JSON-LD: the asked leg never reaches them raw.
+      expect(text).not.toMatch(/<script>x|<img src|S&O|S%26O/);
+      for (const [, content] of text.matchAll(/<meta [^>]*content="([^"]*)"/g)) {
+        expect(content).not.toMatch(/[<>]|script|img/);
+      }
+      expect(title(text)).toMatch(/^Does UA2305 on \w{3} \d{1,2} Have Starlink Wi-Fi\?$/);
+    }
+  });
+
   test("a leg that doesn't parse renders the unscoped page", async () => {
     const plain = await page(`/check-flight/UA2305/${date}`);
     for (const q of ["?origin=XXQ&destination=IAH", "?origin=SFO&destination=SFO"]) {
