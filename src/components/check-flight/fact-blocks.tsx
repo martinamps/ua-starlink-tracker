@@ -5,9 +5,9 @@
 import React from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { SiteConfig } from "../../airlines/registry";
-import { routePlaceNames } from "../../utils/airport-names";
+import { airportWithCode, routePlaceNames } from "../../utils/airport-names";
 import { airportTimezone } from "../../utils/airport-tz";
-import { Chip, Section, StatInline } from "../layout";
+import { Chip, LINK, Section, StatInline } from "../layout";
 import { countSentence, followSentence } from "../outlook-copy";
 import { tailHref } from "../tail-link";
 import { fmt, formatDuration, shortDate, zonedDeparture } from "../ui/format";
@@ -187,6 +187,18 @@ export function FlightFactBlocks({
               );
             })}
           </ul>
+          {flight.airportLinks && flight.airportLinks.length > 0 ? (
+            <p className="mt-3 text-sm text-secondary">
+              {flight.airportLinks.map((airport, i) => (
+                <React.Fragment key={airport}>
+                  {i > 0 ? " · " : ""}
+                  <a href={`/routes/${airport}`} className={LINK}>
+                    Starlink flights from {airportWithCode(airport)}
+                  </a>
+                </React.Fragment>
+              ))}
+            </p>
+          ) : null}
         </Section>
       )}
 
