@@ -25,6 +25,9 @@
  * register. Chengdu has two airports, so TFU says which.
  * SKB, named by the gauge the same day, takes the island's name as ANU does
  * (the register's municipality is the capital, Basseterre).
+ * GOX and TAS, named by the gauge for Qatar that evening, came the same way.
+ * Goa has two airports (the older is GOI, Dabolim), so GOX says which; the
+ * register's municipality is the village, Mopa.
  * A wrong city is worse than a bare code: a code that is not here prints as
  * its code alone, so add one only after checking it.
  */
@@ -251,6 +254,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   GNV: ["Gainesville, Florida"],
   GOA: ["Genoa"],
   GOT: ["Gothenburg"],
+  GOX: ["Goa", "Mopa"],
   GPT: ["Gulfport/Biloxi"],
   GRB: ["Green Bay"],
   GRR: ["Grand Rapids"],
@@ -584,6 +588,7 @@ export const AIRPORT_NAMES: Record<string, readonly [city: string, airport?: str
   SYD: ["Sydney"],
   SYR: ["Syracuse"],
   TAM: ["Tampico"],
+  TAS: ["Tashkent"],
   TBS: ["Tbilisi"],
   TEV: ["Teruel"],
   TFU: ["Chengdu", "Tianfu"],
