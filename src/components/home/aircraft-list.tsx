@@ -6,7 +6,11 @@
 import { Fragment } from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
-import { ensureAirlinePrefix, isFlightZero } from "../../airlines/flight-number";
+import {
+  ensureAirlinePrefix,
+  isFlightZero,
+  marketedRowFlightNumber,
+} from "../../airlines/flight-number";
 import {
   BY_TYPE_METHOD,
   BY_TYPE_TAB_NOTE,
@@ -69,6 +73,18 @@ function permalinker(airline: AirlineConfig | null, airlineByTail: Record<string
   };
 }
 
+/**
+ * The number a row's flight is sold under: UA4757 for OO4757, AS3053 for an
+ * Alaska row's OO3053. The row's airline is settled, so shared operators
+ * (SkyWest flies for both) map too; a callsign with no number (SKW394Y)
+ * stays as stored.
+ */
+function rowMarketingNumber(rowAirline: AirlineConfig | undefined, flightNumber: string): string {
+  return rowAirline
+    ? ensureAirlinePrefix(rowAirline, marketedRowFlightNumber(rowAirline, flightNumber))
+    : flightNumber;
+}
+
 function FlightPills({
   tailNumber,
   flights,
@@ -115,9 +131,7 @@ function FlightPills({
         // The marketing number a traveller books and searches (UA4757, not the
         // operating callsign OO4757): the one the permalink is filed under, and
         // the one the list's search index holds.
-        const number = rowAirline
-          ? ensureAirlinePrefix(rowAirline, flight.flight_number)
-          : flight.flight_number;
+        const number = rowMarketingNumber(rowAirline, flight.flight_number);
         // departure_time is a UTC epoch; the clock is pinned to UTC and named,
         // 24-hour like /check-flight/{fn}, so the two read as one clock. From md
         // up the column header names the zone, so the pill drops it.
@@ -181,13 +195,11 @@ function searchIndex(flights: Flight[], rowAirline: AirlineConfig | undefined) {
   return {
     airports: pairs.flat().join(" "),
     routes: pairs.flatMap(([d, a]) => [`${d}-${a}`, `${a}-${d}`]).join(" "),
-    // The raw callsign plus its marketing number (ensureAirlinePrefix), so a
-    // G7-coded flight is findable by the UA number its pill shows.
+    // The raw callsign plus the marketing number its pill shows, so a G7-coded
+    // flight is findable by its UA number.
     flights: flights
       .flatMap((f) => {
-        const marketing = rowAirline
-          ? ensureAirlinePrefix(rowAirline, f.flight_number)
-          : f.flight_number;
+        const marketing = rowMarketingNumber(rowAirline, f.flight_number);
         return marketing === f.flight_number ? [f.flight_number] : [f.flight_number, marketing];
       })
       .join(" ")

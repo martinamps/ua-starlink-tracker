@@ -79,6 +79,8 @@ const seedFlightTimes = {
   UA0100: soon(5),
   HA11: soon(2),
   QX2304: soon(2),
+  OO3053: soon(3),
+  SKW3133: soon(4),
 };
 
 /**
@@ -122,6 +124,24 @@ function seedDb() {
   });
   addFlight(db, "N654QX", "QX2304", "SEA", seedFlightTimes.QX2304, {
     arrivalAirport: "PDX",
+    airline: "AS",
+  });
+
+  // SkyWest flies for both United and Alaska, so OO/SKW is no carrier prefix
+  // of either: only the row's airline says which number it is sold under. The
+  // feed stores both spellings.
+  addPlane(db, "N181SY", "Starlink", { airline: "AS", aircraft: "Embraer ERJ-175LR" });
+  addFleet(db, "N181SY", "confirmed", {
+    airline: "AS",
+    aircraftType: "Embraer ERJ-175LR",
+    verifiedWifi: "Starlink",
+  });
+  addFlight(db, "N181SY", "OO3053", "SEA", seedFlightTimes.OO3053, {
+    arrivalAirport: "BOI",
+    airline: "AS",
+  });
+  addFlight(db, "N181SY", "SKW3133", "YYJ", seedFlightTimes.SKW3133, {
+    arrivalAirport: "SEA",
     airline: "AS",
   });
   return db;
@@ -259,6 +279,22 @@ describe("each tenant normalizes to its own marketing code", () => {
       if (p.href.startsWith("/check-flight/")) expect(p.href).toStartWith("/check-flight/AS");
     }
   });
+
+  test("Alaska's SkyWest rows print the Alaska number, not the operating callsign", async () => {
+    const app = createApp(seedDb());
+    const html = await (await app.dispatch(req("/", AS_HOST))).text();
+    const pills = pillsOf(html);
+    expect(pillFor(pills, "AS3053")?.ariaLabel).toContain("Flight AS3053,");
+    expect(pillFor(pills, "AS3133")?.ariaLabel).toContain("Flight AS3133,");
+    expect(pills.filter((p) => /^(OO|SKW)\d+$/.test(p.number))).toEqual([]);
+    // The outbound tracker link still follows the stored callsign.
+    expect(pillFor(pills, "AS3053")?.href).toBe("https://www.flightaware.com/live/flight/OO3053");
+    expect(pillFor(pills, "AS3133")?.href).toBe("https://www.flightaware.com/live/flight/SKW3133");
+    const index = searchIndexFor(html, "N181SY");
+    for (const term of ["AS3053", "AS3133", "OO3053", "SKW3133"]) {
+      expect(searchFinds(index, term)).toBe(true);
+    }
+  });
 });
 
 /**
@@ -350,6 +386,8 @@ describe("sites without a flight-permalink page keep pills outbound", () => {
     expect(pillFor(pills, "UA4757")?.href).toBe("https://www.flightaware.com/live/flight/OO4757");
     expect(pillFor(pills, "AS2304")?.href).toBe("https://www.flightaware.com/live/flight/QX2304");
     expect(pillFor(pills, "HA11")).toBeDefined();
+    expect(pillFor(pills, "AS3053")?.href).toBe("https://www.flightaware.com/live/flight/OO3053");
+    expect(pills.filter((p) => /^(OO|SKW)\d+$/.test(p.number))).toEqual([]);
     // The hub has no flight page of its own: a typed flight hops to its
     // airline's site, so a pill linking the hub's address would be a detour.
     const typed = await app.dispatch(req("/check-flight/UA123", HUB_HOST));
