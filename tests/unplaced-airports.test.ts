@@ -67,6 +67,24 @@ describe("the airport tables", () => {
     expect(airportCountry("MDH")).toBe("US");
   });
 
+  test("the codes the gauge named on its first day are placed", () => {
+    const countries = {
+      DVO: "PH",
+      GYD: "AZ",
+      LUN: "ZM",
+      MUX: "PK",
+      NCL: "GB",
+      ORK: "IE",
+      TFU: "CN",
+    };
+    for (const [code, country] of Object.entries(countries)) {
+      expect(airportTimezone(code), code).toBeTruthy();
+      expect(airportWithCode(code), code).toEndWith(` (${code})`);
+      expect(AIRPORT_COORDS[code], code).toHaveLength(2);
+      expect(airportCountry(code), code).toBe(country);
+    }
+  });
+
   test("West Palm Beach answers to its new code and its old one", () => {
     expect(airportWithCode("DJT")).toBe("West Palm Beach (DJT)");
     expect(airportTimezone("DJT")).toBe(airportTimezone("PBI"));

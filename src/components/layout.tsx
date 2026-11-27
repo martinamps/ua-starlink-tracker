@@ -105,8 +105,30 @@ export const PANEL = `${SURFACE} p-5`;
 /** Section frames for bodies that don't use <Section>: reading width and data width. */
 export const SECTION = "relative mx-auto mb-8 w-full max-w-3xl";
 export const SECTION_WIDE = "relative mx-auto mb-8 w-full max-w-6xl";
-const H1 = "font-display text-3xl sm:text-4xl tracking-tight text-primary text-balance";
-export const H2 = "font-display text-xl text-primary";
+// wrap-break-word is the last resort for a word wider than a phone's column;
+// headingWords offers the better break first.
+const H1 =
+  "font-display text-3xl sm:text-4xl tracking-tight text-primary text-balance wrap-break-word";
+export const H2 = "font-display text-xl text-primary wrap-break-word";
+
+/**
+ * A heading's words, with a break offered after a slash that joins two names.
+ * A browser breaks after a hyphen by itself but keeps "Carbondale/Murphysboro"
+ * whole, and at the display size that one word is wider than a 390px phone's
+ * column. Only a slash between letters: "24/7" and a path stay as they are.
+ */
+function headingWords(title: React.ReactNode): React.ReactNode {
+  if (typeof title !== "string" || !title.includes("/")) return title;
+  const parts = title.split(/(?<=\p{L}\/)(?=\p{L})/u);
+  if (parts.length === 1) return title;
+  return parts.map((part, i) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one fixed string, never reordered
+    <React.Fragment key={i}>
+      {i > 0 && <wbr />}
+      {part}
+    </React.Fragment>
+  ));
+}
 
 type Box = React.HTMLAttributes<HTMLElement> & { as?: "div" | "section" | "nav" | "aside" };
 
@@ -159,7 +181,7 @@ export function SectionTitle({
 }: { className?: string; children: React.ReactNode }) {
   return (
     <>
-      <h2 className={`${H2} ${className}`}>{children}</h2>{" "}
+      <h2 className={`${H2} ${className}`}>{headingWords(children)}</h2>{" "}
     </>
   );
 }
@@ -319,7 +341,7 @@ export function PageHeader({
       <header className="relative mx-auto w-full max-w-3xl pt-8 pb-6 text-center">
         {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
         {eyebrow && " "}
-        <h1 className={H1}>{title}</h1>{" "}
+        <h1 className={H1}>{headingWords(title)}</h1>{" "}
         {dek && (
           <p className="mx-auto mt-2 max-w-2xl text-base text-secondary text-pretty">{dek}</p>
         )}{" "}

@@ -173,7 +173,7 @@ describe("other spellings", () => {
   });
 
   test("four letters that are no code and no name are refused in the box", () => {
-    for (const typed of ["roma", "cork", "oahu", "zzzz", "QQQQ"]) {
+    for (const typed of ["roma", "bern", "oahu", "zzzz", "QQQQ"]) {
       expect(resolveAirport(typed), typed).toEqual({ kind: "none" });
     }
     expect(resolveAirport("kord")).toMatchObject({ kind: "code", code: "KORD" });

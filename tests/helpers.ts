@@ -87,12 +87,14 @@ export function sectionOf(html: string, heading: string): string {
 
 /**
  * A rendered page as its reader sees the text: entities decoded and the
- * no-break spaces that tie a code to its city made plain. Compare a heading
+ * no-break spaces that tie a code to its city made plain, and the breaks a
+ * heading offers inside a slashed name taken out. Compare a heading
  * against this, never against the raw body: React escapes an apostrophe, so
  * "N'Djamena" or "O'Hare" in a heading would fail a raw comparison.
  */
 export function readableText(html: string): string {
   return html
+    .replace(/<wbr\/?>/g, "")
     .replace(/&#x27;|&#39;/g, "'")
     .replace(/&quot;/g, '"')
     .replace(/&lt;/g, "<")
