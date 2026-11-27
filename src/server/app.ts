@@ -3749,7 +3749,8 @@ function flightPageMeta(
   flightNumber: string,
   cfg: AirlineConfig,
   facts: FlightFacts,
-  dated?: DatedAnswer
+  dated?: DatedAnswer,
+  leg?: LegQuery
 ): PageMeta {
   const route = facts.routes[0] ?? null;
   const routeLabel = route ? ` (${route.departure_airport} → ${route.arrival_airport})` : "";
@@ -3790,7 +3791,7 @@ function flightPageMeta(
       firm ??
       `${cfg.name} ${flightNumber}${routeLabel}.${answer || " Check it for Starlink Wi-Fi by date."}`,
     pageJsonLd,
-    ...sharePictureMeta(ctx, flightSharePicture(ctx.site, facts, dated)),
+    ...sharePictureMeta(ctx, flightSharePicture(ctx.site, facts, dated, leg)),
   };
 }
 
@@ -4090,7 +4091,7 @@ const checkFlightPage: Handler = async (ctx) => {
       ctx,
       CheckFlightPage,
       `/check-flight/${fn}`,
-      flightPageMeta(ctx, reader, fn, cfg, facts, dated),
+      flightPageMeta(ctx, reader, fn, cfg, facts, dated, legParse.leg),
       {
         flight: {
           ...facts,
@@ -5962,9 +5963,15 @@ async function sharePictureFor(
     if (permalinkCarrier(cfg, fn) !== cfg) return null;
     const variants = buildFlightLookupVariants(cfg, fn);
     if (!ctx.reader.flightNumberHasData(variants)) return null;
-    const facts = buildFlightFacts(ctx.reader, cfg, fn, variants);
-    const dated = r.date ? await datedAnswer(cfg, ctx.reader, fn, r.date) : undefined;
-    return flightSharePicture(ctx.site, facts, dated);
+    // The leg is read the way the page reads ?origin=&destination=; one the
+    // page would answer unscoped was never on a page, so it gets the site card.
+    const legParse = r.leg
+      ? parseLegQuery(r.leg.origin ?? null, r.leg.destination ?? null)
+      : { leg: undefined };
+    if (r.leg && !legParse.leg) return null;
+    const facts = buildFlightFacts(ctx.reader, cfg, fn, variants, legParse.leg);
+    const dated = r.date ? await datedAnswer(cfg, ctx.reader, fn, r.date, legParse) : undefined;
+    return flightSharePicture(ctx.site, facts, dated, legParse.leg);
   }
   if (r.kind === "tail") {
     if (!features.tailPages || resolveAircraftSlug(cfg.code, r.id)) return null;
@@ -6030,7 +6037,7 @@ function createSharePictureHandler(limits: SharePictureLimits): Handler {
     }
     // The parsed request, never the raw path or query: a key only a valid
     // address can form.
-    const address = sharePicturePath(request.kind, request.id, request.date);
+    const address = sharePicturePath(request.kind, request.id, request.date, request.leg);
     const key = `${ctx.site.canonicalHost}${address}`;
     const held = drawn.get(key);
     if (held) {
