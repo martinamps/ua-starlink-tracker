@@ -26,22 +26,50 @@ import type {
   Flight,
   PerAirlineStat,
   RecentInstall,
+  ReportedInstall,
   RouteSchedule,
 } from "../types";
-import { memo } from "../utils/ttl-cache";
+import { lruCache, memo } from "../utils/ttl-cache";
 import {
   type AdsbFlightDraw,
   getAdsbFlightDraws,
   getAdsbFlightDrawsFor,
 } from "./adsb-flight-draws";
 import {
+  type AirlineTypeCount,
+  airlineTypeCount,
+  namedOfType,
+  programmeHeadlineWithChart,
+} from "./airline-count";
+import {
+  type AirportDayCount,
+  type AirportDepartureRow,
+  type AirportHistory,
+  airportHasData,
+  getAirportDayCounts,
+  getAirportHistory,
+  getAirportStarlinkDepartures,
+  getStarlinkDeparturesLeft,
+} from "./airports";
+import {
   type AssignmentLogRow,
+  type DepartureReading,
+  type LoggedAircraft,
   type ResolvedLeg,
+  type ReturnedDeparture,
   type SameDayAlternative,
   type SameDayAlternativesQuery,
   getAssignmentHistory,
+  getFlownAssignmentHistory,
+  getListedSightings,
+  getLoggedAircraft,
   getSameDayStarlinkAlternatives,
+  hasUnreadAircraft,
+  isKnownFlightNumber,
   logResolvedAssignments,
+  noteUnreadAircraft,
+  tailStarlinkFlag,
+  withdrawUnreturnedSightings,
 } from "./assignment-log";
 import {
   type ConfirmedEdge,
@@ -62,6 +90,7 @@ import {
   type RouteFlightNumbers,
   type RouteFlightRow,
   type RouteGraphEdge,
+  type RouteGraphSighting,
   type RouteSummary,
   type SitemapFlight,
   type SitemapRoute,
@@ -101,6 +130,7 @@ import {
   getFlightRoutePairs,
   getHubStats,
   getLastUpdated,
+  getListedNotCounted,
   getMeta,
   getObservationAnchor,
   getObservedDirectFlightNumbers,
@@ -115,14 +145,18 @@ import {
   getQatarScheduleStats,
   getRankedStarlinkRoutePairs,
   getRecentInstalls,
+  getReportedInstalls,
   getRouteDepartures,
   getRouteFlightNumbers,
   getRouteFlights,
   getRouteGraphEdges,
+  getRouteGraphSightings,
+  getRouteNetworkRows,
   getRouteStarlinkSchedule,
   getRouteSummary,
   getRoutesForFlightVariants,
   getServedRoutePairs,
+  getSheetListedTails,
   getSitemapFlights,
   getSitemapRoutes,
   getStarlinkPlaneByTail,
@@ -138,9 +172,31 @@ import {
   routeHasData,
   routeIsRecent,
 } from "./database";
-import { type ProgrammeHeadline, programmeHeadline } from "./roster";
+import {
+  type AirlineOutlook,
+  ROUTE_DEPARTURES_PLACED_BY_PAIR,
+  type RouteOutlookResult,
+  airlineOutlook,
+  hasBacktestedOutlook,
+  routeOutlookFor,
+} from "./outlook";
+import type { ProgrammeHeadline } from "./roster";
 import { type RouteFlightLeg, getAllFlightLegs, getRouteFlightLegs } from "./route-flights";
 import { getRouteFlightLastSeen } from "./route-history";
+import { capToQuietSources } from "./source-health";
+import { unixNow } from "./sql/windows";
+import {
+  type TailDepartures,
+  type TailFlight,
+  type TailIndexEntry,
+  type TailRecord,
+  getTailDepartures,
+  getTailIndex,
+  getTailRecentFlights,
+  getTailRecord,
+  getTailUpcomingFlights,
+  resolveTail,
+} from "./tails";
 
 export type { Database };
 
@@ -151,6 +207,18 @@ export type { Database };
  * invisible and keeps the build off the request path.
  */
 const DEPARTURE_AGGREGATE_MEMO = { ttlSec: 60, maxEntries: 64 };
+
+/**
+ * The airport history joins a week of the assignment log to departure_log for
+ * every airport at once. It moves by a few departures an hour, and the airport
+ * pages' index rule should not flip between two requests a minute apart.
+ */
+const AIRPORT_HISTORY_MEMO = { ttlSec: 900, maxEntries: 1 };
+// Install dates move with the hourly scrape, a month's share with the 5-minute
+// sweep; neither changes a sentence inside a quarter of an hour. The route
+// cache is keyed by a caller's URL, so it has a hard ceiling.
+const OUTLOOK_MEMO = { ttlSec: 900, maxEntries: 1 };
+const ROUTE_OUTLOOK_CACHE = { ttlSec: 900, maxEntries: 512 };
 
 export type Scope = AirlineCode | "ALL";
 
@@ -164,6 +232,10 @@ export interface ScopedReader {
   countStarlinkPlanes(): number;
   getAirlineByTail(): Record<string, string>;
   getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
+  /** Sheet listings our check has not confirmed; disjoint from getRecentInstalls. */
+  getReportedInstalls(limit?: number): ReportedInstall[];
+  /** Every sheet-listed tail no count includes, with its reason; no log window. */
+  getListedNotCounted(): ReportedInstall[];
   /** First observed post-install revenue departures for the given tails (sparse). */
   getFirstFlights(tails: readonly string[]): FirstFlight[];
   /** Organic installs per calendar day (labelled bulk seeds excluded); ascending. */
@@ -220,6 +292,8 @@ export interface ScopedReader {
   getDepartureSlots(q: DepartureSlotQuery): DepartureSlot[];
   getAirportDepartures(): AirportDepartures;
   getRouteStarlinkSchedule(): RouteSchedule;
+  /** Every equipped pair in the same window, for the /routes map. */
+  getRouteNetworkRows(): RouteSchedule;
   /** Route pairs in getRouteStarlinkSchedule order, past `offset`. */
   getRankedStarlinkRoutePairs(
     offset: number,
@@ -228,6 +302,8 @@ export interface ScopedReader {
   getFleetDiscoveryStats(): FleetDiscoveryStats;
   getConfirmedFleetTails(): ReturnType<typeof getConfirmedFleetTails>;
   getPendingFleetTails(): ReturnType<typeof getPendingFleetTails>;
+  /** United's community sheet, whatever this reader's scope. */
+  getSheetListedTails(): ReturnType<typeof getSheetListedTails>;
   getVerificationSummary(): ReturnType<typeof getVerificationSummary>;
   getWifiMismatches(): WifiMismatch[];
 
@@ -240,6 +316,7 @@ export interface ScopedReader {
   getAdsbFlightDrawsFor(flightNumber: string, sinceTs: number): AdsbFlightDraw[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
+  getRouteGraphSightings(): RouteGraphSighting[];
   /** Every ORIG-DEST the carrier flies; null when no route census exists for the scope. */
   getServedRoutePairs(): ReadonlySet<string> | null;
   getConfirmedStarlinkEdges(queryStart: number, queryEnd: number): ConfirmedEdge[];
@@ -289,19 +366,50 @@ export interface ScopedReader {
    * staleness copy; 0 on the hub or with no data. */
   getObservationAnchor(): number;
 
+  // /routes/{airport}
+  /** Existence gate for /routes/{airport}; true for every route page's origin. */
+  airportHasData(airport: string): boolean;
+  /** Equipped departures from the airport in the next 48h, under their marketed numbers. */
+  getAirportStarlinkDepartures(airport: string): AirportDepartureRow[];
+  /** Starlink departures that already left the airport over the last day. */
+  getStarlinkDeparturesLeft(airport: string, nowSec?: number): Array<{ departure_time: number }>;
+  /** Starlink departures flown per airport over the last few days; the airport
+   * pages' index rule and the sitemap read the same build. */
+  getAirportHistory(): AirportHistory;
+  /** Starlink departures on each airport's next local day, most first. */
+  getAirportDayCounts(): AirportDayCount[];
+
+  // /fleet/{tail}
+  /** A typed tail (any case, with or without the N) as the airline stores it; null when it has none. */
+  resolveTail(segment: string): string | null;
+  getTailRecord(tail: string): TailRecord | null;
+  getTailUpcomingFlights(tail: string): TailFlight[];
+  getTailRecentFlights(tail: string): TailFlight[];
+  getTailDepartures(tail: string): TailDepartures;
+  /** Every tail with a page, classified by the page's own rule; the sitemap's source. */
+  getTailIndex(): TailIndexEntry[];
+
   // Single-tail lookups + best-effort writes. Airline-scoped like everything
   // else: a tenant's FR24 fallback must not resolve another airline's tail.
   getStarlinkPlaneByTail(
     tail: string
   ): { Aircraft: string; OperatedBy: string; fleet: string } | null;
-  getFleetEntryByTail(
-    tail: string
-  ): { starlink_status: string; verified_wifi: string | null; verified_at: number | null } | null;
+  getFleetEntryByTail(tail: string): ReturnType<typeof getFleetEntryByTail>;
   computeWifiConsensus(
     tail: string,
     opts?: { sources?: readonly VerificationSource[] }
   ): WifiConsensus;
   bumpDiscoveryPriority(tail: string): void;
+  /** The same four lookups for a tail found on one of this scope's flights.
+   * Like getFlightAssignments they span operatingPartners (a Hawaiian A330 on
+   * an AS number); no other airline's tail resolves through them. */
+  assignedTails: Pick<
+    ScopedReader,
+    | "getStarlinkPlaneByTail"
+    | "getFleetEntryByTail"
+    | "computeWifiConsensus"
+    | "bumpDiscoveryPriority"
+  >;
 
   // Qatar uses a separate schedule cache (per-flight equipment, no per-tail).
   // These are airline-agnostic on the reader because qatar_schedule has no
@@ -319,8 +427,47 @@ export interface ScopedReader {
   ): QatarScheduleRow[];
   /** Every tail the updater has seen on the flight's local date (Starlink Watch). */
   getAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
+  /** The newest tail logged per departure, with its fleet-list type; every
+   * date the log holds when `depDate` is absent. */
+  getLoggedAircraft(variants: readonly string[], depDate?: string): LoggedAircraft[];
+  /** Listed tails seen on the flight since their schedule was last read, as
+   * schedule rows; spans operatingPartners like getFlightAssignments. */
+  getListedSightings(
+    variants: readonly string[],
+    start: number,
+    end: number
+  ): FlightAssignmentRow[];
+  /** The airline's own dated count for one aircraft family; null on the hub
+   * and wherever the stored chart has no usable line for it. */
+  getAirlineTypeCount(family: string): AirlineTypeCount | null;
+  /** Aircraft of the family this site lists as equipped; 0 on the hub. */
+  getNamedOfType(family: string): number;
+  /** A logged tail's Starlink flag today (1/0/null), by the rule that fills
+   * the log's own column; `airline` is the logging row's. */
+  getTailStarlinkFlag(tail: string, airline: string): number | null;
+  /** The same rows for a past date, read from the year-long flown record too. */
+  getFlownAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
+  /** A route, a scheduled leg or a logged assignment exists under one of the spellings. */
+  isKnownFlightNumber(variants: readonly string[]): boolean;
   getSameDayStarlinkAlternatives(q: SameDayAlternativesQuery): SameDayAlternative[];
   logResolvedAssignments(flightNumber: string, legs: readonly ResolvedLeg[], now: number): void;
+  /** Stamps the tails logged on departures a lookup returned without them;
+   * spans operatingPartners like getListedSightings, which skips such rows. */
+  withdrawUnreturnedSightings(
+    flightNumber: string,
+    returned: readonly ReturnedDeparture[],
+    now: number
+  ): void;
+  /** Marks the departures a lookup named an unreadable aircraft on, and clears
+   * the mark on those it returned without one; spans operatingPartners. */
+  noteUnreadAircraft(
+    flightNumber: string,
+    returned: readonly DepartureReading[],
+    now: number
+  ): void;
+  /** The last lookup to return a departure of the flight on that local date
+   * named an aircraft there we could not read. */
+  hasUnreadAircraft(variants: readonly string[], depDate: string, orLater?: boolean): boolean;
 
   getQatarScheduleStats(): {
     total: number;
@@ -334,6 +481,13 @@ export interface ScopedReader {
   getAircraftTypePage(slug: string): AircraftTypePageData | null;
   /** Existence + Starlink count for the served gate, without the full page pass. */
   getAircraftTypeGate(slug: string): { total: number; starlink: number } | null;
+
+  /** Per-type install pace and outlook; null on the hub and for an airline
+   * whose install dates were never backtested. */
+  getRolloutOutlook(): AirlineOutlook | null;
+  /** A route's Starlink share by month and the types that fly it; null where
+   * getRolloutOutlook is. */
+  getRouteOutlook(origin: string, destination: string): RouteOutlookResult | null;
 
   // QR equipment history + fetch coverage; airline-agnostic like qatar_schedule.
   getQatarEquipmentHistory(
@@ -402,6 +556,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   // Hub ('ALL') is the union of *enabled* airlines, not every row in the DB —
   // disabled-airline canaries/test data stay invisible until that airline ships.
   const airlines = scope === "ALL" ? publicCodes() : ([scope] as const);
+  // A tail found on one of the scope's flights may be an operating partner's.
+  const flown = withOperatingPartners(airlines);
   // Route-compare methods are only meaningful per-airline; assert it.
   const soleAirline = () => {
     if (airlines.length !== 1)
@@ -410,7 +566,17 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   };
   const airportsMemo = memo<AirportDepartures>(DEPARTURE_AGGREGATE_MEMO);
   const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
+  const networkMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
   const rankedMemo = memo<Array<{ origin: string; destination: string }>>(DEPARTURE_AGGREGATE_MEMO);
+  const airportHistoryMemo = memo<AirportHistory>(AIRPORT_HISTORY_MEMO);
+  const airportDayMemo = memo<AirportDayCount[]>(DEPARTURE_AGGREGATE_MEMO);
+  const tailIndexMemo = memo<TailIndexEntry[]>(DEPARTURE_AGGREGATE_MEMO);
+  const outlookMemo = memo<AirlineOutlook>(OUTLOOK_MEMO);
+  const routeOutlookCache = lruCache<RouteOutlookResult | null>(ROUTE_OUTLOOK_CACHE);
+  const rolloutOutlook = (): AirlineOutlook | null =>
+    scope === "ALL" || !hasBacktestedOutlook(scope)
+      ? null
+      : outlookMemo(scope, () => airlineOutlook(db, scope, unixNow()));
   const r: ScopedReader = {
     scope,
     airlines,
@@ -419,6 +585,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getAirlineByTail: () => getAirlineByTail(db, airlines),
     getRecentInstalls: (limit, perAirlineCap) =>
       getRecentInstalls(db, airlines, limit, perAirlineCap),
+    getReportedInstalls: (limit) => getReportedInstalls(db, airlines, limit),
+    getListedNotCounted: () => getListedNotCounted(db, airlines),
     getFirstFlights: (tails) => getFirstFlights(db, tails, airlines),
     getDailyInstalls: () => getDailyInstalls(db, airlines),
     getPerAirlineStats: () => buildPerAirlineStats(db, airlines),
@@ -435,14 +603,14 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getLastUpdated: () =>
       scope === "ALL"
         ? (airlines
-            .map((c) => getLastUpdated(db, c))
+            .map((c) => capToQuietSources(db, c, getLastUpdated(db, c)))
             .filter(Boolean)
             .sort()
             .at(-1) ?? "")
-        : getLastUpdated(db, scope),
+        : (capToQuietSources(db, scope, getLastUpdated(db, scope)) ?? ""),
     getLastUpdatedRaw: () =>
       airlines
-        .map((c) => getMeta(db, "lastUpdated", c))
+        .map((c) => capToQuietSources(db, c, getMeta(db, "lastUpdated", c)))
         .filter((v): v is string => v !== null)
         .sort()
         .at(-1) ?? null,
@@ -461,10 +629,11 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       getFleetPageData(db, airlines, {
         withPartners: scope !== "ALL" && Boolean(AIRLINES[scope]?.programmePartners),
       }),
-    getProgrammeHeadline: () => (scope === "ALL" ? null : programmeHeadline(db, scope)),
+    getProgrammeHeadline: () => (scope === "ALL" ? null : programmeHeadlineWithChart(db, scope)),
     getDepartureSlots: (q) => getDepartureSlots(db, airlines, q),
     getAirportDepartures: () => airportsMemo("", () => getAirportDepartures(db, airlines)),
     getRouteStarlinkSchedule: () => scheduleMemo("", () => getRouteStarlinkSchedule(db, airlines)),
+    getRouteNetworkRows: () => networkMemo("", () => getRouteNetworkRows(db, airlines)),
     getRankedStarlinkRoutePairs: (offset, limit) =>
       rankedMemo(`${offset}:${limit}`, () =>
         getRankedStarlinkRoutePairs(db, airlines, offset, limit)
@@ -472,6 +641,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, airlines),
     getConfirmedFleetTails: () => getConfirmedFleetTails(db, airlines),
     getPendingFleetTails: () => getPendingFleetTails(db, airlines),
+    getSheetListedTails: () => getSheetListedTails(db),
     getVerificationSummary: () => getVerificationSummary(db, airlines),
     getWifiMismatches: () => getWifiMismatches(db, airlines),
 
@@ -481,6 +651,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       scope === "UA" ? getAdsbFlightDrawsFor(db, fn, since) : [],
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
+    getRouteGraphSightings: () => getRouteGraphSightings(db, airlines),
     getServedRoutePairs: () => getServedRoutePairs(db, airlines),
     getConfirmedStarlinkEdges: (s, e) => getConfirmedStarlinkEdges(db, s, e, airlines),
     airlineServesAirports: (px, ...aps) => airlineServesAirports(db, soleAirline(), px, ...aps),
@@ -506,11 +677,32 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
     getObservationAnchor: () => (scope === "ALL" ? 0 : getObservationAnchor(db, scope)),
 
+    airportHasData: (a) => airportHasData(db, a, soleAirline()),
+    getAirportStarlinkDepartures: (a) => getAirportStarlinkDepartures(db, soleAirline(), a),
+    getStarlinkDeparturesLeft: (a, now = unixNow()) =>
+      getStarlinkDeparturesLeft(db, soleAirline(), now, a),
+    getAirportHistory: () => airportHistoryMemo("", () => getAirportHistory(db, soleAirline())),
+    getAirportDayCounts: () => airportDayMemo("", () => getAirportDayCounts(db, soleAirline())),
+
+    resolveTail: (segment) => resolveTail(db, soleAirline(), segment),
+    getTailRecord: (tail) => getTailRecord(db, soleAirline(), tail),
+    getTailUpcomingFlights: (tail) => getTailUpcomingFlights(db, soleAirline(), tail),
+    getTailRecentFlights: (tail) => getTailRecentFlights(db, soleAirline(), tail),
+    getTailDepartures: (tail) => getTailDepartures(db, soleAirline(), tail),
+    getTailIndex: () => tailIndexMemo("", () => getTailIndex(db, soleAirline())),
+
     getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),
     computeWifiConsensus: (tail, opts) =>
       computeWifiConsensus(db, tail, { ...opts, airline: airlines }),
     bumpDiscoveryPriority: (tail) => bumpDiscoveryPriority(db, tail, airlines),
+    assignedTails: {
+      getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, flown),
+      getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, flown),
+      computeWifiConsensus: (tail, opts) =>
+        computeWifiConsensus(db, tail, { ...opts, airline: flown }),
+      bumpDiscoveryPriority: (tail) => bumpDiscoveryPriority(db, tail, flown),
+    },
 
     getQatarScheduleByFlight: (v, s, e) => getQatarScheduleByFlight(db, v, s, e),
     getQatarScheduleByRoute: (o, d, s, e) => getQatarScheduleByRoute(db, o, d, s, e),
@@ -521,12 +713,38 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getQatarFetchCoverage: (p, d) => getQatarFetchCoverage(db, p, d),
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
+    getLoggedAircraft: (v, d) => getLoggedAircraft(db, withOperatingPartners(airlines), v, d),
+    getListedSightings: (v, s, e) =>
+      getListedSightings(db, withOperatingPartners(airlines), v, s, e),
+    getAirlineTypeCount: (family) => (scope === "ALL" ? null : airlineTypeCount(db, scope, family)),
+    getNamedOfType: (family) => (scope === "ALL" ? 0 : namedOfType(db, scope, family)),
+    getTailStarlinkFlag: (tail, airline) => tailStarlinkFlag(db, tail, airline),
+    getFlownAssignmentHistory: (v, d) => getFlownAssignmentHistory(db, airlines, v, d),
+    isKnownFlightNumber: (v) => isKnownFlightNumber(db, airlines, v),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
     logResolvedAssignments: (fn, legs, now) => logResolvedAssignments(db, airlines, fn, legs, now),
+    withdrawUnreturnedSightings: (fn, returned, now) =>
+      withdrawUnreturnedSightings(db, withOperatingPartners(airlines), fn, returned, now),
+    noteUnreadAircraft: (fn, returned, now) =>
+      noteUnreadAircraft(db, withOperatingPartners(airlines), fn, returned, now),
+    hasUnreadAircraft: (v, d, orLater) =>
+      hasUnreadAircraft(db, withOperatingPartners(airlines), v, d, orLater),
 
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),
     getAircraftTypeGate: (slug) => (scope === "ALL" ? null : getAircraftTypeGate(db, scope, slug)),
+    getRolloutOutlook: rolloutOutlook,
+    getRouteOutlook: (origin, destination) => {
+      if (!ROUTE_DEPARTURES_PLACED_BY_PAIR) return null;
+      const outlook = rolloutOutlook();
+      if (scope === "ALL" || !outlook) return null;
+      const key = `${origin}-${destination}`;
+      const hit = routeOutlookCache.get(key);
+      if (hit !== undefined) return hit;
+      const value = routeOutlookFor(db, scope, origin, destination, unixNow(), outlook);
+      routeOutlookCache.set(key, value);
+      return value;
+    },
   };
   return Object.freeze(r);
 }

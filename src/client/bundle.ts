@@ -18,7 +18,10 @@ const ENTRIES = [
   "hub",
   "home",
   "route-planner",
+  // Not a page's own script: the planner fetches it when a box is first touched.
+  "airport-picker",
   "route-board",
+  "routes-map",
   "mcp",
 ] as const;
 export type ClientScript = (typeof ENTRIES)[number];

@@ -13,7 +13,8 @@ import { departureLocalDate } from "../src/database/assignment-log";
 import { getSitemapRoutes } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { DAY_SEC, isoDateDaysAgo, unixNow } from "../src/database/sql/windows";
-import { createApp } from "../src/server/app";
+import { createApp, routeMetaDescription, routeTitle } from "../src/server/app";
+import { routePairLabel } from "../src/utils/airport-names";
 import {
   addFleet,
   addFlight,
@@ -22,6 +23,7 @@ import {
   jsonOf,
   makeFreshDb,
   openSnapshot,
+  readableText,
   req,
 } from "./helpers";
 
@@ -197,10 +199,10 @@ describe("route page", () => {
     const res = await page(`/route-planner/${origin}/${destination}`);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain(
-      `<title>Which ${AIRLINES.UA.shortName} ${origin} to ${destination} Flights Have Starlink?`
+    expect(body).toContain(`<title>${routeTitle(AIRLINES.UA.shortName, origin, destination)}<`);
+    expect(readableText(body)).toContain(
+      `Which ${routePairLabel(origin, destination)} flights have Starlink?`
     );
-    expect(body).toContain(`Which ${origin} to ${destination} flights have Starlink?`);
     expect(body).toContain('id="all-flights"');
     expect(body).toContain("Nonstop flights");
     expect(body).not.toContain("Flight numbers on this route");
@@ -330,6 +332,25 @@ describe("board behavior (synthetic)", () => {
       arrivalAirport: "DEN",
       lastUpdated: now,
     });
+    // A three-leg chain on airports no other case uses, for the planner's links:
+    // each leg flown on the A321neo for five days, then scheduled tomorrow.
+    for (const d of [-7, -6, -5, -4, -3]) {
+      log("UA", "UA510", "N111UA", at(d, 13), ["BOS", "PHL"]);
+      log("UA", "UA520", "N111UA", at(d, 17), ["PHL", "CLT"]);
+      log("UA", "UA530", "N111UA", at(d, 21), ["CLT", "MIA"]);
+    }
+    addFlight(sdb, "N111UA", "UA510", "BOS", at(1, 13), {
+      arrivalAirport: "PHL",
+      lastUpdated: now,
+    });
+    addFlight(sdb, "N111UA", "UA520", "PHL", at(1, 17), {
+      arrivalAirport: "CLT",
+      lastUpdated: now,
+    });
+    addFlight(sdb, "N111UA", "UA530", "CLT", at(1, 21), {
+      arrivalAirport: "MIA",
+      lastUpdated: now,
+    });
     // The route page serves only pairs the route cache knows.
     sdb
       .query(
@@ -393,6 +414,84 @@ describe("board behavior (synthetic)", () => {
     expect(fromBoard).not.toBeNull();
     expect(leg?.probability).toBeCloseTo(fromBoard ?? -1, 6);
     expect(check.prediction.probability).toBeCloseTo(fromBoard ?? -1, 6);
+  });
+
+  test("a planner leg links its own answer page, the first leg dated as searched", async () => {
+    type PlanLeg = { flight_number: string; route: string; page?: string };
+    const itinerariesOf = async (query: string) =>
+      (
+        (await jsonOf(sapp, `/api/plan-route?${query}`, UA)) as {
+          itineraries: Array<{ legs: PlanLeg[] }>;
+        }
+      ).itineraries;
+    const date = isoDateDaysAgo(-20, now);
+    // Every link names its leg, so a number that flies two legs opens on this one.
+    const onLeg = (route: string) => {
+      const [origin, destination] = route.split("-");
+      return `?origin=${origin}&destination=${destination}`;
+    };
+    const undatedPage = (leg: PlanLeg) =>
+      leg.flight_number === "(any)"
+        ? undefined
+        : `/check-flight/${leg.flight_number}${onLeg(leg.route)}`;
+    // Only the first leg is known to fly that day: a later one often flies the
+    // next, so it links the flight's undated page.
+    const expectDatedFirstLeg = (legs: PlanLeg[]) =>
+      legs.forEach((leg, i) => {
+        if (leg.flight_number === "(any)") expect(leg.page).toBeUndefined();
+        else if (i === 0)
+          expect(leg.page).toBe(`/check-flight/${leg.flight_number}/${date}${onLeg(leg.route)}`);
+        else expect(leg.page).toBe(undatedPage(leg));
+      });
+
+    const nonstop = await itinerariesOf(`origin=ORD&destination=IAD&date=${date}`);
+    expect(nonstop.length).toBeGreaterThan(0);
+    for (const it of nonstop) expectDatedFirstLeg(it.legs);
+
+    const twoLeg = (await itinerariesOf(`origin=BOS&destination=CLT&date=${date}`)).find(
+      (it) => it.legs.length === 2 && it.legs.every((l) => l.flight_number !== "(any)")
+    );
+    expect(twoLeg?.legs.map((l) => l.page)).toEqual([
+      `/check-flight/UA510/${date}${onLeg("BOS-PHL")}`,
+      `/check-flight/UA520${onLeg("PHL-CLT")}`,
+    ]);
+
+    const threeLeg = (await itinerariesOf(`origin=BOS&destination=MIA&date=${date}`)).find(
+      (it) => it.legs.length === 3
+    );
+    expect(threeLeg?.legs.map((l) => l.page)).toEqual([
+      `/check-flight/UA510/${date}${onLeg("BOS-PHL")}`,
+      `/check-flight/UA520${onLeg("PHL-CLT")}`,
+      `/check-flight/UA530${onLeg("CLT-MIA")}`,
+    ]);
+
+    // Behind a positioning leg, the first real flight is a later leg too.
+    const behindPositioning = (await itinerariesOf(`origin=SFO&destination=IAD&date=${date}`)).find(
+      (it) => it.legs[0].flight_number === "(any)"
+    );
+    expect(behindPositioning?.legs.map((l) => l.page)).toEqual([
+      undefined,
+      `/check-flight/UA100${onLeg("ORD-IAD")}`,
+    ]);
+
+    for (const query of [
+      "origin=SFO&destination=IAD",
+      "origin=BOS&destination=MIA&date=2026-02-30",
+    ]) {
+      for (const it of await itinerariesOf(query)) {
+        for (const leg of it.legs) expect(leg.page).toBe(undatedPage(leg));
+      }
+    }
+
+    const pages = [...nonstop, twoLeg, threeLeg].flatMap((it) =>
+      (it?.legs ?? []).flatMap((l) => (l.page ? [l.page] : []))
+    );
+    for (const page of pages) {
+      const res = await sapp.dispatch(
+        req(page, UA, { headers: { Accept: "text/html", "x-forwarded-for": "127.0.0.1" } })
+      );
+      expect(res.status).toBe(200);
+    }
   });
 
   test("a leg that changed metal reads its new mix, and every surface agrees", async () => {
@@ -464,6 +563,21 @@ describe("board behavior (synthetic)", () => {
   test("a plane swapped off a future leg no longer answers it", () => {
     const r = board().flights.find((f) => f.flight_number === "UA300");
     expect(r?.assignment ?? null).toBeNull();
+  });
+
+  test("a plane a later lookup returned the leg without no longer answers it", () => {
+    // Not a tail the updater follows, so only the lookup's stamp can retire the row.
+    log("UA", "UA350", "N222UA", at(1, 23), ["SFO", "ORD"], now - 60);
+    try {
+      expect(row(board(), "UA350").assignment?.tail_number).toBe("N222UA");
+      sdb.run("UPDATE flight_assignment_log SET withdrawn_at = ? WHERE flight_number = 'UA350'", [
+        now,
+      ]);
+      const r = board().flights.find((f) => f.flight_number === "UA350");
+      expect(r?.assignment ?? null).toBeNull();
+    } finally {
+      sdb.run("DELETE FROM flight_assignment_log WHERE flight_number = 'UA350'");
+    }
   });
 
   test("a past date names the plane that flew", () => {
@@ -552,9 +666,11 @@ describe("board behavior (synthetic)", () => {
     expect(assigned.map((f) => f.flight_number)).toEqual(["UA100"]);
     expect(desc).toMatch(
       new RegExp(
-        `^1 of ${board().flights.length} United SFO to ORD nonstops has a Starlink plane assigned in the next 48 hours\\. The next is UA100 on `
+        `^1 of ${board().flights.length} United San Francisco \\(SFO\\) to Chicago \\(ORD\\) nonstops has a Starlink plane assigned in the next 48 hours\\.( The next is UA100 on .*)?$`
       )
     );
+    // The next flight is in the sentence wherever the whole of it fits.
+    expect(routeMetaDescription(AIRLINES.UA, board(), [], 400)).toMatch(/ The next is UA100 on /);
   });
 
   test("each host sees only its own airline's flights", async () => {

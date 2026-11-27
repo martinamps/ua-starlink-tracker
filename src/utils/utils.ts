@@ -2,24 +2,38 @@ import { looksLikeValidTailNumber } from "../airlines/registry";
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { BROWSER_USER_AGENT } from "./constants";
 import { error as logError, warn } from "./logger";
+import { type ParsedModNote, parseModNote, utcToday } from "./sheet-mod-note";
+import type { SheetOrderRow } from "./subfleet-order";
 
 /**
  * CSV Fetch & Parse Logic
  */
 
 /** The community fleet spreadsheets and the tabs we read from each. A tab the
- * owner adds is logged, not read, until someone classifies it here. */
+ * owner adds is logged, not read, until someone classifies it here: into
+ * `gids` to read it, or into `ignoredGids` (keyed by gid, which survives a
+ * rename) when it holds no tail we should serve. */
 export const FLEET_SHEETS = [
   {
     fleet: "express",
     docId: "1Mmu1m381RnGMgqxMiEqMni3zJ8uxdfpbeaP6XtN1yxM",
     // gid 1735263052 was deleted upstream ~2026-10-27 (it listed no Starlink tails).
     gids: [13, 1106195214, 11, 6, 9, 5, 969079667],
+    ignoredGids: [],
   },
   {
     fleet: "mainline",
     docId: "1ZlYgN_IZmd6CSx_nXnuP0L0PiodapDRx3RmNkIpxXAo",
     gids: [0, 1, 948315825, 3, 4, 6, 5, 70572532, 7, 8, 10, 12, 15, 13, 2098141434],
+    // Order books list undelivered jets and carry stale duplicates of delivered
+    // ones (N14576 sat on Future321 under an old fleet number); the summary is
+    // the owners' per-type roll-up of the tabs above, counts only.
+    ignoredGids: [
+      1855629492, // "FutureMAX": 737 MAX 9 / MAX 10 order book
+      735685210, // "Future321": A321neo/XLR future deliveries and leases
+      1151318329, // "FutureWB": 787 / A350 / Boom orders
+      636589161, // "Starlink Summary": monthly equipped count per type
+    ],
   },
 ] as const;
 
@@ -72,7 +86,8 @@ export interface TabReconciliation {
 export function reconcileSheetTabs(
   known: readonly number[],
   live: SheetTab[] | null,
-  listedGids: ReadonlySet<string>
+  listedGids: ReadonlySet<string>,
+  ignored: readonly number[] = []
 ): TabReconciliation {
   if (!live) return { fetch: [...known], vanishedEmpty: [], vanishedListed: [], added: [] };
   const liveGids = new Set(live.map((t) => t.gid));
@@ -81,7 +96,7 @@ export function reconcileSheetTabs(
     fetch: known.filter((g) => liveGids.has(g)),
     vanishedEmpty: vanished.filter((g) => !listedGids.has(String(g))),
     vanishedListed: vanished.filter((g) => listedGids.has(String(g))),
-    added: live.filter((t) => !known.includes(t.gid)),
+    added: live.filter((t) => !known.includes(t.gid) && !ignored.includes(t.gid)),
   };
 }
 
@@ -111,7 +126,7 @@ function reportTabDrift(fleet: string, r: TabReconciliation): void {
     count("new");
     once(`new:${tab.gid}`, () =>
       warn(
-        `New sheet tab ${JSON.stringify(tab.name)} gid=${tab.gid} (${fleet}) is not read; add it to FLEET_SHEETS if it belongs in the roster`
+        `New sheet tab ${JSON.stringify(tab.name)} gid=${tab.gid} (${fleet}) is not read; classify it in FLEET_SHEETS (gids to read, ignoredGids if it holds no tails)`
       )
     );
   }
@@ -226,6 +241,18 @@ export function looksLikeStarlinkTypo(raw: string | null | undefined): boolean {
   );
 }
 
+/** The sheet's tail cell as a registration, or null when it isn't one. */
+function sheetRowTail(row: Record<string, string>): string | null {
+  const tail = (row["Reg #"] ?? "").trim().toUpperCase();
+  return looksLikeValidTailNumber(tail) ? tail : null;
+}
+
+/** The mainline tabs' hangar column; its header is long and hand-typed. */
+function statusCell(row: Record<string, string>): string | undefined {
+  const key = Object.keys(row).find((k) => /^status\b.*\bmod\b/i.test(k));
+  return key ? row[key] : undefined;
+}
+
 // Function to fetch all CSV data and filter for Starlink WiFi
 export async function fetchAllSheets(
   opts: {
@@ -233,17 +260,27 @@ export async function fetchAllSheets(
     listedGids?: ReadonlySet<string>;
     fetchTabs?: typeof fetchSheetTabs;
     fetchCsv?: typeof fetchSheetCsv;
+    /** UTC YYYY-MM-DD the hangar notes' year-less dates are read against. */
+    today?: string;
   } = {}
 ) {
   const {
     listedGids = new Set<string>(),
     fetchTabs = fetchSheetTabs,
     fetchCsv = fetchSheetCsv,
+    today = utcToday(),
   } = opts;
+  const modNotes = new Map<string, ParsedModNote & { tail: string }>();
+  const sheetOrder: SheetOrderRow[] = [];
   const exportUrls: Array<{ gid: number; fleet: string; docId: string }> = [];
   const blockingGids: number[] = [];
   for (const sheet of FLEET_SHEETS) {
-    const r = reconcileSheetTabs(sheet.gids, await fetchTabs(sheet.docId), listedGids);
+    const r = reconcileSheetTabs(
+      sheet.gids,
+      await fetchTabs(sheet.docId),
+      listedGids,
+      sheet.ignoredGids
+    );
     reportTabDrift(sheet.fleet, r);
     blockingGids.push(...r.vanishedListed);
     for (const gid of r.fetch) exportUrls.push({ gid, fleet: sheet.fleet, docId: sheet.docId });
@@ -279,6 +316,27 @@ export async function fetchAllSheets(
       let sheetType = "";
       if (rows.length > 0 && rows[0].Aircraft) {
         sheetType = rows[0].Aircraft.split("-")[0] || "Unknown";
+      }
+
+      // Every row, Starlink or not: a jet in the hangar still lists its old
+      // Wi-Fi, and install order is read across the whole sub-fleet.
+      for (const row of rows) {
+        const tail = sheetRowTail(row);
+        if (!tail) continue;
+        const note = parseModNote(
+          { note: statusCell(row), toReceiveStarlink: row["To Rcv Starlink"] },
+          today
+        );
+        if (note && !modNotes.has(tail)) modNotes.set(tail, { ...note, tail });
+        const fleetNumber = (row["AC #"] ?? "").trim();
+        if (/^\d{1,5}$/.test(fleetNumber)) {
+          sheetOrder.push({
+            tail,
+            group: `${sheet.gid}:${Object.values(row)[0] ?? ""}`,
+            fleetNumber: Number(fleetNumber),
+            listed: normalizeSheetWifi(row.WiFi, sheet.fleet) !== null,
+          });
+        }
       }
 
       // Filter for Starlink WiFi (both "StrLnk" for express and "Starlink" for mainline)
@@ -356,13 +414,11 @@ export async function fetchAllSheets(
   const totalAircraftCount = expressTotal + mainlineTotal;
   const totalStarlinkCount = expressStarlink + mainlineStarlink;
 
-  // Cache update happens in sheet-scrape AFTER updateDatabase accepts the
-  // roster, so cache and DB share one refusal decision — a partial parse
-  // (one sheet interstitial) must not desync /api/fleet-discovery either.
-
   return {
     totalAircraftCount,
     starlinkAircraft,
+    modNotes: [...modNotes.values()],
+    sheetOrder,
     fleetStats: {
       express: {
         total: expressTotal,
@@ -383,47 +439,5 @@ export async function fetchAllSheets(
         percentage: totalAircraftCount > 0 ? (totalStarlinkCount / totalAircraftCount) * 100 : 0,
       },
     },
-  };
-}
-
-// ============================================
-// Spreadsheet Cache for Discovery Comparison
-// ============================================
-
-// In-memory cache of tail numbers from the spreadsheet
-// Updated hourly when fetchAllSheets() runs
-let spreadsheetTailsCache: Set<string> = new Set();
-let spreadsheetCacheUpdatedAt = 0;
-
-/**
- * Update the spreadsheet tails cache
- * Called automatically by fetchAllSheets()
- */
-export function updateSpreadsheetCache(tailNumbers: string[]) {
-  spreadsheetTailsCache = new Set(tailNumbers);
-  spreadsheetCacheUpdatedAt = Date.now();
-}
-
-/**
- * Check if a tail number is in the cached spreadsheet
- */
-export function isInSpreadsheetCache(tailNumber: string): boolean {
-  return spreadsheetTailsCache.has(tailNumber);
-}
-
-/**
- * Get all tail numbers from the cached spreadsheet
- */
-export function getSpreadsheetCacheTails(): Set<string> {
-  return spreadsheetTailsCache;
-}
-
-/**
- * Get cache metadata
- */
-export function getSpreadsheetCacheInfo(): { size: number; updatedAt: number } {
-  return {
-    size: spreadsheetTailsCache.size,
-    updatedAt: spreadsheetCacheUpdatedAt,
   };
 }

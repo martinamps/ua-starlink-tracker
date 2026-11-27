@@ -1,11 +1,14 @@
 import React from "react";
 import { aircraftName } from "../airlines/aircraft-families";
 import {
-  AIRLINES,
-  type AirlineConfig,
-  airlineHomeUrl,
-  wifiPhaseFamilies,
-} from "../airlines/registry";
+  byPublishedCount,
+  ownCountCredit,
+  publishedCount,
+  trackingMethod,
+  typeSumCredit,
+  typeSumParts,
+} from "../airlines/published-count";
+import { AIRLINES, type AirlineConfig, airlineHomeUrl } from "../airlines/registry";
 import type { RolloutFactsStatus } from "../airlines/rollout-facts";
 import type { PopularFlight } from "../database/database";
 import type { PerAirlineStat, RecentInstall } from "../types";
@@ -14,7 +17,7 @@ import { operatorName } from "./home/aircraft-list";
 import { ButtonLink, Chip, Eyebrow, Panel } from "./layout";
 import { fmt, monthDay, pct } from "./ui/format";
 import { Meter } from "./ui/meter";
-import { Pill, type Tone } from "./ui/tone";
+import { DrawnPill, Pill, type Tone } from "./ui/tone";
 
 export type { PerAirlineStat };
 
@@ -42,7 +45,7 @@ export function ShareCardLink({ path }: { path?: string | null }) {
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
           <polyline points="7 10 12 15 17 10" />
           <line x1="12" y1="15" x2="12" y2="3" />
-        </svg>
+        </svg>{" "}
         Download share card
       </ButtonLink>
     </div>
@@ -67,7 +70,7 @@ export function PopularFlightsLinks({
   if (flights.length === 0) return null;
   return (
     <Panel data-popular-flights="">
-      <Eyebrow>Popular flights</Eyebrow>
+      <Eyebrow>Popular flights</Eyebrow>{" "}
       <div className="flex flex-wrap gap-2">
         {flights.map((f) => (
           <Chip key={f.flight_number} href={`/check-flight/${f.flight_number}`}>
@@ -82,7 +85,7 @@ export function PopularFlightsLinks({
             )}
           </Chip>
         ))}
-      </div>
+      </div>{" "}
       <p className="text-xs text-muted mt-4 leading-snug">
         The {airlineName} flights we track most often.
       </p>
@@ -100,7 +103,7 @@ export function PopularRoutesLinks({
   if (routes.length === 0) return null;
   return (
     <Panel data-popular-routes="">
-      <Eyebrow>Popular routes</Eyebrow>
+      <Eyebrow>Popular routes</Eyebrow>{" "}
       <div className="flex flex-wrap gap-2">
         {routes.map((r) => (
           <Chip
@@ -188,73 +191,100 @@ export function StagePill({ info }: { info: StageInfo }) {
   return <Pill tone={STAGE_TONE[info.stage]}>{info.label}</Pill>;
 }
 
-/** How an airline's Starlink status is decided: per aircraft, by aircraft
- * type, or from a community-curated list. Only "tail" earns "plane by plane". */
-export function trackingMethod(cfg: AirlineConfig): "tail" | "type" | "community" {
-  if (cfg.communitySource) return "community";
-  return wifiPhaseFamilies(cfg.code) ? "type" : "tail";
+/** The stage again for another layout of the same row, its words drawn by the
+ * stylesheet (DrawnPill) so the row's markup says them once. */
+export function StagePillAgain({ info }: { info: StageInfo }) {
+  return <DrawnPill tone={STAGE_TONE[info.stage]} label={info.label} />;
 }
 
 /**
  * One row per tracked airline: name, standard stage, and a bar where the
  * fleet share is publishable. Where it isn't (the roster counts types the
  * programme excludes) the row gives the count and the airline's own note, never
- * a ratio that would make a finished rollout look two-thirds done.
+ * a ratio that would make a finished rollout look two-thirds done. An airline
+ * known by aircraft type shows its own dated figure, our sum of its source's
+ * whole-type counts, or no count (see
+ * published-count.ts), and ranks by that.
  */
 export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
-  const rows = stats
-    .map((stat) => ({ stat, cfg: AIRLINES[stat.code] }))
-    .filter((r): r is { stat: PerAirlineStat; cfg: AirlineConfig } => Boolean(r.cfg))
-    .sort((a, b) => b.stat.starlink - a.stat.starlink);
+  const rows = byPublishedCount(
+    stats
+      .map((stat) => ({ stat, cfg: AIRLINES[stat.code] }))
+      .filter((r): r is { stat: PerAirlineStat; cfg: AirlineConfig } => Boolean(r.cfg))
+      .map((r) => ({ ...r, published: publishedCount(r.cfg, r.stat.starlink) }))
+  );
   return (
     <ul className="divide-y divide-subtle">
-      {rows.map(({ stat, cfg }) => {
-        const publishable = shareIsPublishable(cfg, stat);
+      {rows.map(({ stat, cfg, published }) => {
+        const publishable = published.basis === "tracked" && shareIsPublishable(cfg, stat);
         return (
-          <li key={cfg.code} className="py-3 first:pt-0 last:pb-0">
-            <div className="flex items-center justify-between gap-3">
-              <span className="flex flex-wrap items-baseline gap-x-2">
-                <a
-                  href={stat.href || "#"}
-                  className="font-display text-base text-primary hover:text-accent transition-colors"
-                >
-                  {cfg.name}
-                </a>
-                {trackingMethod(cfg) === "type" && (
-                  <span className="text-xs text-muted">by aircraft type</span>
-                )}
-                {/* The airline's own site counts its partner fleets too; this row doesn't. */}
-                {cfg.programmePartners && (
-                  <span className="text-xs text-muted">{cfg.shortName}-operated</span>
-                )}
-              </span>
-              <StagePill info={trackedStage(cfg, stat)} />
-            </div>
-            {publishable ? (
-              <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-3">
-                <Meter
-                  share={stat.starlink / stat.total}
-                  color={stat.accentText ?? stat.accentColor}
-                  label={`${cfg.name}: ${fmt(stat.starlink)} of ${fmt(stat.total)} aircraft (${pct(stat.starlink, stat.total)})`}
-                />
-                <span className="text-sm text-secondary tabular-nums whitespace-nowrap">
-                  {fmt(stat.starlink)} of {fmt(stat.total)} · {pct(stat.starlink, stat.total)}
-                </span>
-              </div>
-            ) : (
-              <p className="mt-1 text-sm text-secondary">
-                <strong className="font-semibold text-primary tabular-nums">
-                  {fmt(stat.starlink)}
-                </strong>{" "}
-                aircraft with Starlink. {stat.phaseNote}
-              </p>
-            )}
-            {(stat.installs30d ?? 0) > 0 && (
-              <p className="mt-1 text-xs text-muted">
-                +{fmt(stat.installs30d ?? 0)} in the last 30 days
-              </p>
-            )}
-          </li>
+          <React.Fragment key={cfg.code}>
+            <li className="py-3 first:pt-0 last:pb-0">
+              <div className="flex items-center justify-between gap-3">
+                <span className="flex flex-wrap items-baseline gap-x-2">
+                  <a
+                    href={stat.href || "#"}
+                    className="font-display text-base text-primary hover:text-accent transition-colors"
+                  >
+                    {cfg.name}
+                  </a>{" "}
+                  {trackingMethod(cfg) === "type" && (
+                    <span className="text-xs text-muted">by aircraft type</span>
+                  )}{" "}
+                  {/* The airline's own site counts its partner fleets too; this row doesn't. */}
+                  {cfg.programmePartners && (
+                    <span className="text-xs text-muted">{cfg.shortName}-operated</span>
+                  )}
+                </span>{" "}
+                <StagePill info={trackedStage(cfg, stat)} />
+              </div>{" "}
+              {publishable ? (
+                <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-3">
+                  <Meter
+                    share={stat.starlink / stat.total}
+                    color={stat.accentText ?? stat.accentColor}
+                    label={`${cfg.name}: ${fmt(stat.starlink)} of ${fmt(stat.total)} aircraft (${pct(stat.starlink, stat.total)})`}
+                  />{" "}
+                  <span className="text-sm text-secondary tabular-nums whitespace-nowrap">
+                    {fmt(stat.starlink)} of {fmt(stat.total)} · {pct(stat.starlink, stat.total)}
+                  </span>
+                </div>
+              ) : published.basis === "type" ? (
+                <p className="mt-1 text-sm text-secondary">{stat.phaseNote}</p>
+              ) : (
+                <p className="mt-1 text-sm text-secondary">
+                  <strong className="font-semibold text-primary tabular-nums">
+                    {fmt(published.count)}
+                  </strong>{" "}
+                  aircraft with Starlink
+                  {published.basis !== "tracked" && (
+                    <>
+                      {published.basis === "airline"
+                        ? `, ${ownCountCredit(cfg, published)}`
+                        : `: ${typeSumParts(published)}, ${typeSumCredit(published)}`}{" "}
+                      {!published.reportedBy && "("}
+                      <a
+                        href={published.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent hover:underline"
+                      >
+                        {published.sourceLabel}
+                      </a>
+                      {!published.reportedBy && ")"}
+                    </>
+                  )}
+                  .{published.basis === "type-sum" && " The total is our sum of those counts."}{" "}
+                  {stat.phaseNote}
+                </p>
+              )}{" "}
+              {(stat.installs30d ?? 0) > 0 && (
+                <p className="mt-1 text-xs text-muted">
+                  +{fmt(stat.installs30d ?? 0)} in the last 30 days
+                </p>
+              )}
+            </li>{" "}
+          </React.Fragment>
         );
       })}
     </ul>
@@ -270,47 +300,51 @@ export function RecentInstallsFeed({
     .filter((g) => g.rows.length > 0);
   return (
     <Panel>
-      <Eyebrow>Recent installs</Eyebrow>
+      <Eyebrow>Recent installs</Eyebrow>{" "}
       {grouped.length === 0 ? (
         <div className="text-xs text-muted font-mono">No recent installs</div>
       ) : (
         <>
           {grouped.map((g) => (
-            <div key={g.cfg.code} className="mb-3 last:mb-0">
-              <div className="flex items-center gap-1.5 text-xs font-mono text-muted mb-1.5">
-                <span
-                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  style={{
-                    background: g.cfg.accentText ?? g.cfg.accentColor ?? "var(--color-text-muted)",
-                  }}
-                />
-                {g.cfg.name}
-              </div>
-              <div className="space-y-1">
-                {g.rows.map((r) => (
-                  <a
-                    key={r.TailNumber}
-                    href={airlineHomeUrl(g.cfg.code, { q: r.TailNumber })}
-                    className="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-elevated transition-colors group"
-                  >
-                    <span className="font-mono text-xs text-primary group-hover:text-accent transition-colors w-16">
-                      {r.TailNumber}
-                    </span>
-                    <span className="font-mono text-xs text-muted flex-1 truncate">
-                      {aircraftName(r.Aircraft)}
-                    </span>
-                    {r.OperatedBy && r.OperatedBy !== g.cfg.name && (
-                      <span className="font-mono text-xs text-secondary truncate hidden sm:inline">
-                        {operatorName(r.OperatedBy)}
-                      </span>
-                    )}
-                    <span className="font-mono text-xs text-muted w-12 text-right">
-                      {monthDay(r.DateFound)}
-                    </span>
-                  </a>
-                ))}
-              </div>
-            </div>
+            <React.Fragment key={g.cfg.code}>
+              <div className="mb-3 last:mb-0">
+                <div className="flex items-center gap-1.5 text-xs font-mono text-muted mb-1.5">
+                  <span
+                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                    style={{
+                      background:
+                        g.cfg.accentText ?? g.cfg.accentColor ?? "var(--color-text-muted)",
+                    }}
+                  />
+                  {g.cfg.name}
+                </div>{" "}
+                <div className="space-y-1">
+                  {g.rows.map((r) => (
+                    <React.Fragment key={r.TailNumber}>
+                      <a
+                        href={airlineHomeUrl(g.cfg.code, { q: r.TailNumber })}
+                        className="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-elevated transition-colors group"
+                      >
+                        <span className="font-mono text-xs text-primary group-hover:text-accent transition-colors w-16">
+                          {r.TailNumber}
+                        </span>{" "}
+                        <span className="font-mono text-xs text-muted flex-1 truncate">
+                          {aircraftName(r.Aircraft)}
+                        </span>{" "}
+                        {r.OperatedBy && r.OperatedBy !== g.cfg.name && (
+                          <span className="font-mono text-xs text-secondary truncate hidden sm:inline">
+                            {operatorName(r.OperatedBy)}
+                          </span>
+                        )}{" "}
+                        <span className="font-mono text-xs text-muted w-12 text-right">
+                          {monthDay(r.DateFound)}
+                        </span>
+                      </a>{" "}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>{" "}
+            </React.Fragment>
           ))}
         </>
       )}
@@ -344,20 +378,24 @@ export function TypeBreakdownRow({
         ? note || "Planned"
         : note || "No Wi-Fi";
   return (
-    <div className="flex items-center justify-between py-3 px-4 border-b border-subtle last:border-0">
-      <div className="flex items-center gap-3">
-        {icon}
-        <div>
-          <div className="font-mono text-sm text-primary">{type}</div>
-          {count !== undefined && (
-            <div className="text-xs font-mono text-muted">{count} aircraft</div>
-          )}
+    <>
+      <div className="flex items-center justify-between py-3 px-4 border-b border-subtle last:border-0">
+        <div className="flex items-center gap-3">
+          {icon}{" "}
+          <div>
+            <div className="font-mono text-sm text-primary">{type}</div>{" "}
+            {count !== undefined && (
+              <div className="text-xs font-mono text-muted">{count} aircraft</div>
+            )}
+          </div>
+        </div>{" "}
+        <div
+          className={`text-xs font-mono ${status === "starlink" ? "text-success" : "text-muted"}`}
+        >
+          {label}
         </div>
-      </div>
-      <div className={`text-xs font-mono ${status === "starlink" ? "text-success" : "text-muted"}`}>
-        {label}
-      </div>
-    </div>
+      </div>{" "}
+    </>
   );
 }
 
@@ -369,11 +407,13 @@ export function HeaderStatStrip({ items }: { items: React.ReactNode[] }) {
         <React.Fragment key={i}>
           {/* Separators only where the strip fits one line: on a phone it wraps,
               and a dot would start or end a line on its own. */}
+          {i > 0 && " "}
           {i > 0 && (
             <span className="hidden sm:inline text-subtle" aria-hidden="true">
               ·
             </span>
           )}
+          {i > 0 && " "}
           {it}
         </React.Fragment>
       ))}

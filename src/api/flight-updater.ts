@@ -13,6 +13,7 @@ import {
   updateFlights,
   updateLastFlightCheck,
 } from "../database/database";
+import { failureKindOf, recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import { unixNow } from "../database/sql/windows";
 import { DISTRIBUTIONS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { Aircraft, Flight } from "../types";
@@ -116,18 +117,24 @@ async function pollTailFlights(
             `No upcoming flights found for ${tailNumber}; preserving cache and engaging backoff`
           );
           updateLastFlightCheck(db, tailNumber, false);
+          // A parked tail legitimately has no schedule, so one empty answer
+          // proves nothing; hours of nothing but empties is the vendor
+          // serving us blanks, which the quiet clock then catches.
+          recordSourceFailure(db, "flight_schedule", "ALL", "empty");
           outcome = "empty";
         } else {
           debug(`Found ${flights.length} upcoming flights for ${tailNumber}`);
           updateFlights(db, tailNumber, flights);
           updateLastFlightCheck(db, tailNumber, true);
           debug(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
+          recordSourceSuccess(db, "flight_schedule", "ALL");
           outcome = "updated";
         }
       } catch (err) {
         error(`Failed to update flights for ${tailNumber}`, err);
         span.setTag("error", true);
         span.setTag("error.type", classifyUpdateError(err));
+        recordSourceFailure(db, "flight_schedule", "ALL", failureKindOf(err));
 
         try {
           updateLastFlightCheck(db, tailNumber, false);

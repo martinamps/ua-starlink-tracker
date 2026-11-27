@@ -10,16 +10,27 @@
 import { OBSERVED_WIFI_SOURCES } from "../airlines/registry";
 import type { ScopedReader } from "../database/reader";
 import { inLookupWindow, unixNow } from "../database/sql/windows";
-import { COUNTERS, flightAirlineTag, metrics } from "../observability";
+import {
+  COUNTERS,
+  type LookupCaller,
+  type LookupShedReason,
+  flightAirlineTag,
+  metrics,
+  normalizeLookupCaller,
+  normalizeLookupShedReason,
+} from "../observability";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
+import { isAirportCode, isRegistration, plainTypeName } from "../utils/outside-text";
 import { memoPromise } from "../utils/ttl-cache";
 import {
   FR24_QUEUE_SHED_MESSAGE,
   FlightRadar24API,
+  type FlightRoute,
   Fr24UnavailableError,
   MIN_REQUEST_INTERVAL,
 } from "./flightradar24-api";
+import { LookupBudget, currentLookupAsker, lookupAllowance } from "./lookup-budget";
 
 const fr24 = new FlightRadar24API();
 type Assignment = Awaited<ReturnType<FlightRadar24API["getFlightAssignments"]>>;
@@ -29,14 +40,23 @@ type AssignmentFetcher = (flightNumber: string, targetDateUnix: number) => Promi
 // later, not after a 30s sleep the caller is stuck waiting on. Likewise no deep
 // queue: slots are 2s apart and the bucket admits a burst of 15, so uncapped the
 // last of a burst (plus any slots the background jobs hold) waits ~30s — past
-// the extension's 10s fetch timeout. One slot of wait is the floor, though:
-// below it any miss within 2s of another claim sheds, e.g. leg 2 of a connecting
-// itinerary the extension checks in parallel. 2s wait + 8s fetch fits in 10s.
-export const FR24_REQUEST_MAX_QUEUE_MS = MIN_REQUEST_INTERVAL;
+// the extension's 10s fetch timeout. Two slots of wait, because the extension
+// checks three cards at a time: the first goes now, the second waits 2s, the
+// third 4s. With one slot the third was shed (636 of 3,837 lookups, 18-24 Nov
+// 2026). The wait is longer; the slots stay 2s apart, so FR24 is asked no
+// more often.
+export const FR24_REQUEST_MAX_QUEUE_MS = 2 * MIN_REQUEST_INTERVAL;
+// Wait and fetch together end inside this, so the answer still beats the
+// extension's 10s timeout (FETCH_TIMEOUT_MS, chrome-extension/background.js)
+// with 1s left for the trip there and back: a lookup that waited the full 4s
+// has 5s to fetch (FR24 answers in 2.1s at p99), one that waited nothing
+// keeps the usual 8s. tests/flight-verdict-budget.test.ts pins the sum.
+export const FR24_REQUEST_DEADLINE_MS = 9000;
 const defaultFetcher: AssignmentFetcher = (flightNumber, targetDateUnix) =>
   fr24.getFlightAssignments(flightNumber, targetDateUnix, {
     maxRetries: 0,
     maxWaitMs: FR24_REQUEST_MAX_QUEUE_MS,
+    deadlineMs: FR24_REQUEST_DEADLINE_MS,
   });
 let fetchAssignments: AssignmentFetcher = defaultFetcher;
 
@@ -62,20 +82,45 @@ export const ASSIGNMENT_EMPTY_CACHE_MIN_LEAD = 6 * 3600;
 export function cachedFlightAssignments(
   flightNumber: string,
   targetDateUnix: number,
-  nowSec = unixNow()
+  nowSec = unixNow(),
+  callerOverride?: LookupCaller
 ): Promise<Assignment> {
   const key = `${flightNumber}:${Math.floor(targetDateUnix / 86400)}`;
   const now = nowSec;
   const cached = assignmentCache.get(key, now);
   if (cached) return cached;
 
+  // Joining a lookup already under way (above) costs a caller nothing; only a
+  // lookup of its own counts against its share.
+  const asker = currentLookupAsker();
+  const caller = callerOverride ?? asker?.caller ?? "other";
+  const shareKey = asker?.key ?? null;
+  if (shareKey !== null && !lookupBudget.take(shareKey, lookupAllowance(caller), now)) {
+    countShed(flightNumber, "budget", caller);
+    return Promise.reject(new Fr24UnavailableError("shed: budget"));
+  }
+  const settleShare = (asked: boolean) => {
+    if (shareKey !== null) lookupBudget.settle(shareKey, { asked });
+  };
+
   const shed = fr24RequestShedReason(now);
   if (shed) {
-    countShed(flightNumber, shed);
+    settleShare(false);
+    countShed(flightNumber, shed, caller);
     return Promise.reject(new Fr24UnavailableError(`shed: ${shed}`));
   }
 
-  const promise = fetchAssignments(flightNumber, targetDateUnix);
+  let promise: Promise<Assignment>;
+  try {
+    promise = fetchAssignments(flightNumber, targetDateUnix).then((raw) => {
+      const legs = readableLegs(raw);
+      fetchedAt.set(legs, now);
+      return legs;
+    });
+  } catch (err) {
+    settleShare(true);
+    throw err;
+  }
   // A failure replays briefly instead of re-running the retry ladder per
   // request. A queue shed never reached FR24, so there is no outage to replay:
   // the next ask may find a free slot. An empty answer near departure is
@@ -92,15 +137,20 @@ export function cachedFlightAssignments(
     });
   promise.then(
     () => {
+      settleShare(true);
       countLookup();
       fr24ThrottleStreak = 0;
     },
     (err) => {
       if (isQueueShed(err)) {
+        settleShare(false);
         refundFr24Token();
-        countShed(flightNumber, "queue");
+        // Requests that joined this promise are not counted: one FR24 slot
+        // was refused, and the tag names who asked for it.
+        countShed(flightNumber, "queue", caller);
         return;
       }
+      settleShare(true);
       countLookup();
       if (isFr24Throttle(err)) openFr24Breaker(now);
       // Logged here — where the failure is PRODUCED — not in the consumer.
@@ -115,6 +165,65 @@ export function cachedFlightAssignments(
   return promise;
 }
 
+/** A leg that named an aircraft we could not read, kept by departure alone. */
+interface UnreadLeg {
+  origin: string;
+  departure_time: number;
+}
+const unreadLegs = new WeakMap<Assignment, UnreadLeg[]>();
+/** When each cached answer was asked for: what it says was true then, not when it is replayed. */
+const fetchedAt = new WeakMap<Assignment, number>();
+const unreadCounts = new WeakMap<FallbackSegment[], number>();
+
+const trimmed = (text: string | null | undefined): string | null =>
+  typeof text === "string" ? text.trim() : null;
+
+/**
+ * The lookup's strings are an outside service's text, and every reader of the
+ * cache prints some of them, so they are checked once here: trimmed, then a
+ * leg whose airports aren't shaped like airports is dropped, and a tail that
+ * isn't shaped like one is blanked. A leg that named an aircraft and lost it
+ * either way is remembered: the flight has an aircraft we know nothing about,
+ * which is not the same as no aircraft named yet.
+ */
+function readableLegs(raw: Assignment): Assignment {
+  const legs: Assignment = [];
+  const unread: UnreadLeg[] = [];
+  for (const a of raw) {
+    const tail = trimmed(a.tail_number);
+    const origin = trimmed(a.origin);
+    const destination = trimmed(a.destination);
+    const route = isAirportCode(origin) && isAirportCode(destination);
+    const named = isRegistration(tail);
+    if (tail && !(named && route)) {
+      unread.push({
+        origin: isAirportCode(origin) ? origin : "",
+        departure_time: a.departure_time,
+      });
+    }
+    if (!route) continue;
+    legs.push({
+      ...a,
+      origin,
+      destination,
+      tail_number: named ? tail : null,
+      aircraft_model: trimmed(a.aircraft_model),
+    });
+  }
+  unreadLegs.set(legs, unread);
+  return legs;
+}
+
+/**
+ * How many aircraft the lookup named for that date and we could not read: a
+ * tail or airport that failed its shape check, or a type name that did on a
+ * tail whose type we don't hold ourselves. Callers must not answer such a
+ * flight as if its aircraft were the one its number usually means.
+ */
+export function unreadAircraft(segments: FallbackSegment[] | null | undefined): number {
+  return (segments && unreadCounts.get(segments)) || 0;
+}
+
 // Request-path FR24 guards, separate from the background updater's own
 // breaker. Scripted enumeration (173 sequential flight numbers in 30 min on
 // 2026-09-06) got FR24 throttling the shared session and stalled the updater;
@@ -127,13 +236,20 @@ let fr24Tokens = FR24_REQUEST_BUCKET_PER_MIN;
 let fr24TokensAt = 0;
 let fr24ThrottledUntil = 0;
 let fr24ThrottleStreak = 0;
+const lookupBudget = new LookupBudget();
 
-function countShed(flightNumber: string, reason: "breaker" | "bucket" | "queue"): void {
+function countShed(
+  flightNumber: string,
+  reason: LookupShedReason,
+  caller: LookupCaller,
+  type: "assignments" | "routes" = "assignments"
+): void {
   metrics.increment(COUNTERS.VENDOR_REQUEST, {
     vendor: "fr24",
-    type: "assignments",
+    type,
     status: "shed",
-    reason,
+    reason: normalizeLookupShedReason(reason),
+    caller: normalizeLookupCaller(caller),
     airline: flightAirlineTag(flightNumber),
   });
 }
@@ -143,6 +259,7 @@ function resetFr24RequestGuards(): void {
   fr24TokensAt = 0;
   fr24ThrottledUntil = 0;
   fr24ThrottleStreak = 0;
+  lookupBudget.clear();
 }
 
 function fr24RequestShedReason(nowSec: number): "breaker" | "bucket" | null {
@@ -152,7 +269,9 @@ function fr24RequestShedReason(nowSec: number): "breaker" | "bucket" | null {
     FR24_REQUEST_BUCKET_PER_MIN,
     fr24Tokens + (elapsed * FR24_REQUEST_BUCKET_PER_MIN) / 60
   );
-  fr24TokensAt = nowSec;
+  // Never backwards: a caller holding an older reading (one that awaited a
+  // lookup first) would otherwise hand the next caller the same refill twice.
+  fr24TokensAt = Math.max(fr24TokensAt, nowSec);
   if (fr24Tokens < 1) return "bucket";
   fr24Tokens -= 1;
   return null;
@@ -184,6 +303,93 @@ function openFr24Breaker(nowSec: number): void {
   warn(`FR24 throttled the request path; shedding live lookups for ${backoff / 60} min`);
 }
 
+type RouteFetcher = (flightNumber: string, targetDateUnix?: number) => Promise<FlightRoute[]>;
+const defaultRouteFetcher: RouteFetcher = (flightNumber, targetDateUnix) =>
+  fr24.getFlightRoutes(flightNumber, targetDateUnix, {
+    maxWaitMs: FR24_REQUEST_MAX_QUEUE_MS,
+    deadlineMs: FR24_REQUEST_DEADLINE_MS,
+  });
+let fetchRoutes: RouteFetcher = defaultRouteFetcher;
+
+/** Test seam; null restores the default. Resets the shared guards like setAssignmentFetcher. */
+export function setRouteFetcher(fetcher: RouteFetcher | null): void {
+  fetchRoutes = fetcher ?? defaultRouteFetcher;
+  resetFr24RequestGuards();
+}
+
+/**
+ * The route lookup's airports are the same outside text as the tail lookup's,
+ * printed in MCP's table of other flights and stored in flight_routes, so they
+ * get readableLegs' check: trimmed, and a route without two airport codes
+ * dropped. Trimming can make two routes one; the first, the earliest, stays.
+ */
+function readableRoutes(raw: FlightRoute[]): FlightRoute[] {
+  const seen = new Set<string>();
+  const out: FlightRoute[] = [];
+  for (const r of raw) {
+    const origin = trimmed(r.origin);
+    const destination = trimmed(r.destination);
+    if (!isAirportCode(origin) || !isAirportCode(destination)) continue;
+    const key = `${origin}-${destination}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...r, origin, destination });
+  }
+  return out;
+}
+
+/**
+ * MCP's route lookup by flight number, behind the same request-path guards as
+ * the tail lookup: the caller's own share, the shared bucket, the breaker and
+ * a bounded queue wait. It once called FR24 with none of them, so a tool
+ * walking flight numbers reached the vendor past every limit the tail lookup
+ * keeps. null = a guard said no and FR24 was not asked; the caller answers
+ * from stored routes. An FR24 failure is [] (asked, nothing usable).
+ */
+export async function guardedFlightRoutes(
+  flightNumber: string,
+  targetDateUnix: number | undefined,
+  nowSec = unixNow()
+): Promise<FlightRoute[] | null> {
+  const asker = currentLookupAsker();
+  const caller = asker?.caller ?? "other";
+  const shareKey = asker?.key ?? null;
+  if (shareKey !== null && !lookupBudget.take(shareKey, lookupAllowance(caller), nowSec)) {
+    countShed(flightNumber, "budget", caller, "routes");
+    return null;
+  }
+  const settleShare = (asked: boolean) => {
+    if (shareKey !== null) lookupBudget.settle(shareKey, { asked });
+  };
+
+  const shed = fr24RequestShedReason(nowSec);
+  if (shed) {
+    settleShare(false);
+    countShed(flightNumber, shed, caller, "routes");
+    return null;
+  }
+
+  try {
+    const routes = readableRoutes(await fetchRoutes(flightNumber, targetDateUnix));
+    settleShare(true);
+    fr24ThrottleStreak = 0;
+    return routes;
+  } catch (err) {
+    if (isQueueShed(err)) {
+      settleShare(false);
+      refundFr24Token();
+      countShed(flightNumber, "queue", caller, "routes");
+      return null;
+    }
+    settleShare(true);
+    // Read after the fetch: the breaker runs from when FR24 refused, not from
+    // when the lookup began up to a deadline earlier.
+    if (isFr24Throttle(err)) openFr24Breaker(unixNow());
+    warn(`FR24 route lookup failed for ${flightNumber}; answering from stored routes`, err);
+    return [];
+  }
+}
+
 export type SegmentConfidence = "verified" | "spreadsheet" | "disputed" | "negative" | "unknown";
 
 export interface FallbackSegment {
@@ -199,6 +405,8 @@ export interface FallbackSegment {
   verified_at?: number | null;
   operated_by?: string | null;
   fleet_type?: string | null;
+  /** A first-read count that waits for its next read (database/first-read.ts). */
+  first_read_at?: number | null;
 }
 
 /**
@@ -207,10 +415,13 @@ export interface FallbackSegment {
  * hitting FR24.
  */
 export function resolveTailVerdict(
-  reader: ScopedReader,
+  scope: ScopedReader,
   tail: string,
   nowSec = unixNow()
 ): TailVerdict {
+  // The tail was found on one of the scope's flights, so it may be an
+  // operating partner's: a listed Hawaiian A330 on an Alaska number.
+  const reader = scope.assignedTails;
   const sp = reader.getStarlinkPlaneByTail(tail);
 
   if (sp) {
@@ -236,7 +447,12 @@ export function resolveTailVerdict(
     if (uf?.starlink_status === "negative") {
       return negativeTailVerdict(reader, tail, uf, nowSec, "disputed", base);
     }
-    return { hasStarlink: true, confidence: "spreadsheet", ...base };
+    return {
+      hasStarlink: true,
+      confidence: "spreadsheet",
+      first_read_at: uf?.first_read_counted_at ?? null,
+      ...base,
+    };
   }
 
   const uf = reader.getFleetEntryByTail(tail);
@@ -266,11 +482,12 @@ interface TailVerdict {
   fleet_type?: string | null;
   verified_wifi?: string | null;
   verified_at?: number | null;
+  first_read_at?: number | null;
 }
 
 /** Shared united_fleet-negative verdict: re-queue stale settles for discovery. */
 function negativeTailVerdict(
-  reader: ScopedReader,
+  reader: ScopedReader["assignedTails"],
   tail: string,
   uf: { verified_wifi: string | null; verified_at: number | null },
   nowSec: number,
@@ -304,25 +521,40 @@ export async function lookupFlightTailVerdict(
   date: string,
   startOfDay: number,
   endOfDay: number,
-  nowSec = unixNow()
+  nowSec = unixNow(),
+  caller?: LookupCaller
 ): Promise<FallbackSegment[] | null> {
   if (!inLookupWindow(startOfDay, endOfDay, nowSec)) return null;
 
   const assignments = await cachedFlightAssignments(
     normalizedFlightNumber,
     startOfDay + 43200,
-    nowSec
+    nowSec,
+    caller
   );
   const segments: FallbackSegment[] = [];
+  const onDate = (a: UnreadLeg) =>
+    matchesLocalDate(date, a.origin, a.departure_time, startOfDay, endOfDay);
+  let unread = (unreadLegs.get(assignments) ?? []).filter(onDate).length;
+  const untyped = new Set<Assignment[number]>();
 
   for (const a of assignments) {
-    if (!a.tail_number) continue;
-    if (!matchesLocalDate(date, a.origin, a.departure_time, startOfDay, endOfDay)) continue;
+    // readableLegs has checked the airports, and blanked a tail that isn't one.
+    if (!a.tail_number || !onDate(a)) continue;
 
     const v = resolveTailVerdict(reader, a.tail_number, nowSec);
+    const aircraftModel = v.aircraft_model || plainTypeName(a.aircraft_model);
+    // The type name was there and unprintable. Our own fleet list's type
+    // for the tail stands in for it downstream; with neither, the aircraft
+    // is one we can't place.
+    const ownType = () => reader.assignedTails.getFleetEntryByTail(a.tail_number ?? "");
+    if (!aircraftModel && a.aircraft_model && !ownType()?.aircraft_type) {
+      unread++;
+      untyped.add(a);
+    }
     segments.push({
       tail_number: a.tail_number,
-      aircraft_model: v.aircraft_model || a.aircraft_model,
+      aircraft_model: aircraftModel,
       origin: a.origin,
       destination: a.destination,
       departure_time: a.departure_time,
@@ -333,9 +565,33 @@ export async function lookupFlightTailVerdict(
       verified_at: v.verified_at,
       operated_by: v.operated_by,
       fleet_type: v.fleet_type,
+      ...(v.first_read_at ? { first_read_at: v.first_read_at } : {}),
     });
   }
 
-  if (segments.length > 0) reader.logResolvedAssignments(normalizedFlightNumber, segments, nowSec);
+  // The log goes by when the lookup was fetched: replayed from the cache, it
+  // must not outrank what a newer lookup of another date has since logged.
+  const asOf = fetchedAt.get(assignments) ?? nowSec;
+  // Before the log: a tail the lookup still names is seen again just below.
+  reader.withdrawUnreturnedSightings(
+    normalizedFlightNumber,
+    [
+      ...assignments,
+      ...(unreadLegs.get(assignments) ?? []).map((u) => ({ ...u, tail_number: null })),
+    ],
+    asOf
+  );
+  reader.noteUnreadAircraft(
+    normalizedFlightNumber,
+    [
+      // An untyped leg is marked too: the stored answers (predict, the hub)
+      // would otherwise read its logged tail as the band's own aircraft.
+      ...assignments.map((a) => ({ ...a, unread: untyped.has(a) })),
+      ...(unreadLegs.get(assignments) ?? []).map((u) => ({ ...u, unread: true })),
+    ],
+    asOf
+  );
+  if (segments.length > 0) reader.logResolvedAssignments(normalizedFlightNumber, segments, asOf);
+  unreadCounts.set(segments, unread);
   return segments;
 }

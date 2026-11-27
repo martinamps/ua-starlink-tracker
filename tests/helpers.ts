@@ -7,7 +7,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { AIRPORT_INDEX_MIN_DEPARTURES } from "../src/api/airport-board";
 import { handleMcpRequest } from "../src/api/mcp-server";
+import { logFlightAssignments } from "../src/database/assignment-log";
 import { migrate, setupTables } from "../src/database/database";
 import type { Scope, ScopedReader } from "../src/database/reader";
 import type { predictFlight } from "../src/scripts/starlink-predictor";
@@ -59,6 +61,21 @@ export function makeFreshDb(): Database {
   return db;
 }
 
+/**
+ * A migrated database in a file, for a test that closes and reopens it.
+ * Building the schema on a new file commits each of its ~390 statements by
+ * itself, and every commit is an fsync: on a CI runner's disk they averaged
+ * ~13 ms in one run, so a first migrate alone could pass a test's 5 s.
+ * A reopen in the same process reads the OS page cache, not the platter, so
+ * syncing proves nothing here.
+ */
+export function openFileDb(path: string): Database {
+  const db = new Database(path);
+  db.exec("PRAGMA synchronous = OFF");
+  migrate(db);
+  return db;
+}
+
 /** The HTML from `heading` up to the next <h2>. Throws when the heading is
  * absent, so an assertion on the section can never pass on a missing one. */
 export function sectionOf(html: string, heading: string): string {
@@ -66,6 +83,22 @@ export function sectionOf(html: string, heading: string): string {
   if (start < 0) throw new Error(`no section headed "${heading}"`);
   const next = html.indexOf("<h2", start + heading.length);
   return html.slice(start, next < 0 ? undefined : next);
+}
+
+/**
+ * A rendered page as its reader sees the text: entities decoded and the
+ * no-break spaces that tie a code to its city made plain. Compare a heading
+ * against this, never against the raw body: React escapes an apostrophe, so
+ * "N'Djamena" or "O'Hare" in a heading would fail a raw comparison.
+ */
+export function readableText(html: string): string {
+  return html
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/\u00a0/g, " ");
 }
 
 /** The attributes of the first element carrying `id`, entity-decoded. */
@@ -263,6 +296,42 @@ export function addFlight(
   );
 }
 
+/**
+ * Enough Starlink departures flown from `origin` in the history span for its
+ * airport page to index (and so be linked): `tail` must be a Starlink plane.
+ * Spread over two to five days back, so no local "today" count moves.
+ */
+export function addIndexingHistory(
+  db: Database,
+  tail: string,
+  origin: string,
+  destination: string,
+  now: number,
+  airline = "UA"
+): void {
+  for (let i = 0; i < AIRPORT_INDEX_MIN_DEPARTURES; i++) {
+    const departure_time = now - (2 + (i % 4)) * 86400 + i * 600;
+    logFlightAssignments(
+      db,
+      airline,
+      tail,
+      [
+        {
+          flight_number: `${airline}${7000 + i}`,
+          departure_airport: origin,
+          arrival_airport: destination,
+          departure_time,
+          arrival_time: departure_time + 2 * 3600,
+        },
+      ],
+      now
+    );
+    db.query(
+      "INSERT INTO departure_log (tail_number, airport, departed_at, airline) VALUES (?, ?, ?, ?)"
+    ).run(tail, origin, departure_time, airline);
+  }
+}
+
 export function addQatarRow(
   db: Database,
   flightNumber: string,
@@ -279,7 +348,9 @@ export function addQatarRow(
     departureAirport = "DOH",
     arrivalAirport = "LHR",
     flightStatus = "Scheduled",
-    equipmentCode = "77W",
+    // A fully fitted type: the 777-300ER and 787-8 have held-back aircraft,
+    // so their answers are odds, not the plain yes these fixtures stand for.
+    equipmentCode = "359",
   } = opts;
   db.query(
     `INSERT INTO qatar_schedule (flight_number, scheduled_date, departure_airport, arrival_airport, departure_time, arrival_time, equipment_code, wifi_verdict, flight_status, last_updated)

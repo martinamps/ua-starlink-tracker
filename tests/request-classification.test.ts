@@ -8,8 +8,10 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  classifyLookupCaller,
   classifyMcpClient,
   classifyRequest,
+  classifyUserAgent,
   metrics,
   normalizeExtVersion,
   requestClientTags,
@@ -21,6 +23,9 @@ import { openSnapshot, req } from "./helpers";
 const UA_HOST = "unitedstarlinktracker.com";
 const OWN_ORIGIN = "chrome-extension://jjfljoifenkfdbldliakmmjhdkbhehoi";
 const CHROME_UA = "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/128 Safari/537.36";
+// The agent the post-deploy live check sends (kept beside the check, outside this repo).
+const LIVE_CHECK_UA =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36 ua-starlink-live-check/2 (bot)";
 
 const app = createApp(openSnapshot());
 
@@ -141,6 +146,8 @@ describe("classifyMcpClient", () => {
       ["claude-code/2.1.278 (cli)", "claude"],
       ["Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Claude/2.9939.4 Chrome/152.0", "claude"],
       ["openai-mcp/1.0.0 (Codex)", "chatgpt"],
+      ["codex-mcp-client/0.63.0 (Mac OS 15.6.1; arm64) iTerm.app/3.6.6", "chatgpt"],
+      ["codex-mcp-client/0.58.0", "chatgpt"],
       ["Cursor/3.21.18 (darwin arm64)", "cursor"],
       ["AgentIndexBot/0.1 (+https://agents.traderszone.net)", "bot"],
       ["node", "other"],
@@ -287,5 +294,70 @@ describe("verified search crawlers and the page limit", () => {
     expect((await flood("/badge.svg", "66.249.66.1", CHROME_UA))[API_RATE_LIMIT]).toBe(429);
     const api = await flood("/api/check-flight", "66.249.66.1", GOOGLEBOT_UA);
     expect(api[API_RATE_LIMIT]).toBe(429);
+  });
+});
+
+describe("the team's own live check", () => {
+  test("is a bot, in page and MCP metrics alike, never a browser or an outside client", () => {
+    for (const ua of [LIVE_CHECK_UA, `${CHROME_UA} ua-starlink-live-check`]) {
+      expect(classifyUserAgent(ua), ua).toBe("bot");
+      expect(classifyMcpClient(ua), ua).toBe("bot");
+    }
+    expect(classifyUserAgent(CHROME_UA)).toBe("browser");
+    expect(classifyMcpClient(`${CHROME_UA} ua-starlink-live-checker`)).toBe("other");
+  });
+
+  test("the name buys no budget: its lookups share the same allowance as anyone's", () => {
+    const url = new URL(`https://${UA_HOST}/api/check-flight?flight_number=UA1`);
+    const caller = classifyLookupCaller(
+      new Request(url, { headers: { "User-Agent": LIVE_CHECK_UA } }),
+      url
+    );
+    expect(caller).toBe("other");
+  });
+
+  test("it is metered like any API caller", async () => {
+    const limited = createApp(openSnapshot());
+    const statuses: number[] = [];
+    for (let i = 0; i <= API_RATE_LIMIT; i++) {
+      const res = await limited.dispatch(
+        req("/api/check-flight", UA_HOST, {
+          headers: { "User-Agent": LIVE_CHECK_UA, "cf-connecting-ip": "203.0.113.30" },
+        })
+      );
+      statuses.push(res.status);
+    }
+    expect(statuses[API_RATE_LIMIT]).toBe(429);
+  });
+
+  test("its pages answer as they do for a browser", async () => {
+    for (const path of ["/", "/fleet", "/check-flight", "/route-planner", "/methodology"]) {
+      const asBrowser = await app.dispatch(
+        req(path, UA_HOST, { headers: { "User-Agent": CHROME_UA } })
+      );
+      const asCheck = await app.dispatch(
+        req(path, UA_HOST, { headers: { "User-Agent": LIVE_CHECK_UA } })
+      );
+      expect(asCheck.status, path).toBe(asBrowser.status);
+      expect(asCheck.headers.get("content-type"), path).toBe(asBrowser.headers.get("content-type"));
+    }
+  });
+
+  test("its tool calls are tagged bot", async () => {
+    const calls = captureIncrements();
+    await app.dispatch(
+      req("/mcp", UA_HOST, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": LIVE_CHECK_UA },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "get_fleet_stats", arguments: {} },
+        }),
+      })
+    );
+    const tool = calls.filter((c) => c.name === "mcp.tool_call");
+    expect(tool[0].tags.client_class).toBe("bot");
   });
 });

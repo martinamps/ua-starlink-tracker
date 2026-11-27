@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { FleetPageData } from "../../types";
 import { Sparkline } from "../charts/sparkline";
 import { Eyebrow, Panel, Section, StatValue } from "../layout";
@@ -12,16 +13,16 @@ export function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
   return (
     <Section bare wide className="text-center">
       <Panel className="glow-accent">
-        <Eyebrow>In the air now</Eyebrow>
+        <Eyebrow>In the air now</Eyebrow>{" "}
         <div className="flex items-baseline justify-center gap-3 mb-1">
           {pulse.now > 0 && <span className="status-dot animate-pulse-glow" />}
           <StatValue size="xl" accent>
             {haveData ? fmt(pulse.now) : "—"}
           </StatValue>
-        </div>
+        </div>{" "}
         <p className="text-sm text-secondary mb-4">
           {haveData ? "Starlink aircraft" : "No flight data right now"}
-        </p>
+        </p>{" "}
         {haveData && pulse.peak > 0 ? (
           <Sparkline
             values={pulse.sparkline}
@@ -31,7 +32,7 @@ export function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
           />
         ) : (
           <div className="h-16" />
-        )}
+        )}{" "}
         {haveData && (
           <p className="text-xs text-muted mt-2 tabular-nums">
             Next 3 days: peak {fmt(pulse.peak)}, low {fmt(pulse.trough)} in the air at once.
@@ -47,8 +48,9 @@ export function InstallPaceSection({
   projectionHref,
 }: {
   pace: FleetPageData["installPace"];
-  /** /install-rate when this host serves it. Its 3-month whole-fleet pace is
-   * the site's one projection, so this page links there instead of making its own. */
+  /** /install-rate when this host serves it: the monthly pace against the
+   * airline's stated targets. The link promises no more than that page gives,
+   * and that page states no finish date of ours. */
   projectionHref?: string | null;
 }) {
   if (!pace || pace.weeks.length === 0) return null;
@@ -77,27 +79,28 @@ export function InstallPaceSection({
           .join(", ")}
       >
         {pace.weeks.map((w) => (
-          <div key={w.weekStart} className="flex-1 flex flex-col items-center gap-1">
-            <span className="text-xs text-secondary tabular-nums">
-              {w.installs > 0 ? fmt(w.installs) : ""}
-            </span>
-            <div
-              className={`w-full bg-[var(--color-accent)] rounded-t ${
-                w === current ? "opacity-40" : "opacity-80"
-              }`}
-              style={{ height: `${(w.installs / peak) * 80}px` }}
-            />
-          </div>
+          <Fragment key={w.weekStart}>
+            <div className="flex-1 flex flex-col items-center gap-1">
+              <span className="text-xs text-secondary tabular-nums">
+                {w.installs > 0 ? fmt(w.installs) : ""}
+              </span>{" "}
+              <div
+                className={`w-full bg-[var(--color-accent)] rounded-t ${
+                  w === current ? "opacity-40" : "opacity-80"
+                }`}
+                style={{ height: `${(w.installs / peak) * 80}px` }}
+              />
+            </div>{" "}
+          </Fragment>
         ))}
-      </div>
+      </div>{" "}
       <div className="flex justify-between text-xs text-muted mt-1">
-        <span>Week of {monthDay(first.weekStart)}</span>
-        <span>This week so far</span>
-      </div>
+        <span>Week of {monthDay(first.weekStart)}</span> <span>This week so far</span>
+      </div>{" "}
       {projectionHref && (
         <p className="text-sm text-secondary mt-4 text-pretty">
           <a href={projectionHref} className="text-accent hover:underline">
-            Monthly pace and projected finish against stated targets →
+            Monthly pace against stated targets →
           </a>
         </p>
       )}

@@ -26,7 +26,12 @@
 
 import { Database } from "bun:sqlite";
 import { aircraftName, normalizeAircraftType } from "../airlines/aircraft-families";
-import { ensureAirlinePrefix, inferSubfleet } from "../airlines/flight-number";
+import {
+  buildAirlineFlightNumberVariants,
+  ensureAirlinePrefix,
+  inferSubfleet,
+  slotFlightKey,
+} from "../airlines/flight-number";
 import {
   AIRLINES,
   type AirlineConfig,
@@ -43,8 +48,16 @@ import {
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import { formatFactDate } from "../airlines/rollout-facts";
-import { bandLabel } from "../components/ui/format";
+import { type StatementAnswer, statementAnswer } from "../airlines/statement-rule";
+import {
+  bandLabel,
+  capitalize,
+  zonedClock,
+  zonedMinutes,
+  zonedWeekday,
+} from "../components/ui/format";
 import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
+import type { AirlineTypeCount } from "../database/airline-count";
 import type {
   FleetRosterEntry,
   GuideMark,
@@ -55,7 +68,14 @@ import type {
 import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
 import type { RouteFlightLeg } from "../database/route-flights";
 import { airportDistanceMiles, detourBoundMiles, hubAllowedForTrip } from "../utils/airport-geo";
-import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
+import {
+  airportTimezone,
+  flightDateWindow,
+  localDateISO,
+  matchesLocalDate,
+  zonedWallTimeSec,
+} from "../utils/airport-tz";
+import { plainTypeName } from "../utils/outside-text";
 import { memo, perOwner } from "../utils/ttl-cache";
 import {
   LEG_MIN_DRAWS,
@@ -1206,9 +1226,9 @@ const MIN_PENETRATION_TOTAL = 5;
  * number; otherwise subfleet penetration; otherwise an honest no-model.
  */
 export type CarrierPrediction =
-  | { kind: "penetration"; sf: SubfleetDef; pen: ResolvedPenetration }
+  | { kind: "penetration"; sf: SubfleetDef; pen: ResolvedPenetration; aircraft?: AircraftBasis }
   | { kind: "type_split"; groups: { phase: WifiPhase; families: string[] }[] }
-  | { kind: "no_model"; reason: string }
+  | { kind: "no_model"; reason: string; aircraft?: AircraftBasis }
   // Community-source carriers (AF). Per programme type, never one blended
   // number: a flight number doesn't pin the type, and the types run from
   // "not started" to nearly done.
@@ -1244,7 +1264,45 @@ export type CarrierPrediction =
       guideUpdated: string | null;
       guideStale: boolean;
     }
-  | { kind: "partner_operated"; tail: string };
+  | { kind: "partner_operated"; tail: string }
+  // An airline held by one dated statement of its own (cfg.statementRule):
+  // the airline's word for the route asked about, never a share or odds.
+  | { kind: "statement"; answer: StatementAnswer };
+
+/** One aircraft our own data puts on a flight. */
+export interface AircraftSighting {
+  tail: string;
+  aircraftType: string | null;
+  /** Listed as equipped: the flight updater logs these on its own, so a log
+   * holding them over-counts their type on the number. */
+  equipped: boolean;
+}
+
+/**
+ * Set on an answer the aircraft decided, where the flight number alone would
+ * have said something else: the band's fixed answer withdrawn, or one type's
+ * count in place of the band's blend.
+ */
+export interface AircraftBasis {
+  /** "scheduled": the aircraft on the asked date. "logged": every departure
+   * of the number the assignment log holds. */
+  basis: "scheduled" | "logged";
+  /** The one scheduled aircraft; null for a logged basis or several aircraft. */
+  tail: string | null;
+  aircraftType: string | null;
+  /** The answer in prose, without the probability lead. */
+  sentence: string;
+  /** The airline's own dated count the answer rests on, if any. */
+  count: QuotedCount | null;
+}
+
+/** A chart line as an answer quotes it: whose count, and of which aircraft. */
+export type QuotedCount = AirlineTypeCount & {
+  /** The airline's short name ("Alaska"). */
+  airline: string;
+  /** The type's short name ("787"). */
+  aircraft: string;
+};
 
 export function typeShare(t: Pick<TypeProgress, "equipped" | "total" | "excluded">): number {
   return t.excluded || t.total === 0 ? 0 : t.equipped / t.total;
@@ -1342,8 +1400,34 @@ export function carrierPrediction(
   cfg: AirlineConfig,
   reader: ScopedReader,
   flightNumber: string,
-  ctx: { aircraftType?: string | null; nowMs?: number } = {}
+  ctx: {
+    aircraftType?: string | null;
+    nowMs?: number;
+    /** The aircraft our data puts on the asked date; absent on an undated ask. */
+    scheduled?: readonly AircraftSighting[];
+    /** The lookup named an aircraft for the asked date that we could not read. */
+    unreadAircraft?: boolean;
+    /** The traveller's own airports and date, for an airline answered by its
+     * statement: only the route places such a flight. */
+    route?: { origin?: string; destination?: string };
+    date?: string;
+  } = {}
 ): CarrierPrediction {
+  // Reads nothing: no roster or schedule is held for such an airline.
+  if (cfg.statementRule) {
+    return {
+      kind: "statement",
+      answer: statementAnswer(
+        { name: cfg.name, iata: cfg.iata, statementRule: cfg.statementRule },
+        {
+          ...ctx.route,
+          aircraftType: ctx.aircraftType,
+          date: ctx.date,
+          today: new Date(ctx.nowMs ?? Date.now()).toISOString().slice(0, 10),
+        }
+      ),
+    };
+  }
   const noModel: CarrierPrediction = {
     kind: "no_model",
     reason: `No per-flight prediction model exists for ${cfg.name} — Starlink status is determined by aircraft type, not flight-number history. ${cfg.rollout.phaseNote}`,
@@ -1361,6 +1445,39 @@ export function carrierPrediction(
   if (groups) return { kind: "type_split", groups };
 
   const sf = cfg.subfleets.find((s) => s.match(flightNumber));
+  // An aircraft we could not read may be any type. A fixed band's answer
+  // presumes the band's own aircraft, so it is withdrawn; a blended band keeps
+  // its blend, un-narrowed by whatever else was read beside it.
+  if (sf?.families && ctx.unreadAircraft) {
+    if (sf.penetrationOverride != null) return unreadAircraftAnswer(flightNumber, sf);
+  } else if (sf?.families) {
+    // The aircraft on the asked date, where we know it, speaks for that date;
+    // the number's other departures speak only where we don't.
+    const unlisted = (ctx.scheduled ?? []).filter((a) => !a.equipped);
+    const scheduled = typedSightings(unlisted);
+    // A tail we read, don't hold as equipped and can't type is not known to
+    // be the band's aircraft, and a fixed band's answer presumes it is.
+    if (sf.penetrationOverride != null && scheduled.length < unlisted.length) {
+      const typed = new Set(scheduled.map((a) => a.tail));
+      return untypedAircraftAnswer(
+        flightNumber,
+        sf,
+        unlisted.filter((a) => !typed.has(a.tail)).map((a) => a.tail)
+      );
+    }
+    const byAircraft =
+      scheduled.length > 0
+        ? aircraftAnswer(cfg, reader, flightNumber, sf, "scheduled", scheduled)
+        : aircraftAnswer(
+            cfg,
+            reader,
+            flightNumber,
+            sf,
+            "logged",
+            typedSightings(loggedSightings(cfg, reader, flightNumber))
+          );
+    if (byAircraft) return byAircraft;
+  }
   const pen = sf ? subfleetPenetration(reader.getSubfleetPenetration(), sf) : null;
   if (sf && pen && (pen.synthetic || pen.total >= MIN_PENETRATION_TOTAL)) {
     return { kind: "penetration", sf, pen };
@@ -1368,8 +1485,301 @@ export function carrierPrediction(
   return noModel;
 }
 
-/** A named tail is a tail-level answer, not a per-type one. */
-export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" {
+/**
+ * For an answer made from the number alone (the predict surfaces, which ask
+ * no lookup): did the newest lookup of the flight leave an unread aircraft on
+ * `date`, or with no date on any departure still ahead. Local dates run up to
+ * a day behind UTC, so "still ahead" starts at yesterday's UTC date.
+ */
+export function storedUnreadAircraft(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  date: string | null,
+  nowMs = Date.now()
+): boolean {
+  const variants = buildAirlineFlightNumberVariants(cfg, flightNumber);
+  if (date) return reader.hasUnreadAircraft(variants, date);
+  const from = new Date(nowMs - 86_400_000).toISOString().slice(0, 10);
+  return reader.hasUnreadAircraft(variants, from, true);
+}
+
+function unreadAircraftAnswer(flightNumber: string, sf: SubfleetDef): CarrierPrediction {
+  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  const sentence = joinSentences(
+    `An aircraft is scheduled on ${flightNumber}, but we could not read which one`,
+    `Its number${hint} usually means ${bandLabel(sf.label)} aircraft, and we can't confirm this is one`,
+    "Starlink depends on which aircraft flies yours"
+  );
+  return {
+    kind: "no_model",
+    reason: sentence,
+    aircraft: { basis: "scheduled", tail: null, aircraftType: null, sentence, count: null },
+  };
+}
+
+function untypedAircraftAnswer(
+  flightNumber: string,
+  sf: SubfleetDef,
+  tails: readonly string[]
+): CarrierPrediction {
+  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  const one = tails.length === 1;
+  const sentence = joinSentences(
+    `${flightNumber} is scheduled on ${tails.join(" and ")}, ${one ? "an aircraft" : "aircraft"} we don't hold as having Starlink and whose type we don't know`,
+    `Its number${hint} usually means ${bandLabel(sf.label)} aircraft, and we can't confirm ${one ? "this is one" : "these are"}`,
+    "Starlink depends on which aircraft flies yours"
+  );
+  return {
+    kind: "no_model",
+    reason: sentence,
+    aircraft: {
+      basis: "scheduled",
+      tail: one ? tails[0] : null,
+      aircraftType: null,
+      sentence,
+      count: null,
+    },
+  };
+}
+
+function loggedSightings(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string
+): AircraftSighting[] {
+  return reader
+    .getLoggedAircraft(buildAirlineFlightNumberVariants(cfg, flightNumber))
+    .map((r) => ({ tail: r.tail_number, aircraftType: r.aircraft_type, equipped: r.equipped }));
+}
+
+type TypedSighting = AircraftSighting & { family: string };
+
+/** A type string the normalizer can't place says nothing about the aircraft. */
+function typedSightings(sightings: readonly AircraftSighting[]): TypedSighting[] {
+  return sightings
+    .map((a) => ({ ...a, family: normalizeAircraftType(a.aircraftType) }))
+    .filter((a) => a.family !== "unknown" && a.family !== "other");
+}
+
+// The log holds departures still to come beside flown ones, and only some of
+// its tails have a type we know; the wording claims neither more.
+const KNOWN_DEPARTURES = "departures whose aircraft type we know";
+
+// One logged departure on a type is a swap as easily as a habit.
+const MIN_LOGGED_FOR_TYPE = 2;
+
+const article = (label: string) => (/^[AE]/.test(label) ? "an" : "a");
+
+function chartCountClause(cfg: AirlineConfig, c: AirlineTypeCount): string {
+  const name = plural(aircraftName(c.family));
+  const share =
+    c.connected <= 0
+      ? `none of its ${c.total} ${name}`
+      : c.connected >= c.total
+        ? `all ${c.total} of its ${name}`
+        : `${c.connected} of its ${c.total} ${name}`;
+  return `${cfg.shortName}'s own chart (${formatFactDate(c.asOf)}) counts ${share} as connected`;
+}
+
+/** The tails we name beside the chart's line, or null when we name none.
+ * The chart can trail our list, so "of them" is said only when it doesn't. */
+function namedClause(c: AirlineTypeCount, tail: string | null): string | null {
+  if (c.named <= 0) return null;
+  const name = plural(aircraftName(c.family));
+  const said =
+    c.named > c.connected
+      ? `We name ${c.named} ${name} by tail, more than that chart counts`
+      : `We name ${c.named} of them by tail`;
+  return tail ? `${said}, and ${tail}` : said;
+}
+
+/** "not the Hawaiian-operated A330/A321neo aircraft its number (AS800-999) usually means". */
+function overruledClause(sf: SubfleetDef): string {
+  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  return `not the ${bandLabel(sf.label)} aircraft its number${hint} usually means`;
+}
+
+/**
+ * The answer for a flight whose aircraft we know, or null where the flight
+ * number's own answer stands: no usable sighting, or every aircraft is one of
+ * the band's types and no single type's count applies.
+ *
+ * The aircraft can withdraw a band's fixed answer and can narrow a blended
+ * band to one type's count. It never grants a fixed yes the number did not
+ * already give: a tail is a yes only by being listed, which is settled before
+ * this is reached.
+ */
+function aircraftAnswer(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  sf: SubfleetDef,
+  basis: AircraftBasis["basis"],
+  typed: readonly TypedSighting[]
+): CarrierPrediction | null {
+  if (typed.length === 0) return null;
+  const inBand = (family: string) => sf.families?.includes(family) ?? false;
+  const fixed = sf.penetrationOverride != null;
+  const strays = typed.filter((a) => !inBand(a.family));
+  if (fixed ? strays.length === 0 : strays.length > 0) return null;
+
+  const flown = (family: string) => typed.filter((a) => a.family === family).length;
+  const families = [...new Set(typed.map((a) => a.family))].sort((a, b) => flown(b) - flown(a));
+  const label = (family: string) =>
+    aircraftName(typed.find((a) => a.family === family)?.aircraftType ?? family);
+  const scheduled = basis === "scheduled";
+  const one = typed.length === 1 && scheduled ? typed[0] : null;
+  if (!fixed && families.length > 1) return null;
+  const base = {
+    basis,
+    tail: one?.tail ?? null,
+    aircraftType: plainTypeName(one?.aircraftType),
+  };
+
+  if (families.length > 1) {
+    const tails = (f: string) => typed.filter((a) => a.family === f).map((a) => a.tail);
+    const parts = families.map((f) =>
+      scheduled ? `${tails(f).join(", ")} (${label(f)})` : `the ${label(f)} on ${flown(f)}`
+    );
+    const notes = families.flatMap((f) => familyClause(cfg, reader, f) ?? []);
+    const sentence = joinSentences(
+      scheduled
+        ? `${flightNumber} is scheduled on more than one aircraft type: ${parts.join(" and ")}`
+        : `${flightNumber} is on more than one aircraft type across the ${typed.length} ${KNOWN_DEPARTURES}: ${parts.join(" and ")}`,
+      ...notes.map(capitalize),
+      "Starlink depends on which aircraft flies yours"
+    );
+    return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count: null } };
+  }
+
+  const family = families[0];
+  const home = cfg.subfleets.find(
+    (s) => s.penetrationOverride == null && s.families?.includes(family)
+  );
+  const aLabel = `${article(label(family))} ${label(family)}`;
+  const who = one
+    ? `scheduled on ${one.tail}, ${aLabel}`
+    : scheduled
+      ? `scheduled on ${typed.map((a) => a.tail).join(" and ")}, each ${aLabel}`
+      : typed.length === 1
+        ? `${aLabel} is on the one departure whose aircraft type we know`
+        : `the ${label(family)} is on ${typed.length === 2 ? "both" : `all ${typed.length}`} ${KNOWN_DEPARTURES}`;
+  const subject = strays.length > 0 ? `${who}, ${overruledClause(sf)}` : who;
+
+  // A band of mixed types: the log can only narrow it on departures nobody
+  // tracked for having Starlink, and on more than one of them.
+  if (!fixed && !scheduled) {
+    if (typed.length < MIN_LOGGED_FOR_TYPE || typed.some((a) => a.equipped)) return null;
+  }
+
+  const line = home ? reader.getAirlineTypeCount(family) : null;
+  const count: QuotedCount | null = line
+    ? { ...line, airline: cfg.shortName, aircraft: aircraftName(family) }
+    : null;
+  if (home && count) {
+    const chart = chartCountClause(cfg, count);
+    // The log leans toward the tails we name: the flight updater logs those on
+    // its own, other tails only when someone looked the flight up. For a type
+    // we name tails of, the answer turns on which tail flies, and the log
+    // can't say how often a named one does. So no share is drawn from it: a
+    // blended band keeps its own answer, a fixed band keeps no number.
+    // A line the chart marks complete leaves nothing to depend on which tail
+    // flies: it falls through to the complete-line answer below.
+    if (!scheduled && count.named > 0 && !(fixed && count.connected >= count.total)) {
+      if (!fixed) return null;
+      const sentence = joinSentences(
+        capitalize(subject),
+        chart,
+        namedClause(count, null),
+        "Starlink depends on which aircraft flies yours"
+      );
+      return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count } };
+    }
+    // A chart is the airline's count, never our yes for a flight: a line it
+    // marks complete is quoted under its name and date, with no number a
+    // client could badge.
+    if (count.connected >= count.total) {
+      const sentence = joinSentences(
+        capitalize(subject),
+        chart,
+        `That is ${cfg.shortName}'s count, not ours: we have not confirmed ${one ? `${one.tail} ourselves` : "these aircraft tail by tail"}`
+      );
+      return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count } };
+    }
+    // An aircraft we don't name can only be among the connected aircraft the
+    // chart counts beyond the ones we do.
+    const unnamed = count.total - count.named;
+    const pct = unnamed > 0 ? Math.max(0, count.connected - count.named) / unnamed : 0;
+    const named = scheduled
+      ? namedClause(count, one ? `${one.tail} is not one` : "these are not among them")
+      : null;
+    const sentence = joinSentences(capitalize(subject), chart, named);
+    return {
+      kind: "penetration",
+      sf: home,
+      pen: { synthetic: false, equipped: count.connected, total: count.total, pct },
+      aircraft: { ...base, sentence, count },
+    };
+  }
+  if (!fixed) return null;
+
+  // No chart to quote, but the reason the log draws no share still holds for
+  // a type we name tails of: the answer turns on which tail flies, so the
+  // home band's blend would say more than we know.
+  const named = home && !scheduled ? reader.getNamedOfType(family) : 0;
+  if (named > 0) {
+    const sentence = joinSentences(
+      capitalize(subject),
+      `We name ${named} ${plural(aircraftName(family))} by tail`,
+      "Starlink depends on which aircraft flies yours"
+    );
+    return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count: null } };
+  }
+
+  const pen = home ? subfleetPenetration(reader.getSubfleetPenetration(), home) : null;
+  if (home && pen && !pen.synthetic && pen.total >= MIN_PENETRATION_TOTAL) {
+    const sentence = joinSentences(
+      capitalize(subject),
+      `${pen.equipped} of ${pen.total} ${bandLabel(home.label)} aircraft have Starlink`
+    );
+    return { kind: "penetration", sf: home, pen, aircraft: { ...base, sentence, count: null } };
+  }
+  const sentence = joinSentences(
+    capitalize(subject),
+    capitalize(familyClause(cfg, reader, family) ?? "we have no Starlink count for that aircraft")
+  );
+  return { kind: "no_model", reason: sentence, aircraft: { ...base, sentence, count: null } };
+}
+
+/** What we can say of one family on its own: its band's fixed answer, or the
+ * airline's count for it. */
+function familyClause(cfg: AirlineConfig, reader: ScopedReader, family: string): string | null {
+  const band = cfg.subfleets.find(
+    (s) => s.penetrationOverride != null && s.families?.includes(family)
+  );
+  if (band) {
+    const name = `${bandLabel(band.label)} aircraft`;
+    return (band.penetrationOverride ?? 0) >= 1
+      ? `every ${name} has Starlink`
+      : `${name} don't have Starlink`;
+  }
+  const count = reader.getAirlineTypeCount(family);
+  return count ? chartCountClause(cfg, count) : null;
+}
+
+/** The answer names the aircraft scheduled on the asked date. */
+export function namesScheduledAircraft(answer: CarrierPrediction): boolean {
+  return (
+    (answer.kind === "penetration" || answer.kind === "no_model") &&
+    answer.aircraft?.basis === "scheduled"
+  );
+}
+
+/** A named tail is a tail-level answer, not a per-type one; an airline's own
+ * statement is neither. */
+export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" | "statement" {
+  if (answer.kind === "statement") return "statement";
   return answer.kind === "assigned_unconfirmed" || answer.kind === "partner_operated"
     ? "tail"
     : "type";
@@ -1381,7 +1791,11 @@ export function carrierPredictionTelemetry(answer: CarrierPrediction | RouteComp
   outcome: "predicted" | "no_data";
   confidence: "low" | "none";
 } {
-  const informative = answer !== null && answer.kind !== "no_model";
+  // A statement that doesn't cover the flight is no answer for it.
+  const informative =
+    answer !== null &&
+    answer.kind !== "no_model" &&
+    !(answer.kind === "statement" && answer.answer.outcome !== "likely");
   return informative
     ? { outcome: "predicted", confidence: "low" }
     : { outcome: "no_data", confidence: "none" };
@@ -1421,11 +1835,17 @@ function typeProgressSummary(types: readonly TypeProgress[], stale: boolean): st
     .filter((t) => t.equipped > 0 && t.equipped < t.total)
     .map((t) => `${t.label} ${t.equipped} of ${t.total}`);
   const idle = live.filter((t) => t.equipped === 0).map((t) => t.label);
-  const retiring = types.filter((t) => t.excluded).map((t) => t.label);
+  const excluded = types.filter((t) => t.excluded);
+  const excludedClause =
+    excluded.length === 0
+      ? null
+      : excluded[0].exclusionReason === "not_in_programme"
+        ? `${excluded.map((t) => t.label).join("/")} not in the programme`
+        : `${excluded.map((t) => t.label).join("/")} retiring`;
   return [
     done.length + going.length > 0 ? `At least: ${[...done, ...going].join(", ")}` : null,
     idle.length > 0 ? `${stale ? "none listed on" : "not started on"} ${idle.join(", ")}` : null,
-    retiring.length > 0 ? `${retiring.join("/")} retiring` : null,
+    excludedClause,
   ]
     .filter(Boolean)
     .join("; ");
@@ -1498,6 +1918,7 @@ export function describeCarrierPrediction(
   opts: { date?: string | null } = {}
 ): string {
   if (answer.kind === "no_model") return answer.reason;
+  if (answer.kind === "statement") return answer.answer.sentence;
   if (answer.kind === "type_progress") {
     const g = guideRef(cfg, answer.guideUpdated);
     return joinSentences(
@@ -1523,6 +1944,10 @@ export function describeCarrierPrediction(
   }
   const { sf, pen } = answer;
   const pct = (pen.pct * 100).toFixed(0);
+  if (answer.aircraft) {
+    const said = answer.aircraft.sentence;
+    return `~${pct}% Starlink probability: ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
+  }
   // bandLabel drops the label's parentheses, so the hint is the only parenthetical.
   const band = `${bandLabel(sf.label)} aircraft${sf.flightNumberHint ? ` (${sf.flightNumberHint})` : ""}`;
   const lead = `~${pct}% Starlink probability`;
@@ -1809,7 +2234,28 @@ export type ItineraryLeg = BasePrediction & {
   confirmed?: boolean;
   // duration_hours was backfilled by routeHours() rather than observed on this flight.
   duration_estimated?: boolean;
+  /** Usual local departure at the leg's origin ("8:15 AM"), when one is on record. */
+  typical_departure?: string;
+  /** Usual local arrival at the leg's destination, from the departure plus duration. */
+  typical_arrival?: string;
+  /** Origin-local date the leg flies on, given a searched date: a later leg can be the next day. */
+  date?: string;
+  /**
+   * What the times rest on, in the route board's words: "usual" once the
+   * flight was seen on USUAL_TIME_DAYS days, else its "next" scheduled
+   * departure or the one "last_seen".
+   */
+  time_basis?: TimeBasis;
+  /** Local days the flight was seen on this pair, the timed leg's evidence. */
+  days_seen?: number;
+  /** Seen flying on the weekday of `date`; absent undated or with nothing logged. */
+  runs_on_date?: boolean;
 };
+
+export type TimeBasis = "usual" | "next" | "last_seen";
+
+/** Logged days a departure time needs before the board or the planner calls it usual. */
+export const USUAL_TIME_DAYS = 3;
 
 export interface Itinerary {
   via: string[]; // connection hub(s) in order, empty for direct
@@ -1825,107 +2271,201 @@ export interface Itinerary {
   // ranking metric: maximizing raw eSL hours pathologically prefers 10h 3-stop
   // routes over a 1h 92% direct. Coverage ratio treats them fairly.
   coverage_ratio: number | null;
+  /**
+   * "same_day": every leg has a usual time and each connection leaves at least
+   * MIN_CONNECTION_MINUTES after the previous leg usually lands. "unknown": a
+   * leg has no time on record (or is an any-flight positioning leg), so the
+   * connection could not be checked.
+   */
+  schedule?: "same_day" | "unknown";
+  /** Minutes on the ground at each stop, in order; null where unknown. */
+  connection_minutes?: Array<number | null>;
+  /** First usual departure to last usual arrival, layovers included; null if any part is unknown. */
+  elapsed_hours?: number | null;
+}
+
+/** One flight number on one pair, before its odds are dated. */
+interface EdgeOption {
+  /** The number as stored, keying confirmed assignments. */
+  stored: string;
+  /** History-only prediction (flight_number is the UA spelling). */
+  hist: BasePrediction;
+  route: string;
+  departure: string;
+  arrival: string;
+  duration_hours: number | null;
+  /** Usual departure, minutes after local midnight at the origin; null when unknown. */
+  minutes: number | null;
+  /** Local days the flight was seen on the pair (logged, plus its scheduled one). */
+  days: number;
+  /** Weekdays ("Sat") of those days. */
+  weekdays: ReadonlySet<string>;
+  /** The scheduled departure the time is read from (unix); null when unknown. */
+  newest: number | null;
 }
 
 /**
- * Build the Starlink route adjacency graph: for each airport, the best
- * (highest-probability) flight number to each reachable destination.
+ * Every flight number on each pair, best odds first. A connection has to pick
+ * the flight that leaves after the previous one lands, not the best number on
+ * the pair; keeping one edge per pair is what showed itineraries whose second
+ * flight had left before the first one landed.
+ */
+type RouteGraph = Map<string, Map<string, EdgeOption[]>>;
+
+/**
+ * Same-day assignments on VERIFIED-Starlink tails (verified_wifi = 'Starlink',
+ * not NULL — spreadsheet-listed-but-unverified planes don't get the confirmed
+ * tier), keyed flight|dep|arr. Only valid for a date our upcoming_flights
+ * snapshot covers; outside it the map is simply empty.
+ */
+function confirmedEdgesOn(reader: ScopedReader, date: string): Map<string, "express" | "mainline"> {
+  const out = new Map<string, "express" | "mainline">();
+  const window = flightDateWindow(date);
+  if (!window) return out;
+  // Match rows on the departure airport's LOCAL date over the widened bounds,
+  // same as check-flight core — a strict UTC day window drops verified evening
+  // departures (SFO 6pm = 01:00Z next day) and seeds the wrong day's tail.
+  for (const r of reader.getConfirmedStarlinkEdges(window.queryStart, window.queryEnd)) {
+    if (!matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)) {
+      continue;
+    }
+    out.set(
+      `${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`,
+      r.fleet === "mainline" ? "mainline" : "express"
+    );
+  }
+  return out;
+}
+
+const nextIsoDate = (date: string) =>
+  new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+
+const weekdayOf = (date: string) => zonedWeekday(Date.parse(`${date}T12:00:00Z`) / 1000, "UTC");
+
+// The log holds a week; its grouped scan runs some tens of ms at United's size,
+// and a usual time or a weekday doesn't move within minutes.
+const sightingMemo = perOwner<ScopedReader, ReturnType<typeof memo<Map<string, Set<string>>>>>(() =>
+  memo<Map<string, Set<string>>>({ ttlSec: 600, maxEntries: 1 })
+);
+
+/** Logged local days per flight|dep|arr, the flight keyed as departure slots key it. */
+function sightingDays(reader: ScopedReader): Map<string, Set<string>> {
+  return sightingMemo(reader)("days", () => loadSightingDays(reader));
+}
+
+function loadSightingDays(reader: ScopedReader): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const r of reader.getRouteGraphSightings()) {
+    const key = `${slotFlightKey(r.flight_number, reader.scope) ?? r.flight_number}|${r.departure_airport}|${r.arrival_airport}`;
+    const days = out.get(key);
+    if (days) days.add(r.dep_date);
+    else out.set(key, new Set([r.dep_date]));
+  }
+  return out;
+}
+
+/**
+ * Build the Starlink route adjacency graph: for each airport, every flight
+ * number to each reachable destination that clears the odds floor on some day
+ * the trip can fly.
  *
  * Probability comes from TWO sources, in priority order:
- *  1. CONFIRMED assignment: if the flight is on a verified-Starlink tail in our
- *     current upcoming_flights snapshot, use CONFIRMED_EDGE_PROBABILITY (0.95).
- *     The flight number's history is irrelevant — we KNOW the near-term answer.
+ *  1. CONFIRMED assignment: if the flight is on a verified-Starlink tail on
+ *     the day the leg flies, in our current upcoming_flights snapshot.
  *  2. Historical prediction: predictFlight() from the verification log.
  *
  * Without (1), a flight like UA1358 ORD→MIA (0% history, but literally on a
  * Starlink plane tomorrow) gets filtered out and the planner says "no path."
+ * Without a searched date, (1) is skipped: today's tail assignment has no
+ * bearing on an undated trip.
  */
 function buildRouteGraph(
   reader: ScopedReader,
   minLegProb: number,
-  targetDateUnix?: number
-): Map<string, Map<string, ItineraryLeg>> {
+  confirmedOn: (date: string) => Map<string, "express" | "mainline">,
+  searchedDate: string | null
+): RouteGraph {
   const rows = reader.getRouteGraphEdges();
+  const logged = sightingDays(reader);
+  // A later leg can fly the day after the searched one (a red-eye, a late
+  // connection), so a flight confirmed on either day is worth keeping.
+  const seedDays = searchedDate ? [searchedDate, nextIsoDate(searchedDate)] : [];
 
-  // Confirmed-edge seeding is only valid when the target date is covered by
-  // our upcoming_flights snapshot. Outside that window, today's tail
-  // assignment has no bearing — a mainline flight rotates tails freely.
-  // Without a target date (e.g. exploratory planning), skip confirmed seeding
-  // and rely on historical prediction, which is honest about uncertainty.
-  // Confirmed-edge seeding: same-day assignments on VERIFIED-Starlink tails only
-  // (verified_wifi = 'Starlink', not NULL — spreadsheet-listed-but-unverified
-  // planes don't get the confirmed tier). Fleet-aware swap discount applied.
-  const confirmedEdges = new Map<string, "express" | "mainline">();
-  if (targetDateUnix !== undefined) {
-    // targetDateUnix is noon UTC of the traveler's date (flightDateWindow.mid),
-    // so its UTC date IS the queried date. Match rows on the departure
-    // airport's LOCAL date over the widened bounds, same as check-flight core
-    // — a strict UTC day window drops verified evening departures (SFO 6pm =
-    // 01:00Z next day) and seeds the wrong day's tail instead.
-    const date = new Date(targetDateUnix * 1000).toISOString().slice(0, 10);
-    const window = flightDateWindow(date);
-    if (window) {
-      const confirmedRows = reader.getConfirmedStarlinkEdges(window.queryStart, window.queryEnd);
-      for (const r of confirmedRows) {
-        if (
-          !matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)
-        ) {
-          continue;
-        }
-        const fleet = r.fleet === "mainline" ? "mainline" : "express";
-        confirmedEdges.set(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`, fleet);
-      }
-    }
-  }
-
-  const graph = new Map<string, Map<string, ItineraryLeg>>();
+  const graph: RouteGraph = new Map();
   for (const r of rows) {
     const dep = r.departure_airport;
     const arr = r.arrival_airport;
     // A row whose origin equals its destination is bad upstream data; letting
     // it into the graph is what let the planner emit self-loop legs.
     if (!dep || !arr || dep === arr) continue;
-    const uaNum = uaPrefix(r.flight_number);
-    const confirmedFleet = confirmedEdges.get(`${r.flight_number}|${dep}|${arr}`);
+    const key = `${r.flight_number}|${dep}|${arr}`;
+    const hist = predictLegOrFlight(reader, uaPrefix(r.flight_number), dep, arr);
+    const confirmedSomeDay = seedDays.some((d) => confirmedOn(d).has(key));
+    if (hist.probability < minLegProb && !confirmedSomeDay) continue;
 
-    let pred: BasePrediction;
-    if (confirmedFleet) {
-      // Use the MAX of (historical prediction, confirmed swap-adjusted) —
-      // a flight with 100% history shouldn't drop to 90% just because it's
-      // also in the snapshot.
-      const hist = predictLegOrFlight(reader, uaNum, dep, arr);
-      const confirmedP = CONFIRMED_PROB[confirmedFleet];
-      pred =
-        hist.probability >= confirmedP
-          ? hist
-          : {
-              flight_number: uaNum,
-              probability: confirmedP,
-              confidence: "high",
-              // Was omitted, which tsc flags: BasePrediction requires it and
-              // the field was simply missing from the wire response.
-              method: "confirmed_assignment",
-              n_observations: 1,
-            };
-    } else {
-      pred = predictLegOrFlight(reader, uaNum, dep, arr);
-    }
-
-    if (pred.probability < minLegProb) continue;
-
+    const zone = airportTimezone(dep);
+    const days = new Set(
+      logged.get(`${slotFlightKey(r.flight_number, reader.scope) ?? r.flight_number}|${dep}|${arr}`)
+    );
+    if (zone && r.departure_time) days.add(localDateISO(r.departure_time, zone));
+    const option: EdgeOption = {
+      stored: r.flight_number,
+      hist,
+      route: `${dep}-${arr}`,
+      departure: dep,
+      arrival: arr,
+      duration_hours: r.avg_duration_sec > 0 ? r.avg_duration_sec / 3600 : null,
+      minutes: zone && r.departure_time ? zonedMinutes(r.departure_time, zone) : null,
+      days: days.size,
+      weekdays: new Set([...days].map(weekdayOf)),
+      newest: r.departure_time,
+    };
     if (!graph.has(dep)) graph.set(dep, new Map());
     const edges = graph.get(dep)!;
-    const existing = edges.get(arr);
-    if (!existing || pred.probability > existing.probability) {
-      edges.set(arr, {
-        ...pred,
-        route: `${dep}-${arr}`,
-        duration_hours: r.avg_duration_sec > 0 ? r.avg_duration_sec / 3600 : null,
-        confirmed: confirmedFleet !== undefined,
-      });
+    const list = edges.get(arr);
+    if (list) list.push(option);
+    else edges.set(arr, [option]);
+  }
+  for (const edges of graph.values()) {
+    for (const list of edges.values()) {
+      list.sort((a, b) => b.hist.probability - a.hist.probability);
     }
   }
   return graph;
+}
+
+/**
+ * The option's odds on the day it flies: the MAX of its history and the
+ * swap-adjusted confirmed tier (a flight with 100% history shouldn't drop to
+ * 90% just because it's also in the snapshot). Null when below the floor.
+ */
+function datedLeg(
+  option: EdgeOption,
+  date: string | null,
+  confirmedOn: (date: string) => Map<string, "express" | "mainline">,
+  minLegProb: number
+): ItineraryLeg | null {
+  const fleet = date
+    ? confirmedOn(date).get(`${option.stored}|${option.departure}|${option.arrival}`)
+    : undefined;
+  const confirmedP = fleet ? CONFIRMED_PROB[fleet] : 0;
+  const pred: BasePrediction =
+    fleet && option.hist.probability < confirmedP
+      ? {
+          flight_number: option.hist.flight_number,
+          probability: confirmedP,
+          confidence: "high",
+          method: "confirmed_assignment",
+          n_observations: 1,
+        }
+      : option.hist;
+  if (pred.probability < minLegProb) return null;
+  return {
+    ...pred,
+    route: option.route,
+    duration_hours: option.duration_hours,
+    confirmed: fleet !== undefined,
+  };
 }
 
 function computeItinerary(legs: ItineraryLeg[], coverage: "full" | "partial"): Itinerary {
@@ -1995,23 +2535,49 @@ export function planItinerary(
   reader: ScopedReader,
   origin: string,
   destination: string,
-  options: {
-    maxItineraries?: number;
-    minLegProbability?: number;
-    maxStops?: number;
-    targetDateUnix?: number;
-    /** Time budget + 2-stop gain rule; defaults to ENFORCE_ITINERARY_TIME_BUDGET. */
-    enforceTimeBudget?: boolean;
-  } = {}
+  options: PlanOptions = {}
 ): Itinerary[] {
+  return planRoute(reader, origin, destination, options).itineraries;
+}
+
+export interface PlanOptions {
+  maxItineraries?: number;
+  minLegProbability?: number;
+  maxStops?: number;
+  targetDateUnix?: number;
+  /** Time budget + 2-stop gain rule; defaults to ENFORCE_ITINERARY_TIME_BUDGET. */
+  enforceTimeBudget?: boolean;
+}
+
+/**
+ * Why a plan came back empty, so a page can say so instead of showing nothing:
+ * "over_budget" — connections exist but all take too long against the nonstop;
+ * "no_same_day" — Starlink flights reach `hubs`, but none flies on within
+ * MAX_CONNECTION_HOURS of landing; "no_route" — no Starlink legs join the pair.
+ */
+export type EmptyPlanReason =
+  | { kind: "over_budget"; budget_hours: number; nonstop_hours: number | null }
+  | { kind: "no_same_day"; hubs: string[] }
+  | { kind: "no_route"; max_stops: number };
+
+/** planItinerary, with the reason when nothing is offered. */
+export function planRoute(
+  reader: ScopedReader,
+  origin: string,
+  destination: string,
+  options: PlanOptions = {}
+): { itineraries: Itinerary[]; empty: EmptyPlanReason | null } {
   const orig = origin.toUpperCase().trim();
   const dest = destination.toUpperCase().trim();
-  if (orig === dest) return [];
+  const maxStopsAsked = Math.min(options.maxStops ?? 2, 3);
+  if (orig === dest)
+    return { itineraries: [], empty: { kind: "no_route", max_stops: maxStopsAsked } };
 
   const enforceBudget = options.enforceTimeBudget ?? ENFORCE_ITINERARY_TIME_BUDGET;
   const maxItineraries = options.maxItineraries ?? 10;
   const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
-  const maxStops = Math.min(options.maxStops ?? 2, 3);
+  const maxStops = maxStopsAsked;
+  const nowSec = Math.floor(Date.now() / 1000);
 
   // Detour gate. Unknown airports null the bound / the running path total,
   // which disables pruning for that query / that path (fail open).
@@ -2029,7 +2595,24 @@ export function planItinerary(
     return remaining !== null && flown + remaining > bound;
   };
 
-  const graph = buildRouteGraph(reader, minLegProb, options.targetDateUnix);
+  // targetDateUnix is noon UTC of the traveler's date (flightDateWindow.mid),
+  // so its UTC date IS the queried date.
+  const searchedDate =
+    options.targetDateUnix !== undefined
+      ? new Date(options.targetDateUnix * 1000).toISOString().slice(0, 10)
+      : null;
+  const confirmedMemo = new Map<string, Map<string, "express" | "mainline">>();
+  const confirmedOn = (date: string) => {
+    let m = confirmedMemo.get(date);
+    if (!m) {
+      m = confirmedEdgesOn(reader, date);
+      confirmedMemo.set(date, m);
+    }
+    return m;
+  };
+  const graph = buildRouteGraph(reader, minLegProb, confirmedOn, searchedDate);
+  // Usual times are clock times; an undated search lays them on today.
+  const clockDate = searchedDate ?? new Date().toISOString().slice(0, 10);
   const itineraries: Itinerary[] = [];
   const positioningPrior = loadFleetPriors(reader).mainline;
 
@@ -2064,14 +2647,160 @@ export function planItinerary(
     it.via.length === 0 ||
     budgetHours === null ||
     it.total_flight_hours === null ||
-    elapsedHours(it) <= budgetHours;
+    fitsHourBudget(it, budgetHours);
   const hubAllowed = (hub: string) => hubAllowedForTrip(orig, dest, hub);
 
+  const legHours = (leg: ItineraryLeg): number | null => withDuration(leg).duration_hours;
+
+  /**
+   * Lay an option on the clock. The first leg leaves at its usual time on the
+   * searched day; a later one at its first usual departure at least
+   * MIN_CONNECTION_MINUTES after the previous leg lands, and no more than
+   * MAX_CONNECTION_HOURS after: past that the trip waits overnight, which
+   * nobody booking a connection means. Null when the option can't connect.
+   */
+  const schedule = (
+    option: EdgeOption,
+    landed: number | null
+  ): { depart: number; arrive: number | null; date: string } | null => {
+    const zone = airportTimezone(option.departure);
+    if (!zone || option.minutes === null) return null;
+    let depart: number;
+    if (landed === null) {
+      depart = zonedWallTimeSec(clockDate, option.minutes, zone);
+    } else {
+      const ready = landed + MIN_CONNECTION_MINUTES * 60;
+      const day = localDateISO(ready, zone);
+      depart = zonedWallTimeSec(day, option.minutes, zone);
+      if (depart < ready) depart = zonedWallTimeSec(nextIsoDate(day), option.minutes, zone);
+      if (depart - landed > MAX_CONNECTION_HOURS * 3600) return null;
+    }
+    const date = localDateISO(depart, zone);
+    const probe = datedLeg(option, searchedDate ? date : null, confirmedOn, minLegProb);
+    const hours = probe ? legHours(probe) : null;
+    return { depart, arrive: hours === null ? null : depart + hours * 3600, date };
+  };
+
+  const timedLeg = (
+    leg: ItineraryLeg,
+    option: EdgeOption,
+    slot: { depart: number; arrive: number | null; date: string } | null
+  ): ItineraryLeg => {
+    if (!slot) return leg;
+    const [from, to] = leg.route.split("-");
+    const toZone = airportTimezone(to);
+    const basis: TimeBasis =
+      option.days >= USUAL_TIME_DAYS
+        ? "usual"
+        : option.newest !== null && option.newest > nowSec
+          ? "next"
+          : "last_seen";
+    return {
+      ...leg,
+      typical_departure: zonedClock(slot.depart, airportTimezone(from)),
+      ...(slot.arrive !== null && toZone
+        ? { typical_arrival: zonedClock(slot.arrive, toZone) }
+        : {}),
+      ...(searchedDate ? { date: slot.date } : {}),
+      time_basis: basis,
+      days_seen: option.days,
+      ...(searchedDate && option.days > 0
+        ? { runs_on_date: option.weekdays.has(weekdayOf(slot.date)) }
+        : {}),
+    };
+  };
+
+  /**
+   * The legs a state can take to `next`. From the origin, every flight number
+   * (the trip can start at any hour). After a timed leg, the best odds among
+   * flights that connect; failing that, the best untimed flight, marked
+   * unchecked; failing that, none: the pair has no same-day connection.
+   * After an untimed leg, the best odds as before, unchecked.
+   */
+  type Step = {
+    leg: ItineraryLeg;
+    slot: { depart: number; arrive: number | null; date: string } | null;
+  };
+  const stepsTo = (options: EdgeOption[], state: SearchState): Step[] => {
+    const first = state.legs.length === 0;
+    if (first || state.landed !== null) {
+      const timed: Step[] = [];
+      for (const option of options) {
+        const slot = schedule(option, state.landed);
+        if (!slot) continue;
+        const leg = datedLeg(option, searchedDate ? slot.date : null, confirmedOn, minLegProb);
+        if (leg) timed.push({ leg: timedLeg(leg, option, slot), slot });
+      }
+      if (!first && timed.length > 0) {
+        // A flight seen on the leg's weekday beats better odds on one that
+        // may not run that day.
+        timed.sort(
+          (a, b) =>
+            offWeekday(a.leg) - offWeekday(b.leg) ||
+            b.leg.probability - a.leg.probability ||
+            a.slot!.depart - b.slot!.depart
+        );
+        return [timed[0]];
+      }
+      const untimed = options
+        .filter((o) => o.minutes === null || !airportTimezone(o.departure))
+        .map((o) => datedLeg(o, searchedDate, confirmedOn, minLegProb))
+        .filter((l): l is ItineraryLeg => l !== null);
+      if (first) return [...timed, ...untimed.map((leg) => ({ leg, slot: null }))];
+      return untimed.length > 0 ? [{ leg: untimed[0], slot: null }] : [];
+    }
+    for (const option of options) {
+      const leg = datedLeg(option, searchedDate, confirmedOn, minLegProb);
+      if (leg) return [{ leg, slot: null }];
+    }
+    return [];
+  };
+
   // --- BFS up to maxStops+1 legs ---
-  type SearchState = { airport: string; legs: ItineraryLeg[]; joint: number; flown: number | null };
-  let frontier: SearchState[] = [{ airport: orig, legs: [], joint: 1, flown: 0 }];
-  const seenPaths = new Set<string>();
-  const fulls: Itinerary[] = [];
+  type SearchState = {
+    airport: string;
+    legs: ItineraryLeg[];
+    joint: number;
+    flown: number | null;
+    /** Usual landing of the last leg (unix); null when unknown or before the first leg. */
+    landed: number | null;
+    departed: number | null;
+    waits: Array<number | null>;
+    /** Every leg so far has a usual time and connects. */
+    timed: boolean;
+  };
+  let frontier: SearchState[] = [
+    {
+      airport: orig,
+      legs: [],
+      joint: 1,
+      flown: 0,
+      landed: null,
+      departed: null,
+      waits: [],
+      timed: true,
+    },
+  ];
+  // Every timing of a path (one per first-leg flight), until the budget is
+  // known: the best odds can sit on a timing whose layover runs over it.
+  const variantsByPath = new Map<string, Itinerary[]>();
+  // Hubs a timed leg reached whose flights on to the destination all leave
+  // too early or too late: the reason when no connection is left.
+  const missedHubs = new Set<string>();
+  // A connection that is known to work beats better odds on one that may not;
+  // a nonstop has nothing to connect, so its best odds win.
+  const better = (a: Itinerary, b: Itinerary): boolean => {
+    if (a.via.length > 0 && a.schedule !== b.schedule) return a.schedule === "same_day";
+    const offA = a.legs.reduce((n, l) => n + offWeekday(l), 0);
+    const offB = b.legs.reduce((n, l) => n + offWeekday(l), 0);
+    if (offA !== offB) return offA < offB;
+    if (Math.abs(a.joint_probability - b.joint_probability) > 1e-9) {
+      return a.joint_probability > b.joint_probability;
+    }
+    return (
+      (a.elapsed_hours ?? Number.POSITIVE_INFINITY) < (b.elapsed_hours ?? Number.POSITIVE_INFINITY)
+    );
+  };
 
   for (let depth = 0; depth <= maxStops; depth++) {
     const nextFrontier: SearchState[] = [];
@@ -2079,7 +2808,7 @@ export function planItinerary(
       const edges = graph.get(state.airport);
       if (!edges) continue;
 
-      for (const [nextAirport, leg] of edges.entries()) {
+      for (const [nextAirport, options] of edges.entries()) {
         if (nextAirport === orig) continue;
         if (state.legs.some((l) => l.route.split("-")[1] === nextAirport)) continue;
         if (nextAirport !== dest && !hubAllowed(nextAirport)) continue;
@@ -2087,27 +2816,62 @@ export function planItinerary(
         const flown = pathMiles(state.flown, state.airport, nextAirport);
         if (exceedsBound(flown, nextAirport)) continue;
 
-        const newLegs = [...state.legs, leg];
-        const newJoint = state.joint * leg.probability;
+        const steps = stepsTo(options, state);
+        if (steps.length === 0 && nextAirport === dest && state.landed !== null) {
+          missedHubs.add(state.airport);
+        }
+        for (const { leg, slot } of steps) {
+          const first = state.legs.length === 0;
+          const next: SearchState = {
+            airport: nextAirport,
+            legs: [...state.legs, leg],
+            joint: state.joint * leg.probability,
+            flown,
+            landed: slot?.arrive ?? null,
+            departed: first ? (slot?.depart ?? null) : state.departed,
+            waits: first
+              ? []
+              : [
+                  ...state.waits,
+                  slot && state.landed !== null
+                    ? Math.round((slot.depart - state.landed) / 60)
+                    : null,
+                ],
+            timed: state.timed && slot !== null && slot.arrive !== null,
+          };
 
-        if (nextAirport === dest) {
-          const pathKey = newLegs.map((l) => l.route).join("|");
-          if (!seenPaths.has(pathKey)) {
-            seenPaths.add(pathKey);
-            fulls.push(build(newLegs, "full"));
+          if (nextAirport === dest) {
+            const pathKey = next.legs.map((l) => l.route).join("|");
+            const it: Itinerary = {
+              ...build(next.legs, "full"),
+              schedule: next.timed ? "same_day" : "unknown",
+              connection_minutes: next.waits,
+              elapsed_hours:
+                next.timed && next.departed !== null && next.landed !== null
+                  ? (next.landed - next.departed) / 3600
+                  : null,
+            };
+            const held = variantsByPath.get(pathKey);
+            if (held) held.push(it);
+            else variantsByPath.set(pathKey, [it]);
+          } else if (depth < maxStops) {
+            nextFrontier.push(next);
           }
-        } else if (depth < maxStops) {
-          nextFrontier.push({ airport: nextAirport, legs: newLegs, joint: newJoint, flown });
         }
       }
     }
     nextFrontier.sort((a, b) => b.joint - a.joint);
-    frontier = nextFrontier.slice(0, 200);
+    frontier = nextFrontier.slice(0, FRONTIER_LIMIT);
   }
-  const connections = fulls.filter((it) => it.via.length > 0);
+  const connections = [...variantsByPath.values()].flat().filter((it) => it.via.length > 0);
   if (!hasNonstop || (!firmNonstop && !connections.some(withinBudget))) {
     budgetFromFastest(connections);
   }
+  const fulls = [...variantsByPath.values()].map((variants) => {
+    const fitting = variants.filter(withinBudget);
+    const pool = fitting.length > 0 ? fitting : variants;
+    return pool.reduce((best, it) => (better(it, best) ? it : best));
+  });
   itineraries.push(...fulls.filter(withinBudget));
 
   // --- Partial-coverage baselines (both directions) ---
@@ -2115,6 +2879,7 @@ export function planItinerary(
   // we don't already have a strong direct (≥70% joint) — extra options
   // are noise when a 92% direct exists.
   const directIt = fulls.find((it) => it.via.length === 0);
+  let overBudget = connections.some((it) => !withinBudget(it));
   const showPartials = maxStops > 0 && (!directIt || directIt.joint_probability < 0.7);
 
   if (showPartials) {
@@ -2130,8 +2895,17 @@ export function planItinerary(
     const isServed = (a: string, b: string) => served === null || served.has(`${a}-${b}`);
 
     // Direction "in": (any) orig→hub, then Starlink hub→dest
+    // A positioning leg is "any flight", so its connection can't be checked;
+    // the Starlink leg is its pair's best odds on the searched day, as before.
+    const bestOn = (options: EdgeOption[] | undefined): ItineraryLeg | null => {
+      for (const option of options ?? []) {
+        const leg = datedLeg(option, searchedDate, confirmedOn, minLegProb);
+        if (leg) return timedLeg(leg, option, schedule(option, null));
+      }
+      return null;
+    };
     for (const [hub, edges] of graph.entries()) {
-      const leg = edges.get(dest);
+      const leg = bestOn(edges.get(dest));
       // hub === dest as well as hub === orig: without the former the planner
       // emitted a MIA-MIA self-loop leg ("fly ORD->MIA, then fly MIA->MIA").
       if (!leg || leg.probability < minLegProb || hub === orig || hub === dest) continue;
@@ -2142,8 +2916,9 @@ export function planItinerary(
     // Direction "out": Starlink orig→hub, then (any) hub→dest
     const outEdges = graph.get(orig);
     if (outEdges) {
-      for (const [hub, leg] of outEdges.entries()) {
-        if (hub === dest || leg.probability < minLegProb) continue;
+      for (const [hub, options] of outEdges.entries()) {
+        const leg = bestOn(options);
+        if (hub === dest || !leg || leg.probability < minLegProb) continue;
         if (!hubOnPath(hub) || !isServed(hub, dest) || !hubAllowed(hub)) continue;
         if (fulls.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
         candidates.push({ starlinkLeg: leg, hub, direction: "out" });
@@ -2157,17 +2932,23 @@ export function planItinerary(
       return bH - aH;
     });
 
-    const partials = candidates.map((c) =>
-      build(
-        c.direction === "in"
-          ? [makePositioningLeg(`${orig}-${c.hub}`, positioningPrior), c.starlinkLeg]
-          : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`, positioningPrior)],
-        "partial"
-      )
+    const partials = candidates.map(
+      (c): Itinerary => ({
+        ...build(
+          c.direction === "in"
+            ? [makePositioningLeg(`${orig}-${c.hub}`, positioningPrior), c.starlinkLeg]
+            : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`, positioningPrior)],
+          "partial"
+        ),
+        schedule: "unknown",
+        connection_minutes: [null],
+        elapsed_hours: null,
+      })
     );
     const partialsEmptied = itineraries.length === 0 && !partials.some(withinBudget);
     if (!firmNonstop && (budgetHours === null || partialsEmptied)) budgetFromFastest(partials);
     itineraries.push(...partials.filter(withinBudget).slice(0, partialLimit));
+    if (partials.some((it) => !withinBudget(it))) overBudget = true;
   }
 
   // A 2-stop has to buy real Starlink time over the simpler options (the
@@ -2216,8 +2997,42 @@ export function planItinerary(
     ? [direct, ...nonDirect.slice(0, maxItineraries - 1)]
     : nonDirect.slice(0, maxItineraries);
 
-  return [...fullKept, ...partialSorted.slice(0, 3)];
+  const result = [...fullKept, ...partialSorted.slice(0, 3)];
+  if (result.length > 0) return { itineraries: result, empty: null };
+  const empty: EmptyPlanReason =
+    overBudget && budgetHours !== null
+      ? {
+          kind: "over_budget",
+          budget_hours: budgetHours,
+          nonstop_hours: hasNonstop ? baseline.duration_hours : null,
+        }
+      : missedHubs.size > 0
+        ? { kind: "no_same_day", hubs: [...missedHubs].sort() }
+        : { kind: "no_route", max_stops: maxStops };
+  return { itineraries: [], empty };
 }
+
+/** The page's and the MCP tool's sentence for an empty plan. */
+export function emptyPlanMessage(why: EmptyPlanReason, destination: string): string {
+  const hours = (h: number) => `${h.toFixed(1)} hours`;
+  switch (why.kind) {
+    case "over_budget":
+      return why.nonstop_hours !== null
+        ? `Every connection with Starlink odds takes far longer than the ${hours(why.nonstop_hours)} nonstop (over ${hours(why.budget_hours)} of flying and stops, or a long wait), so none is listed. The nonstop is the quicker trip.`
+        : `Every connection with Starlink odds runs over ${hours(why.budget_hours)} of flying and stops, or waits long between flights, so none is listed.`;
+    case "no_same_day":
+      return `Flights with Starlink odds reach ${why.hubs.join(", ")}, but none flies on to ${destination} between 1 and ${MAX_CONNECTION_HOURS} hours after landing, so there is no same-day connection.`;
+    case "no_route": {
+      const odds = `Starlink odds of ${Math.round(MIN_LEG_PROBABILITY * 100)}% or more`;
+      return why.max_stops === 0
+        ? `No nonstop with ${odds} flies between these airports.`
+        : `No flights with ${odds} connect these airports within ${why.max_stops} stop${why.max_stops === 1 ? "" : "s"}.`;
+    }
+  }
+}
+
+/** 1 when a leg was logged, but never on the weekday it would fly. */
+const offWeekday = (leg: ItineraryLeg): number => (leg.runs_on_date === false ? 1 : 0);
 
 /**
  * Time budget for connections relative to the nonstop. Ratio-only ranking
@@ -2228,8 +3043,20 @@ export function planItinerary(
 export const ENFORCE_ITINERARY_TIME_BUDGET = true;
 const BUDGET_FACTOR = 1.5;
 const BUDGET_SLACK_HOURS = 2.5;
-// Minimum connection time per stop; total_flight_hours is airborne time only.
+// Minimum connection time per stop when the legs' times are unknown;
+// total_flight_hours is airborne time only.
 const LAYOVER_HOURS = 1.0;
+// How far past the budget a timed connection's real waits may take it, a stop.
+const WAIT_SLACK_HOURS = 2;
+// A connection must leave this long after the previous leg usually lands.
+// Times are usual ones, not today's schedule, so this is United's domestic
+// minimum (~45 min at its hubs) with room for a late first leg.
+const MIN_CONNECTION_MINUTES = 60;
+// Longer than this on the ground is an overnight stay, not a connection.
+const MAX_CONNECTION_HOURS = 6;
+// Search states kept per depth; the first leg now branches on every flight
+// number, so the cap is wider than the one state per pair it once held.
+const FRONTIER_LIMIT = 600;
 const MULTI_STOP_MIN_GAIN_HOURS = 1.0;
 const STOP_PENALTY = 0.04;
 // Block-time estimate when no flight has been observed on a pair: cruise at
@@ -2248,9 +3075,27 @@ export function itineraryHourBudget(baselineHours: number): number {
   return Math.max(BUDGET_FACTOR * baselineHours, baselineHours + BUDGET_SLACK_HOURS);
 }
 
-/** Flying time plus a minimum connection per stop. */
+/** Door to door at the legs' usual times; else flying time plus a minimum connection per stop. */
 export function elapsedHours(it: Itinerary): number {
-  return (it.total_flight_hours ?? 0) + LAYOVER_HOURS * it.via.length;
+  if (typeof it.elapsed_hours === "number") return it.elapsed_hours;
+  return flyingWithStops(it);
+}
+
+const flyingWithStops = (it: Itinerary) =>
+  (it.total_flight_hours ?? 0) + LAYOVER_HOURS * it.via.length;
+
+/**
+ * One yardstick for every connection: flying time plus LAYOVER_HOURS a stop
+ * within the budget, timed or not. Counting a timed connection's real wait
+ * against a budget that an untimed one meets with a flat hour dropped good
+ * flyable trips for unchecked ones (MSY-SFO via IAH at 64%, 2h 46m to
+ * connect, for a 35% DEN one). The real wait is capped apart: door to door
+ * may run WAIT_SLACK_HOURS a stop past the budget, no more.
+ */
+export function fitsHourBudget(it: Itinerary, budgetHours: number): boolean {
+  if (flyingWithStops(it) > budgetHours + 1e-9) return false;
+  if (typeof it.elapsed_hours !== "number") return true;
+  return it.elapsed_hours <= budgetHours + WAIT_SLACK_HOURS * it.via.length + 1e-9;
 }
 
 /**

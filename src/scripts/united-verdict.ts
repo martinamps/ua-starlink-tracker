@@ -13,7 +13,9 @@
 import type { Database } from "bun:sqlite";
 import { AIRLINES, OBSERVED_WIFI_SOURCES, verifierSourceTag } from "../airlines/registry";
 import {
+  type FirstReadEvent,
   type WifiConsensus,
+  applyFirstRead,
   bumpDiscoveryPriority,
   computeWifiConsensus,
   consensusToFleetStatus,
@@ -23,7 +25,9 @@ import {
   logVerification,
   updateVerifiedWifi,
 } from "../database/database";
+import { failureKindOf, recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import { debug, info, warn } from "../utils/logger";
+import { pingIndexNow } from "./indexnow";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 
 export const UNITED_SOURCE = verifierSourceTag(AIRLINES.UA);
@@ -196,6 +200,13 @@ export function applyUnitedObservation(
 ): WifiConsensus | null {
   const log = opts.log ?? ownLog;
 
+  // Source health asks one thing: did united.com give us a provider reading?
+  // A page that loads without one (blocked, redesigned, not yet published) is
+  // an empty answer, whichever tail it turned out to describe.
+  if (verdict.category === "error") recordSourceFailure(db, "united_site", "UA", "error");
+  else if (!verdict.wifiProvider) recordSourceFailure(db, "united_site", "UA", "empty");
+  else recordSourceSuccess(db, "united_site", "UA");
+
   return db.transaction(() => {
     if (verdict.tailMismatch) {
       log.warn(
@@ -267,8 +278,14 @@ function settleConsensus(
   // Read starlink_planes, NOT united_fleet: updateVerifiedWifi writes
   // starlink_planes.verified_wifi, and the two tables both carry the column.
   const listing = db
-    .query("SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'")
-    .get(tail) as { verified_wifi: string | null } | null;
+    .query(
+      "SELECT verified_wifi, verified_at FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'"
+    )
+    .get(tail) as { verified_wifi: string | null; verified_at: number | null } | null;
+  // Before the writes below: a count it takes back also settles the roster,
+  // so the re-check queued for a roster that disagrees is not queued for it.
+  const firstRead = applyFirstRead(db, tail, "UA", consensus, "verifier");
+  if (firstRead) announceFirstRead(firstRead);
   if (status !== null) {
     // Change-gated: a re-confirmation of the value already on file is a debug
     // fact, a transition is the event worth an info line. The un-gated version
@@ -276,7 +293,15 @@ function settleConsensus(
     // "verified_wifi → Starlink" for tails that were already Starlink).
     const prev = listing?.verified_wifi ?? null;
     updateVerifiedWifi(db, tail, "UA", consensus.verdict);
-    if (listing) emitSettleTransition(prev, consensus.verdict, consensus, "verifier", "UA");
+    if (listing) {
+      emitSettleTransition(
+        { wifi: prev, at: listing.verified_at },
+        consensus.verdict,
+        consensus,
+        "verifier",
+        "UA"
+      );
+    }
     const line = `${tail}${tag}: verified_wifi → ${consensus.verdict} (${consensus.reason})`;
     if (prev === consensus.verdict) (log.debug ?? log.info)(line);
     else log.info(line);
@@ -289,10 +314,30 @@ function settleConsensus(
     // Ambiguous — clear to NULL so the check-flight filter
     // (IS NULL OR = 'Starlink') falls through to spreadsheet trust.
     updateVerifiedWifi(db, tail, "UA", null);
-    if (listing) emitSettleTransition(listing.verified_wifi, null, consensus, "verifier", "UA");
+    if (listing) {
+      emitSettleTransition(
+        { wifi: listing.verified_wifi, at: listing.verified_at },
+        null,
+        consensus,
+        "verifier",
+        "UA"
+      );
+    }
     log.info(`${tail}${tag}: consensus ambiguous, verified_wifi cleared (${consensus.reason})`);
   }
   return consensus;
+}
+
+/**
+ * A first-read count changes the home page, /fleet, the install log, the feed
+ * and the tail's own page at once. A recrawl request cannot be recalled, but
+ * it claims nothing: it names pages whose answer changed. So the same pages
+ * are named when the count is made and again if it is taken back, and an
+ * engine that came for the first sees the correction on the second.
+ */
+function announceFirstRead(event: FirstReadEvent): void {
+  if (event.outcome === "confirmed") return;
+  pingIndexNow("UA", ["/", "/fleet", "/newly-equipped", "/feed.xml", `/fleet/${event.tail}`]);
 }
 
 /**
@@ -307,6 +352,7 @@ export function logUnitedCheckFailure(
   errorMessage: string,
   opts: { flightNumber: string | null; aircraftType: string | null }
 ): void {
+  recordSourceFailure(db, "united_site", "UA", failureKindOf(errorMessage));
   logVerification(db, {
     tail_number: tailNumber,
     airline: "UA",

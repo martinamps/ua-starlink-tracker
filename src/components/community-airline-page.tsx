@@ -14,7 +14,7 @@ import {
 import { type AirlineFactsEntry, formatFactDate } from "../airlines/rollout-facts";
 import type { FleetGuideTail, TypeProgress } from "../database/database";
 import { typeShare } from "../scripts/starlink-predictor";
-import { FactsList, StatusPill } from "./airlines-page";
+import { FactsList, StatusPill, hubTimelineHref } from "./airlines-page";
 import { FIELD_CLASS, FlightSearchForm } from "./flight-search-form";
 import { ClientScriptTag } from "./layout";
 import type { Link } from "./layout";
@@ -24,8 +24,13 @@ import { Meter } from "./ui/meter";
 
 // A stale guide can say none were listed, not that none have started.
 function typeRowText(t: TypeProgress, stale: boolean): { text: string; tone: string } {
-  if (t.excluded)
-    return { text: `Retiring — not in the programme (${t.total})`, tone: "text-muted" };
+  if (t.excluded) {
+    const text =
+      t.exclusionReason === "not_in_programme"
+        ? `Not in the programme (${t.total})`
+        : `Retiring — not in the programme (${t.total})`;
+    return { text, tone: "text-muted" };
+  }
   if (t.equipped === 0) {
     return {
       text: `${stale ? "None listed" : "Not started"} — 0 of ${t.total}`,
@@ -320,7 +325,7 @@ export function CommunityAirlinePage({
 
       {facts && (
         <section className={SECTION}>
-          <FactsList entry={facts} />
+          <FactsList entry={facts} timelineHref={hubTimelineHref(site, facts)} />
         </section>
       )}
       <ClientScriptTag name="hub" />

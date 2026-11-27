@@ -7,6 +7,7 @@
  * extension badges any numeric `probability`.
  */
 
+import { statementWireField } from "../airlines/statement-rule";
 import type { TypeProgress } from "../database/database";
 import type { CarrierPrediction } from "../scripts/starlink-predictor";
 
@@ -16,15 +17,24 @@ export { noModelConfidence } from "../scripts/starlink-predictor";
  * else is ignored rather than rejected, so a bad value can't break a lookup. */
 const AIRCRAFT_TYPE_PARAM = /^[A-Za-z0-9 ()-]{1,40}$/;
 
-export function aircraftTypeParam(url: URL): string | null {
-  const raw = url.searchParams.get("aircraft_type")?.trim();
+export function aircraftTypeText(value: unknown): string | null {
+  const raw = typeof value === "string" ? value.trim() : "";
   return raw && AIRCRAFT_TYPE_PARAM.test(raw) ? raw : null;
 }
 
-export type TypeStatus = "in_progress" | "not_started" | "complete" | "retiring";
+export function aircraftTypeParam(url: URL): string | null {
+  return aircraftTypeText(url.searchParams.get("aircraft_type"));
+}
+
+export type TypeStatus =
+  | "in_progress"
+  | "not_started"
+  | "complete"
+  | "retiring"
+  | "not_in_programme";
 
 export function typeStatus(t: TypeProgress): TypeStatus {
-  if (t.excluded) return "retiring";
+  if (t.excluded) return t.exclusionReason === "not_in_programme" ? "not_in_programme" : "retiring";
   if (t.equipped === 0) return "not_started";
   return t.equipped === t.total ? "complete" : "in_progress";
 }
@@ -83,6 +93,16 @@ export function communityWireFields(answer: CarrierPrediction): Record<string, u
       };
     case "partner_operated":
       return { assignment: { tail_number: answer.tail, operated_by_other: true } };
+    case "statement":
+      return statementWireField(answer.answer);
+    case "penetration":
+    case "no_model": {
+      // A type answer that names the one aircraft scheduled that day.
+      const a = answer.aircraft;
+      return a?.basis === "scheduled" && a.tail
+        ? { assignment: { tail_number: a.tail, aircraft_type: a.aircraftType } }
+        : {};
+    }
     default:
       return {};
   }

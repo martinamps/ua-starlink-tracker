@@ -21,10 +21,13 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   const lib = globalThis.StarlinkTrackerLib;
   const url = lib
-    ? lib.endpointFor(request.flightNumber, request.date, EXTENSION_VERSION, {
-        origin: request.origin,
-        destination: request.destination,
-      })
+    ? lib.endpointFor(
+        request.flightNumber,
+        request.date,
+        EXTENSION_VERSION,
+        { origin: request.origin, destination: request.destination },
+        request.aircraftType
+      )
     : null;
   if (!url) {
     sendResponse({ success: false, error: "unsupported flight number or date" });

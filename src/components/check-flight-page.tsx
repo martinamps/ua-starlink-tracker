@@ -1,18 +1,24 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { listedWording } from "../api/check-flight-core";
 import {
   type AnswerContext,
+  CALENDAR_OFFER_ID,
   type FlightAnswer,
+  calendarOffered,
   datePassed,
   renderFlightAnswer,
 } from "../client/flight-answer";
 import type { PopularFlight } from "../database/database";
 import { SEATBACK_LIVE_TV_COPY } from "../utils/aircraft-specs";
-import { AIRPORT_TZ, airportTimezone } from "../utils/airport-tz";
+import { AIRPORT_TZ, airportTimezone, flightDateWindow } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
 import { PopularFlightsLinks } from "./atoms";
 import { FlightFactBlocks } from "./check-flight/fact-blocks";
+import { SWAP_CAVEAT, firmLead } from "./check-flight/firm-lead";
+import { PlaneSwapNote } from "./check-flight/plane-swap";
 import type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
+import { usualSummary } from "./check-flight/usual";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, scriptSafeJson } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
 import {
@@ -25,13 +31,21 @@ import {
   Section,
   SectionTitle,
 } from "./layout";
-import { bandLabel, capitalize, flightShare, fmt, probPhrase } from "./ui/format";
+import { wholeDates, zonedIsoDate } from "./ui/format";
 
-export type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
+export type {
+  AssignedDeparture,
+  DatedAnswer,
+  FlightFacts,
+  InvalidFlightQuery,
+} from "./check-flight/types";
 
 interface CheckFlightPageProps {
   site: SiteConfig;
   flight?: FlightFacts;
+  /** A well-formed number we hold no rows for: no facts to show, but the page
+   * still names it and keeps it in the form rather than dropping what was typed. */
+  unknownFlight?: string;
   invalid?: InvalidFlightQuery;
   dated?: DatedAnswer;
   /** Rendered on the generic (non-permalink) page only — permalinks link
@@ -51,36 +65,27 @@ const AIRPORT_ZONES: Record<string, string> = (() => {
   return byZone;
 })();
 
-/** The undated answer: how often this flight gets Starlink, number first.
- * Prefers the model's number (the one the API and MCP quote) over the raw
- * check tally. */
-function usualSummary(flight: FlightFacts): string {
-  const fn = flight.flightNumber;
-  const pred = flight.prediction;
-  if (pred && pred.n_observations > 0) return `${capitalize(flightShare(pred.probability, fn))}.`;
-  const rule = flight.typeRule;
-  if (rule) {
-    const band = bandLabel(rule.label);
-    if (rule.probability >= 1)
-      return `Yes: ${fn} flies ${band} aircraft, and every one has Starlink.`;
-    if (rule.probability <= 0)
-      return `No: ${fn} flies ${band} aircraft, which don't have Starlink.`;
-    return `${capitalize(probPhrase(rule.probability))} of the ${band} aircraft that fly ${fn} have Starlink.`;
-  }
-  const { observedStarlink: s, observedTotal: n } = flight;
-  if (n > 0) return `The aircraft had Starlink in ${fmt(s)} of ${fmt(n)} recent checks.`;
-  return `No Starlink history for ${fn} yet.`;
-}
-
 /** A type rule of all or nothing: no date can change the answer. */
 const typeSettled = (flight: FlightFacts) =>
   !flight.prediction?.n_observations &&
   !!flight.typeRule &&
+  !flight.typeRule.aircraft &&
+  flight.typeRule.probability !== null &&
   (flight.typeRule.probability >= 1 || flight.typeRule.probability <= 0);
 
-function answerContext(site: SiteConfig, dated: DatedAnswer, flight?: FlightFacts): AnswerContext {
+/** The flight has a number to quote for other dates, not just "no history yet". */
+const hasUsualFigure = (flight: FlightFacts) =>
+  !!flight.prediction?.n_observations || !!flight.typeRule || flight.observedTotal > 0;
+
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+export function answerContext(
+  site: SiteConfig,
+  dated: DatedAnswer,
+  flight?: FlightFacts
+): AnswerContext {
   const cfg = siteAirline(site);
-  const origin = flight?.routes[0]?.departure_airport ?? null;
+  const origin = dated.leg?.origin ?? flight?.routes[0]?.departure_airport ?? null;
   return {
     flightNumber: dated.flightNumber,
     date: dated.date,
@@ -89,10 +94,12 @@ function answerContext(site: SiteConfig, dated: DatedAnswer, flight?: FlightFact
     originZone: origin ? (airportTimezone(origin) ?? null) : null,
     nowSec: Math.floor(Date.now() / 1000),
     airlineName: cfg.name,
+    listedStatus: listedWording(cfg).status,
     zoneFor: (code) => airportTimezone(code),
     liveTv: site.features.liveTvPage ? SEATBACK_LIVE_TV_COPY : null,
     watchEnabled: watchFeedEnabled(site),
     routePlannerEnabled: site.features.routePlannerPage,
+    tailPages: site.features.tailPages,
     host: site.canonicalHost,
   };
 }
@@ -102,28 +109,77 @@ function InvalidQueryNotice({
   example,
   shortName,
   showRoutePlanner,
+  showFleet,
 }: {
   invalid: InvalidFlightQuery;
   example: string;
   shortName: string;
   showRoutePlanner: boolean;
+  showFleet: boolean;
 }) {
   const quoted = invalid.query ? `“${invalid.query}”` : "That";
+  const { elsewhere } = invalid;
   return (
     <div className="mb-4 rounded border border-subtle bg-surface-elevated p-4 text-sm">
       {invalid.reason === "other-carrier" ? (
+        <>
+          <p className="text-primary">
+            {`${quoted} isn't ${article(shortName)} ${shortName} flight number. This site checks ${shortName} flights only.`}
+          </p>{" "}
+          {invalid.didYouMean && (
+            <p className="mt-2 text-secondary">
+              {`${shortName} flight numbers start with ${invalid.didYouMean.replace(/\d+$/, "")}. `}
+              <a href={`/check-flight/${invalid.didYouMean}`} className={LINK}>
+                {`Check ${invalid.didYouMean}`}
+              </a>
+              ?
+            </p>
+          )}{" "}
+          {elsewhere && (
+            // A deliberate cross-site mention, marked like the footer's.
+            <p data-cross-site-links className="mt-2 text-secondary">
+              {elsewhere.kind === "hub" && "Our "}
+              {elsewhere.kind === "airlines" && "We don't track every airline. "}
+              <a href={elsewhere.href} className={LINK}>
+                {elsewhere.label}
+              </a>
+              {elsewhere.kind === "hub" ? " checks flights of the other airlines we track." : "."}
+            </p>
+          )}
+        </>
+      ) : invalid.reason === "tail" ? (
         <p className="text-primary">
-          {`${quoted} isn't ${article(shortName)} ${shortName} flight number.`}
+          {`${quoted} looks like an aircraft tail number, not a flight number, and it isn't one of the ${shortName} aircraft we track. Enter a flight number like `}
+          <span className="font-mono">{example}</span>
+          {showFleet ? (
+            <>
+              , or{" "}
+              <a href="/fleet" className={LINK}>
+                {`see every ${shortName} aircraft`}
+              </a>
+              .
+            </>
+          ) : (
+            "."
+          )}
         </p>
       ) : (
         <p className="text-secondary">
+          {invalid.tooManyDigits && `${shortName} flight numbers have at most four digits. `}
           Try something like <span className="font-mono">{example}</span>.
         </p>
-      )}
+      )}{" "}
       {invalid.airportHint && showRoutePlanner && (
         <p className="mt-2 text-secondary">
           Looking for an airport or a route? Try the{" "}
-          <a href="/route-planner" className={LINK}>
+          <a
+            href={
+              invalid.airportCode
+                ? `/route-planner?origin=${invalid.airportCode}`
+                : "/route-planner"
+            }
+            className={LINK}
+          >
             route planner
           </a>
           .
@@ -136,6 +192,7 @@ function InvalidQueryNotice({
 export default function CheckFlightPage({
   site,
   flight,
+  unknownFlight,
   invalid,
   dated,
   popular = [],
@@ -146,7 +203,7 @@ export default function CheckFlightPage({
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
   const host = site.canonicalHost;
-  const fn = flight?.flightNumber ?? dated?.flightNumber;
+  const fn = flight?.flightNumber ?? dated?.flightNumber ?? unknownFlight;
   const flightExample = fn ?? `${cfg.iata}123`;
   const shortName = cfg.shortName;
 
@@ -181,16 +238,46 @@ export default function CheckFlightPage({
   const title = invalid
     ? invalid.reason === "other-carrier"
       ? `Not ${article(shortName)} ${shortName} flight`
-      : `${invalid.query ? `“${invalid.query}”` : "That"} isn't a flight number`
+      : invalid.reason === "tail"
+        ? `Not ${article(shortName)} ${shortName} aircraft we track`
+        : `${invalid.query ? `“${invalid.query}”` : "That"} isn't a flight number`
     : fn
       ? `Does ${fn} have Starlink Wi-Fi?`
       : `Does my ${shortName} flight have Starlink?`;
+  // An assigned next departure with a settled aircraft opens the page; the
+  // odds then describe the other dates instead of standing in for an answer.
+  const assigned = !invalid && !answer ? (flight?.nextAssigned ?? null) : null;
   const dek =
     invalid || answer
       ? undefined
-      : flight
-        ? `${usualSummary(flight)}${typeSettled(flight) ? "" : " A firm answer comes about 2 days before departure, once the aircraft is assigned."}`
-        : "Enter your flight number and date to see whether your aircraft has Starlink.";
+      : flight && assigned
+        ? firmLead(flight, assigned)
+        : flight
+          ? `${wholeDates(usualSummary(flight))}${typeSettled(flight) ? "" : " A firm answer comes about 2 days before departure, once the aircraft is assigned."}`
+          : fn
+            ? `Pick your travel date to check ${fn}.`
+            : "Enter your flight number and date to see whether your aircraft has Starlink.";
+  // The assigned departure's dated page carries the calendar links; null where
+  // no feed serves it (the hub, Qatar, a date already over at the airport).
+  const assignedDate = assigned ? zonedIsoDate(assigned.departure, assigned.departureZone) : null;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const calendarHref =
+    fn &&
+    assigned &&
+    assignedDate &&
+    calendarOffered({
+      watchEnabled: watchFeedEnabled(site),
+      date: assignedDate,
+      daysOut: flightDateWindow(assignedDate, nowSec)?.daysOut ?? 0,
+      nowSec,
+      originZone: assigned.departureZone,
+    })
+      ? `/check-flight/${fn}/${assignedDate}#${CALENDAR_OFFER_ID}`
+      : null;
+  const otherDates =
+    flight && assigned && !typeSettled(flight) && hasUsualFigure(flight)
+      ? `On other dates: ${lowerFirst(usualSummary(flight))}`
+      : null;
 
   const scheduledOnDate = answer?.firm === true;
   const crumbs = [
@@ -203,10 +290,28 @@ export default function CheckFlightPage({
 
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
-      <PageHeader title={title} dek={dek} />
+      <PageHeader title={title} dek={dek}>
+        {assigned && (
+          <p id="assignment-caveat" className="mx-auto max-w-2xl text-sm text-muted text-pretty">
+            {SWAP_CAVEAT}
+            {otherDates ? ` ${otherDates}` : ""}
+            {calendarHref && (
+              <>
+                {" "}
+                <a href={calendarHref} rel="nofollow" className={LINK}>
+                  Add this departure to your calendar
+                </a>
+                : the event changes if we see a different aircraft on the flight.
+              </>
+            )}
+          </p>
+        )}
+      </PageHeader>
 
       {answer && (
         <Section bare>
+          {/* Above the card: a changed plane is what a traveller who checked before needs first. */}
+          {answer.firm && dated?.swap && <PlaneSwapNote swap={dated.swap} />}
           <div
             id="flight-answer"
             aria-live="polite"
@@ -225,8 +330,9 @@ export default function CheckFlightPage({
               example={flightExample}
               shortName={shortName}
               showRoutePlanner={site.features.routePlannerPage}
+              showFleet={site.features.fleetPage}
             />
-          )}
+          )}{" "}
           <FlightSearchForm
             site={site}
             id="check-flight-form"
@@ -249,7 +355,7 @@ export default function CheckFlightPage({
         </Panel>
       </Section>
 
-      {flight && <FlightFactBlocks flight={flight} scheduledOnDate={scheduledOnDate} />}
+      {flight && <FlightFactBlocks site={site} flight={flight} scheduledOnDate={scheduledOnDate} />}
       {!flight && popular.length > 0 && (
         <Section bare>
           <PopularFlightsLinks flights={popular} airlineName={cfg.name} />
@@ -264,7 +370,7 @@ export default function CheckFlightPage({
               homepage
             </a>
             .
-          </li>
+          </li>{" "}
           {site.features.chromeExtension && (
             <li>
               Shopping on Google Flights? The free{" "}
@@ -273,7 +379,7 @@ export default function CheckFlightPage({
               </a>{" "}
               marks {shortName} flights that have Starlink.
             </li>
-          )}
+          )}{" "}
           {flight && site.features.fleetPage && (
             <li>
               See every {airlineName} aircraft on the{" "}
@@ -301,6 +407,7 @@ export default function CheckFlightPage({
               nowSec: undefined,
               refresh,
               zones: refresh ? AIRPORT_ZONES : {},
+              ...(dated.leg ? { leg: dated.leg } : {}),
             }),
           }}
         />

@@ -3,21 +3,40 @@
  * tail's upcoming flights as pills. The list is server-rendered and capped;
  * src/client/aircraft-list.ts filters the rendered rows in place.
  */
+import { Fragment } from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
-import { ensureAirlinePrefix } from "../../airlines/flight-number";
+import {
+  ensureAirlinePrefix,
+  icaoCallsignToIata,
+  isFlightZero,
+  marketedRowFlightNumber,
+} from "../../airlines/flight-number";
+import {
+  BY_TYPE_METHOD,
+  BY_TYPE_TAB_NOTE,
+  countedNames,
+  listed,
+  splitByMethod,
+  trackingMethod,
+} from "../../airlines/published-count";
 import { AIRLINES, type AirlineConfig } from "../../airlines/registry";
 import { FILTER_ACTIVE, FILTER_BUTTON, FILTER_INACTIVE } from "../../client/aircraft-list";
 import type { Aircraft, Flight } from "../../types";
 import { toIata } from "../../utils/airport-code";
-import { Panel, SECTION_WIDE, SectionTitle } from "../layout";
+import { Panel, SECTION_WIDE, SectionTitle, SkipLink, SkipTarget } from "../layout";
 import { fmt, formatPillTime } from "../ui/format";
 
 // SSR'ing every fleet row made the homepage a ~5 MB document with thousands of
 // outbound links. The list is sorted freshest-first, so the first rows carry
-// nearly all the value. Search and filters run over the rendered rows only, so
-// chip counts describe those rows and a miss points at /fleet, which lists all.
+// nearly all the value. Search and filters run over the rendered rows only: a
+// tab still counts every aircraft of its kind (a count of the rendered rows
+// read as "Hawaiian has none"), the note under the list says how many are
+// shown, and a miss points at /fleet, which lists all.
 const AIRCRAFT_LIST_CAP = 100;
+
+// Keeps the arrow on the link's line where the note wraps.
+const NBSP = "\u00a0";
 
 // Pills per row before the "+N" button, by breakpoint: mobile, md, xl.
 const PILLS_SM = 2;
@@ -40,7 +59,9 @@ export function operatorName(raw: string | null | undefined): string {
  * The pill carries the OPERATING carrier's callsign (OO4757, SKW5366) but the
  * permalink is minted under the marketing code, so this goes through
  * ensureAirlinePrefix — never a bare prefix strip, which turns G74561 into
- * UA74561 instead of UA4561. Non-numeric callsigns (SKW394Y) normalize to
+ * UA74561 instead of UA4561. The row is already the site's own airline, so a
+ * shared operator's callsign (OO3053 on an Alaska row) maps too, the same
+ * number the pill prints. Non-numeric callsigns (SKW394Y) normalize to
  * themselves and a foreign carrier's number belongs to no permalink this site
  * serves; both stay outbound rather than landing on the noindex generic page.
  */
@@ -50,19 +71,37 @@ function permalinker(airline: AirlineConfig | null, airlineByTail: Record<string
   return (tailNumber: string, flightNumber: string): string | null => {
     if (!airline || !pattern) return null;
     if ((airlineByTail[tailNumber] || airline.code) !== airline.code) return null;
-    const fn = ensureAirlinePrefix(airline, flightNumber);
-    return pattern.test(fn) ? `/check-flight/${fn}` : null;
+    const fn = ensureAirlinePrefix(airline, marketedRowFlightNumber(airline, flightNumber));
+    return pattern.test(fn) && !isFlightZero(fn) ? `/check-flight/${fn}` : null;
   };
+}
+
+/**
+ * The number a row's flight is sold under: UA4757 for OO4757, AS3053 for an
+ * Alaska row's OO3053. The row's airline is settled, so shared operators
+ * (SkyWest flies for both) map too; a callsign with no number (SKW394Y)
+ * stays as stored. A partner's own callsign maps to that partner's number:
+ * a Hawaiian tail flying Alaska's ASA800 prints AS800, the number it is sold
+ * under, rather than the radio callsign.
+ */
+function rowMarketingNumber(rowAirline: AirlineConfig | undefined, flightNumber: string): string {
+  const own = rowAirline
+    ? ensureAirlinePrefix(rowAirline, marketedRowFlightNumber(rowAirline, flightNumber))
+    : flightNumber;
+  return own === flightNumber ? icaoCallsignToIata(flightNumber) : own;
 }
 
 function FlightPills({
   tailNumber,
   flights,
   permalink,
+  rowAirline,
 }: {
   tailNumber: string;
   flights: Flight[];
   permalink: (tail: string, fn: string) => string | null;
+  /** The row's airline, whose marketing number each pill shows. */
+  rowAirline: AirlineConfig | undefined;
 }) {
   if (flights.length === 0) {
     return <span className="text-muted text-xs italic font-mono">No flights scheduled</span>;
@@ -95,39 +134,42 @@ function FlightPills({
         // is the same either way, and deduping would point one flight number at
         // two destinations in one row.
         const href = permalink(tailNumber, flight.flight_number);
-        // The tooltip names the destination: the marketing number the
-        // permalink is filed under rather than the operating callsign.
-        const tooltip = href ? href.slice("/check-flight/".length) : flight.flight_number;
+        // The marketing number a traveller books and searches (UA4757, not the
+        // operating callsign OO4757): the one the permalink is filed under, and
+        // the one the list's search index holds.
+        const number = rowMarketingNumber(rowAirline, flight.flight_number);
         // departure_time is a UTC epoch; the clock is pinned to UTC and named,
         // 24-hour like /check-flight/{fn}, so the two read as one clock. From md
         // up the column header names the zone, so the pill drops it.
         const clock = formatPillTime(flight.departure_time);
         return (
-          <a
-            // biome-ignore lint/suspicious/noArrayIndexKey: a tail can fly one number twice
-            key={idx}
-            href={href ?? `https://www.flightaware.com/live/flight/${flight.flight_number}`}
-            {...(href ? {} : { target: "_blank", rel: "nofollow noopener noreferrer" as const })}
-            data-flight-tooltip={tooltip}
-            // The visible text is an airport pair and a clock; the label restates
-            // it with the flight number for screen readers (WCAG 2.5.3).
-            aria-label={`Flight ${tooltip}, ${dep} to ${arr}, departs ${clock} UTC`}
-            className={`flight-pill ${visibility}`}
-          >
-            <span className="text-accent font-medium">{dep}</span>
-            <span className="text-muted">→</span>
-            <span className="text-accent font-medium">{arr}</span>
-            <span className="text-muted text-[10px]">
-              {clock}
-              <span className="md:hidden"> UTC</span>
-            </span>
-          </a>
+          // biome-ignore lint/suspicious/noArrayIndexKey: a tail can fly one number twice
+          <Fragment key={idx}>
+            <a
+              href={href ?? `https://www.flightaware.com/live/flight/${flight.flight_number}`}
+              {...(href ? {} : { target: "_blank", rel: "nofollow noopener noreferrer" as const })}
+              // The label speaks the visible words as a sentence ("STL to EWR"
+              // rather than an arrow) and keeps every one of them, so speech
+              // input can name the pill by what it shows (WCAG 2.5.3).
+              aria-label={`Flight ${number}, ${dep} to ${arr}, departs ${clock} UTC`}
+              className={`flight-pill ${visibility}`}
+            >
+              {/* A bare <b>: ~1,000 pills a page, styled once under .flight-pill. */}
+              <b>{number}</b> <span className="text-accent font-medium">{dep}</span>{" "}
+              <span className="text-muted">→</span>{" "}
+              <span className="text-accent font-medium">{arr}</span>{" "}
+              <span className="text-muted text-[10px]">
+                {clock}
+                <span className="md:hidden"> UTC</span>
+              </span>
+            </a>{" "}
+          </Fragment>
         );
       })}
       {mobileRemaining > 0 && (
         <button
           type="button"
-          className={`expand-flights ${expandVisibility} items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10`}
+          className={`expand-flights ${expandVisibility} items-center px-2 py-1 border border-accent/70 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10`}
           aria-expanded="false"
         >
           <span className="pill-more">
@@ -136,8 +178,14 @@ function FlightPills({
               <span className="hidden md:inline xl:hidden">+{tabletRemaining}</span>
             )}
             {desktopRemaining > 0 && <span className="hidden xl:inline">+{desktopRemaining}</span>}
+            {/* Only the count for this width is displayed, so the button's
+                name reads "+4 more flights" rather than a bare "+4". */}
+            <span className="sr-only"> more flights</span>
           </span>
-          <span className="pill-less">−</span>
+          <span className="pill-less">
+            <span aria-hidden="true">−</span>
+            <span className="sr-only">Show fewer flights</span>
+          </span>
         </button>
       )}
     </div>
@@ -153,18 +201,48 @@ function searchIndex(flights: Flight[], rowAirline: AirlineConfig | undefined) {
   return {
     airports: pairs.flat().join(" "),
     routes: pairs.flatMap(([d, a]) => [`${d}-${a}`, `${a}-${d}`]).join(" "),
-    // The raw callsign plus its marketing number (ensureAirlinePrefix), so a
-    // G7-coded flight is findable by the UA number its pill shows.
+    // The raw callsign plus the marketing number its pill shows, so a G7-coded
+    // flight is findable by its UA number.
     flights: flights
       .flatMap((f) => {
-        const marketing = rowAirline
-          ? ensureAirlinePrefix(rowAirline, f.flight_number)
-          : f.flight_number;
+        const marketing = rowMarketingNumber(rowAirline, f.flight_number);
         return marketing === f.flight_number ? [f.flight_number] : [f.flight_number, marketing];
       })
       .join(" ")
       .toLowerCase(),
   };
+}
+
+/**
+ * "89 of the 134 United and Alaska aircraft counted on this site, and 11 of
+ * Hawaiian's 42 on our fleet list, counted by aircraft type, not checked plane
+ * by plane": the rows a capped list shows, each kind against its own whole.
+ * The two wholes are never added: only one of them is a count of aircraft.
+ */
+function capParts(
+  aircraft: Aircraft[],
+  shown: Aircraft[],
+  airlineOf: (p: Aircraft) => string
+): string | null {
+  const per = (rows: Aircraft[]) => {
+    const n = new Map<string, number>();
+    for (const p of rows) n.set(airlineOf(p), (n.get(airlineOf(p)) ?? 0) + 1);
+    return n;
+  };
+  const all = per(aircraft);
+  const inView = per(shown);
+  const split = splitByMethod([...all].map(([code, starlink]) => ({ code, starlink, total: 0 })));
+  if (split.byType.length === 0 || split.counted.starlink === 0) return null;
+  const of = (n: number) => (n === 0 ? "none" : fmt(n));
+  const shownByType = split.byType.reduce((s, b) => s + (inView.get(b.cfg.code) ?? 0), 0);
+  return [
+    `${of(shown.length - shownByType)} of the ${fmt(split.counted.starlink)} ${countedNames(split)} aircraft counted on this site`,
+    `${listed(
+      split.byType.map(
+        (b) => `${of(inView.get(b.cfg.code) ?? 0)} of ${b.cfg.shortName}'s ${fmt(b.sum)}`
+      )
+    )} on our fleet list, ${BY_TYPE_METHOD}`,
+  ].join(", and ");
 }
 
 export function AircraftList({
@@ -175,6 +253,7 @@ export function AircraftList({
   permalinkAirline,
   showFleetLink,
   fleetTotal,
+  tailPages = false,
   title = "Aircraft with Starlink",
 }: {
   /** Every equipped tail, freshest flight data first. */
@@ -187,6 +266,8 @@ export function AircraftList({
   showFleetLink: boolean;
   /** Every aircraft /fleet lists, equipped or not: where a missed search falls back to. */
   fleetTotal: number;
+  /** /fleet/{tail} serves for the permalink airline's planes. */
+  tailPages?: boolean;
   /** Names the scope where it is narrower than the page's headline count. */
   title?: string;
 }) {
@@ -195,10 +276,28 @@ export function AircraftList({
   const shown = aircraft.slice(0, AIRCRAFT_LIST_CAP);
   const capped = aircraft.length > shown.length;
   const subfleetCount = (key: string) =>
-    shown.filter((p) => p.fleet === key || airlineOf(p) === key).length;
+    aircraft.filter((p) => p.fleet === key || airlineOf(p) === key).length;
+  // A list over several airlines may hold one known by aircraft type: its tab
+  // says so, and no figure adds its rows to the aircraft counted one by one.
+  const byTypeKeys = new Set(
+    content.subfleetFilters
+      .map((f) => f.key)
+      .filter((key) => AIRLINES[key] && trackingMethod(AIRLINES[key]) === "type")
+  );
+  const mixed = byTypeKeys.size > 0 && byTypeKeys.size < content.subfleetFilters.length;
+  // Past the cap such a list says how many rows it shows of each kind, apart.
+  const shownParts = mixed && capped ? capParts(aircraft, shown, airlineOf) : null;
+  const countLabel = !capped
+    ? ""
+    : shownParts
+      ? `${fmt(shown.length)} shown`
+      : `${fmt(shown.length)} of ${fmt(aircraft.length)}`;
 
   return (
     <Panel pad="none" className={`${SECTION_WIDE} overflow-hidden`}>
+      {/* Each row is a link, its flight pills and a "+N" button: without this a
+          keyboard heading for what follows walks every one of them. */}
+      {shown.length > 0 && <SkipLink to="aircraft-list-end">Skip the aircraft list</SkipLink>}
       <SectionTitle className="px-4 md:px-6 pt-4 pb-0">{title}</SectionTitle>
       <div className="px-4 md:px-6 py-3 border-b border-subtle">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -210,15 +309,14 @@ export function AircraftList({
               type="text"
               id="aircraft-search"
               placeholder="Tail, route (sfo-lax) or flight"
-              className="w-full font-mono text-xs sm:text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+              className="w-full font-mono text-xs sm:text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
             />
             <svg
               className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
-              role="img"
-              aria-label="Search icon"
+              aria-hidden="true"
             >
               <path
                 strokeLinecap="round"
@@ -233,13 +331,7 @@ export function AircraftList({
               className="absolute right-2 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted hover:text-primary transition-colors hidden"
               aria-label="Clear search"
             >
-              <svg
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                role="img"
-                aria-label="Clear"
-              >
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -248,48 +340,53 @@ export function AircraftList({
                 />
               </svg>
             </button>
-          </div>
+          </div>{" "}
           <div
             id="search-count"
             aria-live="polite"
-            data-default={capped ? `${fmt(shown.length)} of ${fmt(aircraft.length)}` : ""}
+            data-default={countLabel}
             className="hidden sm:flex items-center text-xs font-mono text-muted whitespace-nowrap"
           >
-            {capped ? `${fmt(shown.length)} of ${fmt(aircraft.length)}` : null}
-          </div>
+            {countLabel || null}
+          </div>{" "}
           <div className="flex gap-1.5 sm:gap-2">
             <button
               type="button"
               id="filter-all"
               className={`${FILTER_BUTTON} ${FILTER_ACTIVE}`}
+              aria-pressed="true"
               data-filter="all"
               data-count={shown.length}
             >
-              ALL <span className="hidden sm:inline">({fmt(shown.length)})</span>
-            </button>
+              ALL
+              {mixed ? null : <span className="hidden sm:inline"> ({fmt(aircraft.length)})</span>}
+            </button>{" "}
             {content.subfleetFilters.length > 1 &&
               content.subfleetFilters.map((card) => (
-                <button
-                  key={card.key}
-                  type="button"
-                  id={`filter-${card.key}`}
-                  className={`${FILTER_BUTTON} ${FILTER_INACTIVE}`}
-                  data-filter={card.key}
-                >
-                  {card.label.toUpperCase()}{" "}
-                  <span className="hidden sm:inline">({fmt(subfleetCount(card.key))})</span>
-                </button>
+                <Fragment key={card.key}>
+                  <button
+                    type="button"
+                    id={`filter-${card.key}`}
+                    className={`${FILTER_BUTTON} ${FILTER_INACTIVE}`}
+                    aria-pressed="false"
+                    data-filter={card.key}
+                  >
+                    {card.label.toUpperCase()}{" "}
+                    <span className="hidden sm:inline">
+                      ({fmt(subfleetCount(card.key))}
+                      {byTypeKeys.has(card.key) ? ` ${BY_TYPE_TAB_NOTE}` : ""})
+                    </span>
+                  </button>{" "}
+                </Fragment>
               ))}
           </div>
         </div>
-      </div>
+      </div>{" "}
       <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-2.5 border-b border-subtle bg-surface-elevated/50 text-xs font-mono text-muted uppercase tracking-widest">
-        <div className="col-span-3">Aircraft</div>
-        <div className="col-span-2">Type</div>
-        <div className="col-span-3">Operator</div>
-        <div className="col-span-4">Upcoming flights (UTC)</div>
-      </div>
-
+        <div className="col-span-2">Aircraft</div> <div className="col-span-2">Type</div>{" "}
+        <div className="col-span-2">Operator</div>{" "}
+        <div className="col-span-6">Upcoming flights (UTC)</div>
+      </div>{" "}
       <div className="overflow-auto" style={{ maxHeight: "65vh" }}>
         {aircraft.length === 0 ? (
           <div className="p-12 text-center text-muted font-mono">
@@ -303,68 +400,73 @@ export function AircraftList({
               const flights = flightsByTail[plane.TailNumber] || [];
               const index = searchIndex(flights, AIRLINES[airline]);
               return (
-                <div
-                  key={plane.TailNumber || idx}
-                  className="js-aircraft-row group px-4 md:px-6 py-4 hover:bg-surface-elevated transition-all duration-200 cursor-default border-l-2 border-transparent hover:border-accent"
-                  data-tail={plane.TailNumber.toLowerCase()}
-                  data-aircraft={`${plane.Aircraft} ${aircraftName(plane.Aircraft)}`.toLowerCase()}
-                  data-operator={(plane.OperatedBy || "").toLowerCase()}
-                  data-fleet={plane.fleet}
-                  data-airline={airline}
-                  data-airports={index.airports}
-                  data-routes={index.routes}
-                  data-flights={index.flights}
-                >
-                  <div className="md:grid md:grid-cols-12 md:gap-4 md:items-center">
-                    <div className="md:col-span-3 flex items-start md:items-center justify-between md:justify-start gap-3 mb-3 md:mb-0">
-                      <div className="flex items-center gap-3">
-                        <div className="status-dot flex-shrink-0" />
-                        <div>
-                          <div className="font-mono text-base md:text-sm font-bold md:font-semibold text-primary group-hover:text-accent transition-colors">
-                            {plane.TailNumber}
+                <Fragment key={plane.TailNumber || idx}>
+                  <div
+                    className="js-aircraft-row group px-4 md:px-6 py-4 hover:bg-surface-elevated transition-all duration-200 cursor-default border-l-2 border-transparent hover:border-accent"
+                    data-tail={plane.TailNumber.toLowerCase()}
+                    data-aircraft={`${plane.Aircraft} ${aircraftName(plane.Aircraft)}`.toLowerCase()}
+                    data-operator={(plane.OperatedBy || "").toLowerCase()}
+                    data-fleet={plane.fleet}
+                    data-airline={airline}
+                    data-airports={index.airports}
+                    data-routes={index.routes}
+                    data-flights={index.flights}
+                  >
+                    <div className="md:grid md:grid-cols-12 md:gap-4 md:items-center">
+                      <div className="md:col-span-2 flex items-start md:items-center justify-between md:justify-start gap-3 mb-3 md:mb-0">
+                        <div className="flex items-center gap-3">
+                          <div className="status-dot flex-shrink-0" />{" "}
+                          <div>
+                            <div className="font-mono text-base md:text-sm font-bold md:font-semibold text-primary group-hover:text-accent transition-colors">
+                              {tailPages && airline === permalinkAirline?.code ? (
+                                <a href={`/fleet/${plane.TailNumber}`} className="hover:underline">
+                                  {plane.TailNumber}
+                                </a>
+                              ) : (
+                                plane.TailNumber
+                              )}
+                            </div>{" "}
+                            <div className="md:hidden font-mono text-xs text-secondary">
+                              {aircraftName(plane.Aircraft)}
+                            </div>{" "}
+                            {badge && (
+                              <div className="hidden md:block text-xs font-mono text-muted uppercase">
+                                {badge}
+                              </div>
+                            )}
                           </div>
-                          <div className="md:hidden font-mono text-xs text-secondary">
-                            {aircraftName(plane.Aircraft)}
+                        </div>{" "}
+                        {badge && (
+                          <div className="md:hidden text-xs font-mono text-accent uppercase">
+                            {badge}
                           </div>
-                          {badge && (
-                            <div className="hidden md:block text-xs font-mono text-muted uppercase">
-                              {badge}
-                            </div>
-                          )}
-                        </div>
+                        )}
+                      </div>{" "}
+                      <div className="hidden md:block md:col-span-2">
+                        <span className="font-mono text-sm text-secondary">
+                          {aircraftName(plane.Aircraft)}
+                        </span>
+                      </div>{" "}
+                      <div className="md:col-span-2 text-xs md:text-sm text-muted mb-3 md:mb-0 pl-5 md:pl-0">
+                        {badge && plane.OperatedBy === AIRLINES[airline]?.name
+                          ? null
+                          : operatorName(plane.OperatedBy) || "—"}
+                      </div>{" "}
+                      <div className="md:col-span-6 pt-3 md:pt-0 border-t md:border-t-0 border-subtle">
+                        <FlightPills
+                          tailNumber={plane.TailNumber}
+                          flights={flights}
+                          permalink={permalink}
+                          rowAirline={AIRLINES[airline]}
+                        />
                       </div>
-                      {badge && (
-                        <div className="md:hidden text-xs font-mono text-accent uppercase">
-                          {badge}
-                        </div>
-                      )}
                     </div>
-
-                    <div className="hidden md:block md:col-span-2">
-                      <span className="font-mono text-sm text-secondary">
-                        {aircraftName(plane.Aircraft)}
-                      </span>
-                    </div>
-
-                    <div className="md:col-span-3 text-xs md:text-sm text-muted mb-3 md:mb-0 pl-5 md:pl-0">
-                      {badge && plane.OperatedBy === AIRLINES[airline]?.name
-                        ? null
-                        : operatorName(plane.OperatedBy) || "—"}
-                    </div>
-
-                    <div className="md:col-span-4 pt-3 md:pt-0 border-t md:border-t-0 border-subtle">
-                      <FlightPills
-                        tailNumber={plane.TailNumber}
-                        flights={flights}
-                        permalink={permalink}
-                      />
-                    </div>
-                  </div>
-                </div>
+                  </div>{" "}
+                </Fragment>
               );
             })}
             <div id="list-empty" hidden className="px-4 md:px-6 py-10 text-center text-sm">
-              <p className="text-secondary">No aircraft match.</p>
+              <p className="text-secondary">No aircraft match.</p>{" "}
               {showFleetLink && (
                 <p className="mt-1 text-muted">
                   <a
@@ -380,23 +482,29 @@ export function AircraftList({
             </div>
           </div>
         )}
-      </div>
+      </div>{" "}
+      {/* A paragraph, so index.html's rule underlines the accent link in it. */}
       {capped && (
-        <div
+        <p
           id="list-cap"
           className="px-4 md:px-6 py-3 border-t border-subtle text-center text-sm text-muted"
         >
-          The {fmt(shown.length)} most recently flown of {fmt(aircraft.length)}. Search covers only
-          these.
+          {shownParts
+            ? `The ${fmt(shown.length)} most recently flown: ${shownParts}.`
+            : `The ${fmt(shown.length)} most recently flown of ${fmt(aircraft.length)}.`}{" "}
+          Search covers only these.
           {showFleetLink && (
             <>
               {" "}
-              <a href="/fleet" className="text-accent hover:underline">
-                See all →
+              <a href="/fleet" className="text-accent">
+                See all{NBSP}→
               </a>
             </>
           )}
-        </div>
+        </p>
+      )}{" "}
+      {shown.length > 0 && (
+        <SkipTarget id="aircraft-list-end">End of the aircraft list.</SkipTarget>
       )}
     </Panel>
   );

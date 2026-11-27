@@ -9,6 +9,7 @@ import { BASE_RESPONSE_HEADERS, MCP_CORS_HEADERS, SECURITY_HEADERS } from "../ut
 export { CORS_ANY_ORIGIN } from "../utils/constants";
 
 export const CACHE = {
+  noStore: "no-store",
   fiveMinutes: "public, max-age=300",
   fifteenMinutes: "public, max-age=900",
   hour: "public, max-age=3600",
@@ -16,6 +17,9 @@ export const CACHE = {
   day: "public, max-age=86400",
   year: "public, max-age=31536000, immutable",
 } as const;
+
+/** A public cache shorter than CACHE.hour, for a body that goes stale at a known second. */
+export const maxAge = (sec: number) => `public, max-age=${Math.max(0, Math.floor(sec))}`;
 
 export interface ResponseOptions {
   status?: number;

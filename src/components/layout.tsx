@@ -46,6 +46,16 @@ function brandName(site: SiteConfig): string {
   return `${AIRLINES[site.scope]?.shortName ?? site.brand.title} Starlink Tracker`;
 }
 
+/** Who runs the site, on every page: an airline's own tracker can carry
+ * nearly the same name, and a visitor should never take one for the other.
+ * The hub names no airline; a tenant names only its own. "Community-oriented",
+ * never "community-run": one person runs the site (README). */
+export function independenceLine(site: SiteConfig): string {
+  const airline =
+    site.scope === "ALL" ? "any airline" : (AIRLINES[site.scope]?.name ?? "the airline");
+  return `Independent, community-oriented and open source. Not affiliated with ${airline} or SpaceX.`;
+}
+
 function SiteBar({ site, currentPath }: { site: SiteConfig; currentPath?: string }) {
   const links = primaryNavLinks(site);
   const isCurrent = (href: string) =>
@@ -61,23 +71,25 @@ function SiteBar({ site, currentPath }: { site: SiteConfig; currentPath?: string
         aria-current={currentPath === "/" ? "page" : undefined}
       >
         {brandName(site)}
-      </a>
+      </a>{" "}
       {links.length > 0 && (
         <ul className="flex min-w-0 flex-wrap gap-x-4 gap-y-1 whitespace-nowrap sm:gap-x-5">
           {links.map((l) => (
-            <li key={l.href}>
-              <a
-                href={l.href}
-                aria-current={isCurrent(l.href) ? "page" : undefined}
-                className={
-                  isCurrent(l.href)
-                    ? "text-primary"
-                    : "text-secondary hover:text-accent transition-colors"
-                }
-              >
-                {l.label}
-              </a>
-            </li>
+            <React.Fragment key={l.href}>
+              <li>
+                <a
+                  href={l.href}
+                  aria-current={isCurrent(l.href) ? "page" : undefined}
+                  className={
+                    isCurrent(l.href)
+                      ? "text-primary"
+                      : "text-secondary hover:text-accent transition-colors"
+                  }
+                >
+                  {l.label}
+                </a>
+              </li>{" "}
+            </React.Fragment>
           ))}
         </ul>
       )}
@@ -109,9 +121,11 @@ export function Panel({
   ...rest
 }: Box & { pad?: keyof typeof PANEL_PAD }) {
   return (
-    <Tag className={`${SURFACE} ${PANEL_PAD[pad]} ${className}`} {...rest}>
-      {children}
-    </Tag>
+    <>
+      <Tag className={`${SURFACE} ${PANEL_PAD[pad]} ${className}`} {...rest}>
+        {children}
+      </Tag>{" "}
+    </>
   );
 }
 
@@ -127,10 +141,15 @@ export function Eyebrow({
   htmlFor?: string;
   children: React.ReactNode;
 }) {
+  // A block eyebrow is followed by a space: it draws nothing beside a block,
+  // and keeps the label off the next word in the page's plain text.
   return (
-    <Tag className={`${EYEBROW_TEXT} ${className}`} {...(htmlFor ? { htmlFor } : {})}>
-      {children}
-    </Tag>
+    <>
+      <Tag className={`${EYEBROW_TEXT} ${className}`} {...(htmlFor ? { htmlFor } : {})}>
+        {children}
+      </Tag>
+      {Tag !== "span" && Tag !== "label" && " "}
+    </>
   );
 }
 
@@ -138,7 +157,11 @@ export function SectionTitle({
   className = "",
   children,
 }: { className?: string; children: React.ReactNode }) {
-  return <h2 className={`${H2} ${className}`}>{children}</h2>;
+  return (
+    <>
+      <h2 className={`${H2} ${className}`}>{children}</h2>{" "}
+    </>
+  );
 }
 
 const STAT_SIZE = { md: "text-3xl", lg: "text-4xl", xl: "text-5xl sm:text-6xl" } as const;
@@ -158,31 +181,75 @@ export function StatValue({
   children: React.ReactNode;
 }) {
   return (
-    <div
-      className={`font-display ${STAT_SIZE[size]} leading-none tabular-nums ${accent ? "text-accent" : "text-primary"} ${className}`}
-    >
-      {children}
-      {unit && <span className="text-base text-muted"> {unit}</span>}
-    </div>
+    <>
+      <div
+        className={`font-display ${STAT_SIZE[size]} leading-none tabular-nums ${accent ? "text-accent" : "text-primary"} ${className}`}
+      >
+        {children}
+        {unit && <span className="text-base text-muted"> {unit}</span>}
+      </div>{" "}
+    </>
+  );
+}
+
+/** Shown only on keyboard focus, in the corner of its `relative` parent. */
+const SKIP_LINK =
+  "sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-2 focus:z-50 focus:rounded focus:border focus:border-accent focus:bg-surface-elevated focus:px-3 focus:py-2 focus:text-sm focus:text-primary";
+
+/**
+ * A way past a long run of links for a keyboard: first Tab stop of its
+ * `relative` section, landing on the `SkipTarget` after the run. The page's
+ * own skip link jumps the site bar; this jumps a list that can hold hundreds
+ * of stops before the footer.
+ */
+export function SkipLink({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <>
+      <a href={`#${to}`} className={SKIP_LINK}>
+        {children}
+      </a>{" "}
+    </>
+  );
+}
+
+/** A space in the page's plain text where a margin draws the gap on screen
+ * ("103/104 95%", "76 ft"): a crawler that doesn't render, or a reader that
+ * ignores layout, gets a word break, and the page draws nothing more. */
+export function TextGap() {
+  return <span className="sr-only"> </span>;
+}
+
+/** Where a SkipLink lands: focusable by script only, so the next Tab moves on from here. */
+export function SkipTarget({ id, children }: { id: string; children: React.ReactNode }) {
+  return (
+    <>
+      <p id={id} tabIndex={-1} className="sr-only">
+        {children}
+      </p>{" "}
+    </>
   );
 }
 
 type ButtonVariant = "primary" | "secondary";
 type ButtonSize = "sm" | "md" | "lg";
 
+// A bordered button's edge is border-neutral, like a field's: 3.2:1 on a panel
+// where border-subtle is 1.3:1 (WCAG 1.4.11 asks 3:1 of a control's boundary).
+// On hover a primary button's text goes to white: the accent on its own
+// deepened tint fell to 3.8:1.
 const BUTTON: Record<`${ButtonVariant}-${ButtonSize}`, string> = {
   "primary-sm":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-3 py-1.5 font-display text-sm text-accent transition-colors hover:bg-accent/30",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-3 py-1.5 font-display text-sm text-accent transition-colors hover:bg-accent/30 hover:text-primary",
   "primary-md":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-2 font-display text-accent transition-colors hover:bg-accent/30",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-2 font-display text-accent transition-colors hover:bg-accent/30 hover:text-primary",
   "primary-lg":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-3 font-display text-accent transition-colors hover:bg-accent/30",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-3 font-display text-accent transition-colors hover:bg-accent/30 hover:text-primary",
   "secondary-sm":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-subtle bg-surface-elevated px-3 py-1.5 font-display text-sm text-secondary transition-colors hover:border-accent hover:text-accent",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-neutral bg-surface-elevated px-3 py-1.5 font-display text-sm text-secondary transition-colors hover:border-accent hover:text-accent",
   "secondary-md":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-subtle bg-surface-elevated px-5 py-2 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-neutral bg-surface-elevated px-5 py-2 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
   "secondary-lg":
-    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-subtle bg-surface-elevated px-5 py-3 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-neutral bg-surface-elevated px-5 py-3 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
 };
 
 /** Classes for a <button> or a link styled as one. */
@@ -224,10 +291,14 @@ export function Chip({
   size?: keyof typeof CHIP;
   children: React.ReactNode;
 }) {
+  // Chips sit in a wrapping flex row, where the space after one draws nothing
+  // and keeps its label off the next one's in the page's plain text.
   return (
-    <a href={href} className={CHIP[size]}>
-      {children}
-    </a>
+    <>
+      <a href={href} className={CHIP[size]}>
+        {children}
+      </a>{" "}
+    </>
   );
 }
 
@@ -244,12 +315,17 @@ export function PageHeader({
   children?: React.ReactNode;
 }) {
   return (
-    <header className="relative mx-auto w-full max-w-3xl pt-8 pb-6 text-center">
-      {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
-      <h1 className={H1}>{title}</h1>
-      {dek && <p className="mx-auto mt-2 max-w-2xl text-base text-secondary text-pretty">{dek}</p>}
-      {children && <div className="mt-3">{children}</div>}
-    </header>
+    <>
+      <header className="relative mx-auto w-full max-w-3xl pt-8 pb-6 text-center">
+        {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
+        {eyebrow && " "}
+        <h1 className={H1}>{title}</h1>{" "}
+        {dek && (
+          <p className="mx-auto mt-2 max-w-2xl text-base text-secondary text-pretty">{dek}</p>
+        )}{" "}
+        {children && <div className="mt-3">{children}</div>}
+      </header>{" "}
+    </>
   );
 }
 
@@ -272,16 +348,20 @@ export function Section({
   className?: string;
   children: React.ReactNode;
 }) {
+  // The space after the section draws nothing between blocks, but keeps its
+  // last word off the next section's first in the page's plain text.
   return (
-    <section id={id} className={`${wide ? SECTION_WIDE : SECTION} ${className}`}>
-      {title && <SectionTitle>{title}</SectionTitle>}
-      {dek && <p className="mt-1 text-sm text-secondary text-pretty">{dek}</p>}
-      {bare ? (
-        <div className={title || dek ? "mt-4" : ""}>{children}</div>
-      ) : (
-        <Panel className={title || dek ? "mt-4" : ""}>{children}</Panel>
-      )}
-    </section>
+    <>
+      <section id={id} className={`${wide ? SECTION_WIDE : SECTION} ${className}`}>
+        {title && <SectionTitle>{title}</SectionTitle>}{" "}
+        {dek && <p className="mt-1 text-sm text-secondary text-pretty">{dek}</p>}{" "}
+        {bare ? (
+          <div className={title || dek ? "mt-4" : ""}>{children}</div>
+        ) : (
+          <Panel className={title || dek ? "mt-4" : ""}>{children}</Panel>
+        )}
+      </section>{" "}
+    </>
   );
 }
 
@@ -307,13 +387,17 @@ export function Th({
   optional?: boolean;
   children?: React.ReactNode;
 }) {
+  // The space after a cell draws nothing in a table row, and keeps the
+  // cell's last word off the next cell's first in the page's plain text.
   return (
-    <th
-      scope="col"
-      className={`${TH} ${numeric ? "text-right" : ""} ${optional ? "hidden sm:table-cell" : ""}`}
-    >
-      {children}
-    </th>
+    <>
+      <th
+        scope="col"
+        className={`${TH} ${numeric ? "text-right" : ""} ${optional ? "hidden sm:table-cell" : ""}`}
+      >
+        {children}
+      </th>{" "}
+    </>
   );
 }
 
@@ -329,13 +413,20 @@ export function Td({
   children?: React.ReactNode;
 }) {
   return (
-    <td
-      className={`${TD} ${numeric ? "text-right" : ""} ${optional ? "hidden sm:table-cell" : ""} ${className}`}
-    >
-      {children}
-    </td>
+    <>
+      <td
+        className={`${TD} ${numeric ? "text-right" : ""} ${optional ? "hidden sm:table-cell" : ""} ${className}`}
+      >
+        {children}
+      </td>{" "}
+    </>
   );
 }
+
+/** Footer links wrap onto several rows on a phone; the padding keeps each a
+ * 24px-tall target (WCAG 2.5.8) where rows of 16px text would sit 4px apart.
+ * From lg up each group is one row, spaced by its own margin. */
+const FOOTER_LINK = "inline-block py-1 lg:py-0 text-secondary hover:text-primary transition-colors";
 
 /**
  * One-line cross-domain footer links, rendered on every site. Registry-derived
@@ -364,7 +455,7 @@ function CrossSiteLinks({ site }: { site: SiteConfig }) {
       {links.map((l, i) => (
         <React.Fragment key={l.href}>
           {i > 0 && <span className="mx-1.5 text-subtle">·</span>}
-          <a href={l.href} className="text-secondary hover:text-primary transition-colors">
+          <a href={l.href} className={FOOTER_LINK}>
             {l.label}
           </a>
         </React.Fragment>
@@ -388,7 +479,7 @@ function PageNavLinks({ links }: { links?: Link[] }) {
       {links.map((l, i) => (
         <React.Fragment key={l.href}>
           {i > 0 && <span className="text-subtle">·</span>}
-          <a href={l.href} className="text-secondary hover:text-primary transition-colors">
+          <a href={l.href} className={FOOTER_LINK}>
             {l.label}
           </a>
         </React.Fragment>
@@ -401,7 +492,7 @@ function PageNavLinks({ links }: { links?: Link[] }) {
  * rather than through a cross-domain canonical. That link is a deliberate
  * cross-tenant mention, marked like CrossSiteLinks. */
 function ChromeExtensionLink({ site }: { site: SiteConfig }) {
-  const className = "text-secondary hover:text-primary transition-colors";
+  const className = FOOTER_LINK;
   if (site.key === SITES.united.key) {
     return (
       <a href="/chrome" className={className}>
@@ -426,9 +517,9 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
           href="https://x.com/martinamps"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center text-secondary hover:text-primary transition-colors"
+          className="inline-flex items-center py-1 lg:py-0 text-secondary hover:text-primary transition-colors"
         >
-          Built with
+          Built with{" "}
           <svg
             className="w-4 h-4 mx-1 text-danger"
             xmlns="http://www.w3.org/2000/svg"
@@ -438,7 +529,7 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
             role="img"
           >
             <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-          </svg>
+          </svg>{" "}
           by @martinamps
         </a>
         <span className="text-subtle" aria-hidden="true">
@@ -448,7 +539,7 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
           href="https://github.com/martinamps/ua-starlink-tracker"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-secondary hover:text-primary transition-colors"
+          className={FOOTER_LINK}
         >
           GitHub
         </a>
@@ -461,17 +552,13 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
             <span className="text-subtle" aria-hidden="true">
               ·
             </span>
-            <a
-              href="/is-starlink-free"
-              className="text-secondary hover:text-primary transition-colors"
-            >
+            <a href="/is-starlink-free" className={FOOTER_LINK}>
               Is it free?
             </a>
           </>
         )}
-      </div>
-      <PageNavLinks links={pageLinks} />
-      <CrossSiteLinks site={site} />
+      </div>{" "}
+      <PageNavLinks links={pageLinks} /> <CrossSiteLinks site={site} />
     </footer>
   );
 }
@@ -497,9 +584,21 @@ export function PageShell({
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-      {before}
-      <SiteBar site={site} currentPath={currentPath} />
-      {children}
+      {/* First in the tab order, shown only on focus: the site bar's links
+          repeat on every page, and /fleet puts hundreds more before its end. */}
+      <SkipLink to="main">Skip to content</SkipLink> {before}
+      <SiteBar site={site} currentPath={currentPath} />{" "}
+      <p
+        data-independence
+        className="relative mx-auto w-full max-w-6xl pt-2 text-xs text-muted text-balance"
+      >
+        {independenceLine(site)}
+      </p>{" "}
+      {/* A column like its parent, so each page's header and sections lay out
+          exactly as they did as the shell's own children. */}
+      <main id="main" tabIndex={-1} className="flex w-full flex-1 flex-col outline-none">
+        {children}
+      </main>{" "}
       <SiteFooter site={site} pageLinks={pageLinks} />
     </div>
   );

@@ -17,6 +17,7 @@ import {
   probLabel,
   probPhrase,
   probTier,
+  wholeDates,
   zonedDeparture,
   zonedIsoDate,
 } from "../components/ui/format";
@@ -65,6 +66,16 @@ export interface CheckFlightBody {
   prediction?: { probability: number; confidence?: string; n_observations?: number };
   flights?: WireFlight[];
   fallback?: { segments?: WireSegment[] };
+  /** The scheduled aircraft a type answer names. */
+  assignment?: { tail_number?: string | null };
+  /** The airline's own dated count, where it and not our tail list decided the answer. */
+  airline_count?: {
+    airline?: string;
+    aircraft?: string;
+    connected?: number;
+    total?: number;
+    as_of?: string;
+  };
   sameDayAlternatives?: WireAlternative[];
 }
 
@@ -82,11 +93,16 @@ export interface AnswerContext {
   originZone?: string | null;
   nowSec: number;
   airlineName: string;
+  /** How a listed, unsettled tail reads for this airline (listedWording's
+   * status); the united wording when absent. */
+  listedStatus?: string;
   /** IANA zone for an airport code, undefined when unmapped. */
   zoneFor: (airport: string) => string | undefined;
   liveTv: Record<SeatbackLiveTv, string> | null;
   watchEnabled: boolean;
   routePlannerEnabled: boolean;
+  /** /fleet/{tail} serves on this host, for the planes we list. */
+  tailPages: boolean;
   /** Host for webcal:// links. */
   host: string;
 }
@@ -147,11 +163,18 @@ const NEUTRAL_CARD = "border-subtle bg-surface-elevated";
 const headlineClass = (tone: Tone) => (tone === "neutral" ? "text-primary" : TONE_TEXT[tone]);
 
 function row(label: string, valueHtml: string): string {
-  return `<div class="flex gap-3"><dt class="w-24 shrink-0 text-muted">${esc(label)}</dt><dd class="min-w-0 text-secondary">${valueHtml}</dd></div>`;
+  return `<div class="flex gap-3"><dt class="w-24 shrink-0 text-muted">${esc(label)}</dt> <dd class="min-w-0 text-secondary">${valueHtml}</dd></div> `;
 }
 
 const tail = (t: string | null | undefined) =>
   `<span class="font-mono text-primary">${esc(t)}</span>`;
+
+/** A plane on our Starlink list, linked to its page where the host has them.
+ * Only for listed tails: a fallback segment's tail may be on no roster. */
+const listedTail = (t: string | null | undefined, ctx: AnswerContext) =>
+  ctx.tailPages && t && /^N[A-Z0-9]{1,5}$/.test(t)
+    ? `<a href="/fleet/${esc(t)}" class="font-mono text-primary hover:text-accent transition-colors">${esc(t)}</a>`
+    : tail(t);
 
 const typeName = (t: string | null | undefined) => (t ? ` · ${esc(aircraftName(t))}` : "");
 
@@ -165,16 +188,56 @@ function flightRows(f: WireFlight, ctx: AnswerContext): string {
     rows.push(row("Departs", `${esc(when.day)}, ${esc(when.time)}`));
   }
   if (f.tail_number) {
-    rows.push(row("Aircraft", `${tail(f.tail_number)}${typeName(f.aircraft_type)}`));
+    rows.push(row("Aircraft", `${listedTail(f.tail_number, ctx)}${typeName(f.aircraft_type)}`));
   }
   if (f.operated_by) rows.push(row("Operated by", esc(f.operated_by)));
-  return `<dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
+  return ` <dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
 }
 
-function liveTvLine(f: WireFlight, ctx: AnswerContext): string {
+function liveTvLine(f: WireFlight, ctx: AnswerContext, leg = "", link = true): string {
   if (!ctx.liveTv) return "";
   const tier = seatbackLiveTv(f.fleet_type, f.aircraft_type);
-  return `<p class="mt-3 text-sm text-secondary">${esc(ctx.liveTv[tier])} <a href="/live-tv" class="text-accent hover:underline">Which planes have live TV</a></p>`;
+  const more = link
+    ? ' <a href="/live-tv" class="text-accent hover:underline">Which planes have live TV</a>'
+    : "";
+  return ` <p class="mt-3 text-sm text-secondary">${esc(leg)}${esc(ctx.liveTv[tier])}${more}</p>`;
+}
+
+const legLabel = (f: WireFlight) => {
+  const dep = toIata(f.departure_airport);
+  const arr = toIata(f.arrival_airport);
+  return dep && arr ? `${dep} → ${arr}` : null;
+};
+
+/**
+ * The aircraft a yes names. A number can fly two legs in a day on two planes,
+ * and a traveller is on one of them: each leg then carries its own plane, in
+ * departure order. One plane, on one leg or on all of them, is named alone.
+ */
+function yesPlanes(flights: WireFlight[]): string | null {
+  const tails = new Set(flights.map((f) => f.tail_number).filter(Boolean));
+  if (tails.size < 2) return flights[0]?.tail_number ?? null;
+  return flights
+    .filter((f) => f.tail_number)
+    .map((f) => {
+      const leg = legLabel(f);
+      return leg ? `${leg} on ${f.tail_number}` : f.tail_number;
+    })
+    .join(", ");
+}
+
+/** Live TV goes by aircraft type: legs on types that differ each get their own line. */
+function liveTvLines(flights: WireFlight[], ctx: AnswerContext): string {
+  const first = flights[0] ?? {};
+  if (!ctx.liveTv) return "";
+  const tier = (f: WireFlight) => seatbackLiveTv(f.fleet_type, f.aircraft_type);
+  const labelled = flights.filter((f) => legLabel(f));
+  if (labelled.length < 2 || labelled.every((f) => tier(f) === tier(labelled[0]))) {
+    return liveTvLine(first, ctx);
+  }
+  return labelled
+    .map((f, i) => liveTvLine(f, ctx, `${legLabel(f)}: `, i === labelled.length - 1))
+    .join("");
 }
 
 function flightAwareLink(f: WireFlight, ctx: AnswerContext): string {
@@ -186,7 +249,7 @@ function flightAwareLink(f: WireFlight, ctx: AnswerContext): string {
     : ctx.date.replace(/-/g, "");
   const icao = (c: string) => (c.length === 3 ? `K${c}` : c);
   const url = `https://www.flightaware.com/live/flight/${encodeURIComponent(f.flight_number)}/history/${utcDate}/${icao(dep)}/${icao(arr)}`;
-  return `<p class="mt-3 text-sm"><a href="${esc(url)}" target="_blank" rel="nofollow noopener noreferrer" class="text-accent hover:underline">View on FlightAware</a></p>`;
+  return ` <p class="mt-3 text-sm"><a href="${esc(url)}" target="_blank" rel="nofollow noopener noreferrer" class="text-accent hover:underline">View on FlightAware</a></p>`;
 }
 
 function alternativesHtml(
@@ -198,10 +261,10 @@ function alternativesHtml(
   const items = list
     .map(
       (a) =>
-        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${tail(a.tail_number)}${typeName(a.aircraft_type)}</li>`
+        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${listedTail(a.tail_number, ctx)}${typeName(a.aircraft_type)}</li> `
     )
     .join("");
-  return `<div class="mt-4"><h3 class="text-sm font-semibold text-primary">Starlink flights on this route that day</h3><ul class="mt-1 space-y-1 text-sm text-secondary">${items}</ul></div>`;
+  return ` <div class="mt-4"><h3 class="text-sm font-semibold text-primary">Starlink flights on this route that day</h3> <ul class="mt-1 space-y-1 text-sm text-secondary">${items}</ul></div>`;
 }
 
 function routePlannerCta(
@@ -212,27 +275,53 @@ function routePlannerCta(
   const o = toIata(origin);
   const d = toIata(destination);
   if (!ctx.routePlannerEnabled || !/^[A-Z]{3}$/.test(o) || !/^[A-Z]{3}$/.test(d)) return "";
-  return `<p class="mt-3 text-sm"><a href="/route-planner/${o}/${d}" rel="nofollow" class="text-accent hover:underline">Find Starlink flights from ${o} to ${d}</a></p>`;
+  return ` <p class="mt-3 text-sm"><a href="/route-planner/${o}/${d}" rel="nofollow" class="text-accent hover:underline">Find Starlink flights from ${o} to ${d}</a></p>`;
 }
 
-function watchRow(ctx: AnswerContext): string {
-  if (!ctx.watchEnabled || datePassed(ctx) || ctx.daysOut > WATCH_MAX_DAYS_OUT) return "";
+/** Anchor of the calendar offer, for links from the undated flight page. */
+export const CALENDAR_OFFER_ID = "flight-calendar";
+
+/** The feed serves this flight and date: same gate as /cal (src/server/watch.ts). */
+export const calendarOffered = (
+  ctx: Pick<AnswerContext, "watchEnabled" | "date" | "daysOut" | "nowSec" | "originZone">
+) => ctx.watchEnabled && !datePassed(ctx) && ctx.daysOut <= WATCH_MAX_DAYS_OUT;
+
+// Each sentence claims only what the feed does (src/utils/ics.ts): the event is
+// re-rendered from our rows on every fetch, and the app decides when to fetch.
+const CALENDAR_LEAD_FIRM =
+  "The event shows this answer and changes if we see a different aircraft on the flight.";
+const CALENDAR_LEAD_PENDING =
+  "The event shows today's answer, then the aircraft and a yes or no once we see it assigned, usually about 2 days before departure. It changes again if the aircraft is swapped.";
+const CALENDAR_LAG =
+  "Your calendar app fetches changes on its own schedule, from about hourly to once a day, so this is not an instant alert.";
+
+const CALENDAR_BUTTON =
+  "inline-flex min-h-11 items-center rounded border border-neutral bg-base px-3 text-sm text-primary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/50";
+
+/**
+ * The calendar offer. The two subscriptions keep fetching the feed; the file
+ * is imported once and never fetched again, so it is set apart and says so.
+ */
+function watchRow(ctx: AnswerContext, firm: boolean): string {
+  if (!calendarOffered(ctx)) return "";
   const path = `/cal/${encodeURIComponent(ctx.flightNumber)}/${encodeURIComponent(ctx.date)}.ics`;
   const webcal = `webcal://${ctx.host}${path}`;
   const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
-  return `<div class="mt-4 border-t border-subtle pt-4"><h3 class="text-sm font-semibold text-primary">Watch this flight</h3><div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm"><a href="${esc(webcal)}" data-watch="webcal" class="text-accent hover:underline">Apple / Outlook</a><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">Google Calendar</a><a href="${esc(path)}" data-watch="ics" download class="text-accent hover:underline">Download .ics</a></div><p class="mt-2 text-xs text-muted">Adds a calendar event that updates when the aircraft is assigned or changes.</p></div>`;
+  const heading = `${CALENDAR_OFFER_ID}-title`;
+  const add = '<span class="sr-only">Add to </span>';
+  return ` <section id="${CALENDAR_OFFER_ID}" aria-labelledby="${heading}" class="mt-4 border-t border-subtle pt-4"><h3 id="${heading}" class="text-sm font-semibold text-primary">Add this flight to your calendar</h3> <p class="mt-1 text-sm text-secondary">${firm ? CALENDAR_LEAD_FIRM : CALENDAR_LEAD_PENDING}</p> <ul class="mt-3 flex flex-wrap gap-2"><li><a href="${esc(webcal)}" data-watch="webcal" class="${CALENDAR_BUTTON}">${add}Apple Calendar or Outlook</a></li> <li><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="${CALENDAR_BUTTON}">${add}Google Calendar</a></li></ul> <p class="mt-3 text-xs text-muted">${CALENDAR_LAG} Or <a href="${esc(path)}" data-watch="ics" download class="text-accent underline hover:no-underline">download the event as a file</a>, a one-time copy that will not update.</p></section>`;
 }
 
 /** The page's one swap caveat: firm cards carry it, nothing else repeats it. */
 const CHANGE_NOTE = "Aircraft can be swapped before departure.";
 
-/** The caveat with its remedy right under it: a watch that updates on a swap. */
+/** The caveat with its remedy right under it: a calendar event that follows a swap. */
 const swapNote = (ctx: AnswerContext) =>
-  `<p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${watchRow(ctx)}`;
+  ` <p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${watchRow(ctx, true)}`;
 
 function card(answer: AnswerTone, headline: string, body: string): string {
   const tone = ANSWER_TONE[answer];
-  return `<div class="rounded-lg border p-5 ${TONE_CARD[tone] ?? NEUTRAL_CARD}" data-tone="${answer}"><h2 class="font-display text-xl ${headlineClass(tone)} text-balance">${esc(headline)}</h2>${body}</div>`;
+  return `<div class="rounded-lg border p-5 ${TONE_CARD[tone] ?? NEUTRAL_CARD}" data-tone="${answer}"><h2 class="font-display text-xl ${headlineClass(tone)} text-balance">${wholeDates(esc(headline))}</h2> ${body}</div>`;
 }
 
 function probabilityBar(p: number, answer: AnswerTone): string {
@@ -252,11 +341,64 @@ function degradedNote(message: string | undefined): string | null {
     : null;
 }
 
+/** The sentence a forecast card prints after its basis: a degraded lookup's
+ * notice, else the swap caveat when an aircraft is already named, else when a
+ * firm answer comes. A dated page's meta description reuses it word for word. */
+export function forecastNote(body: CheckFlightBody, ctx: AnswerContext): string {
+  return (
+    degradedNote(body.message) ??
+    (body.assignment?.tail_number ? CHANGE_NOTE : timingNote(ctx, ctx.airlineName))
+  );
+}
+
 function timingNote(ctx: AnswerContext, airlineName: string): string {
   if (ctx.daysOut > 2) {
     return `${airlineName} assigns aircraft about 2 days before departure. Check again then for a firm answer.`;
   }
   return "We don't have the aircraft assignment yet. Check again closer to departure.";
+}
+
+/**
+ * An answer that rests on the airline's own count at either end of it: none
+ * connected, or every one. A count is the airline's and has a date, so the
+ * headline says whose it is and when, never our "0%" or our yes. The API's
+ * sentence stays under it. Null for any share in between, which reads as odds.
+ */
+function countedAnswer(
+  body: CheckFlightBody,
+  ctx: AnswerContext,
+  on: string,
+  probability: number | null
+): FlightAnswer | null {
+  const c = body.airline_count;
+  if (
+    !c ||
+    typeof c.airline !== "string" ||
+    typeof c.aircraft !== "string" ||
+    typeof c.as_of !== "string" ||
+    typeof c.connected !== "number" ||
+    typeof c.total !== "number"
+  ) {
+    return null;
+  }
+  const none = probability !== null && probability <= 0;
+  const every = probability === null && c.total > 0 && c.connected >= c.total;
+  if (!none && !every) return null;
+  const whose = `${c.airline}'s own count (${monthDay(c.as_of, ctx.nowSec)})`;
+  const headline = every
+    ? `By ${whose}, every ${c.aircraft} is connected — we haven't confirmed the one on ${on}`
+    : c.connected <= 0
+      ? `Not yet for ${on} — ${whose} has no ${c.aircraft} connected`
+      : `Not yet for ${on}, by ${whose}`;
+  const tone: AnswerTone = every ? "unknown" : probTier(0);
+  const said = capitalize((body.message ?? "").replace(/^~\d+% Starlink probability: /, ""));
+  const note = forecastNote(body, ctx);
+  const html = card(
+    tone,
+    headline,
+    `<p class="mt-3 text-sm text-secondary">${wholeDates(esc(said))} ${esc(note)}</p>${watchRow(ctx, false)}`
+  );
+  return { tone, headline, html, firm: false };
 }
 
 export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
@@ -281,12 +423,12 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const flights = body.flights ?? [];
     const first = flights[0] ?? {};
     const verified = body.confidence !== "likely";
-    const headline = `Yes — ${on} has Starlink (${[first.tail_number, verified ? "verified" : "listed, not yet verified"].filter(Boolean).join(", ")})`;
+    const headline = `Yes — ${on} has Starlink (${[yesPlanes(flights), verified ? "verified" : (ctx.listedStatus ?? "listed, not yet verified")].filter(Boolean).join(", ")})`;
     const legs = flights.map((f) => flightRows(f, ctx)).join("");
     const html = card(
       "yes",
       headline,
-      `${legs}${body.message ? `<p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLine(first, ctx)}${flightAwareLink(first, ctx)}${swapNote(ctx)}`
+      `${legs}${body.message ? ` <p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLines(flights, ctx)}${flightAwareLink(first, ctx)}${swapNote(ctx)}`
     );
     return { tone: "yes", headline, html, firm: true };
   }
@@ -311,7 +453,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
               : "Not checked yet"
           )
         );
-        return `<dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
+        return ` <dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
       })
       .join("");
     const tone: AnswerTone = firmNo ? "no" : "unknown";
@@ -364,6 +506,9 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     };
   }
 
+  const counted = countedAnswer(body, ctx, on, hasPred && pred ? pred.probability : null);
+  if (counted) return counted;
+
   if (!hasPred || !pred) {
     const headline = `Not sure yet about ${on}`;
     const text =
@@ -375,13 +520,13 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
       html: card(
         "unknown",
         headline,
-        `<p class="mt-2 text-sm text-secondary">${esc(text)}</p>${watchRow(ctx)}`
+        `<p class="mt-2 text-sm text-secondary">${esc(text)}</p>${watchRow(ctx, false)}`
       ),
     };
   }
 
   // A type rule is a yes for every aircraft that can fly the number, not a forecast.
-  const typeRule = body.confidence === "type" && pred.probability >= 1;
+  const typeRule = body.confidence === "type" && pred.probability >= 1 && !body.airline_count;
   const tone: AnswerTone = typeRule ? "yes" : probTier(pred.probability);
   const headline = typeRule
     ? `Yes — every aircraft that flies ${fn} has Starlink`
@@ -394,11 +539,11 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
         ? `Based on the aircraft on ${fmt(n)} recent ${fn} flights.`
         : `We haven't seen ${fn} yet, so this is our estimate for flights like it.`
       : capitalize((body.message ?? "").replace(/^~\d+% Starlink probability: /, ""));
-  const note = degradedNote(body.message) ?? timingNote(ctx, ctx.airlineName);
+  const note = forecastNote(body, ctx);
   // A type rule's headline is the whole answer; the API's sentence would repeat it.
   const detail = typeRule
     ? ""
-    : `${probabilityBar(pred.probability, tone)}<p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>`;
-  const html = card(tone, headline, `${detail}${watchRow(ctx)}`);
+    : `${probabilityBar(pred.probability, tone)} <p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>`;
+  const html = card(tone, headline, `${detail}${watchRow(ctx, false)}`);
   return { tone, headline, html, firm: false };
 }

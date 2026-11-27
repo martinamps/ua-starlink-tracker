@@ -7,7 +7,8 @@
 
 import type { Database } from "bun:sqlite";
 import { looksLikeValidTailNumber } from "../airlines/registry";
-import { replaceFleetProgress } from "../database/database";
+import { metaJobStamps, replaceFleetProgress } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
@@ -228,6 +229,9 @@ export async function runFleetProgressSync(
         status: outcome,
       });
       span.setTag("result", outcome);
+      // partial is a failure here: one segment's sheet can stay dead for
+      // weeks behind the other two.
+      recordSyncOutcome(db, "fleet_progress", "UA", outcome);
 
       if (outcome === "error") {
         logError("fleet-progress: all progress sheets failed; nothing written");
@@ -283,6 +287,7 @@ export function emitFleetProgressCounts(airline: string, rollups: ProgressRollup
 export function startFleetProgressJob(db: Database): JobHandle {
   return startJob({
     name: "fleet_progress",
+    stamps: metaJobStamps(db),
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 5 * 60 * 1000,
     run: async () => {

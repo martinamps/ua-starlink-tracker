@@ -2,9 +2,9 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "com.airlinestarlinktracker/starlink-tracker",
   "title": "Airline Starlink Tracker",
-  "description": "Starlink WiFi status for United, Alaska and Hawaiian flights, with per-airline route odds.",
+  "description": "Starlink WiFi for United, Alaska, Hawaiian, Qatar, Aer Lingus, Virgin Atlantic and SAS flights.",
   "websiteUrl": "https://airlinestarlinktracker.com",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "remotes": [
     {
       "type": "streamable-http",

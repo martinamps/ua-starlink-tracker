@@ -23,7 +23,12 @@
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
  *                    aborted | scrape_error | noop | shed            (~13)
- *   reason:          breaker | bucket | queue — fr24 assignments status:shed only (3)
+ *   reason:          breaker | bucket | queue | budget — fr24 assignments|routes
+ *                    status:shed only (normalizeLookupShedReason)      (4)
+ *   caller:          page | api | extension | mcp | other — fr24 assignments|routes
+ *                    status:shed only (classifyLookupCaller; mcp from the route) (5)
+ *   job, class:      united_check.held only: verifier | discovery, and
+ *                    settle | reconfirm (closed unions in united-check-budget.ts) (2, 2)
  *   bucket:          api | mcp | page — http.rate_limited only (the limiter's meter) (3)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
@@ -37,27 +42,40 @@
  *                    flight.lookup_result     mirrors `outcome`                   (+4 new)
  *                                                                          union (16)
  *   dataset:         mirrors `job` on data.freshness_seconds             (~7)
- *   prefix:          flight_lookup.untracked: registry IATA codes + 20 named
- *                    carriers | other (~26)
+ *   prefix:          flight_lookup.untracked: registry IATA codes + 27 named
+ *                    carriers | other (~33)
  *   client_class:    classifyRequest: extension | other-extension, else
  *                    classifyUserAgent: claude | googleother | googlebot |
- *                    bingbot | gptbot | perplexity | seo-crawler | social |
- *                    extension | bot | browser | unknown; mcp for /mcp  (14)
+ *                    bingbot | gptbot | perplexity | seo-crawler | meta-ai |
+ *                    social | scraper | extension | bot | browser |
+ *                    unknown; mcp for /mcp                           (16)
  *                    mcp.tool_call/tool_duration_ms use classifyMcpClient:
  *                    claude | chatgpt | cursor | vscode | bot | other |
  *                    unknown                                         (+3 new)
  *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
  *                    client_class:extension                          (5)
+ *   visit_source:    http.request only (classifyVisitSource): extension |
+ *                    search | assistant | social | calendar | own | direct |
+ *                    other | none                                    (9)
+ *   market:          http.request only (classifyMarket): home | abroad |
+ *                    unknown, against the site's home market      (3)
+ *   preload:         http.request only (classifyPreload): none | prefetch |
+ *                    prerender, a load the browser made ahead of a click (3)
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | type_yes | type_no |
  *                    predicted | no_data | error                     (7)
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
- *   state:           watch.feed_fetch: prediction | yes | no | swap | none  (5)
+ *   state:           watch.feed_fetch: prediction | yes | no | swap | none |
+ *                    flown | flown_unknown                           (7)
  *   surface:         watch.cta_shown: check_flight                   (1)
+ *   source:          source.* metrics only: SourceId in database/source-health.ts (15).
+ *                    (scraper.sync and others carry their own `source` values)
+ *   kind:            source.failure: error | timeout | blocked | empty | refused |
+ *                    partial                                         (6)
  */
 
 import { detectAirline } from "../airlines/flight-number";
-import { AIRLINES, SUBFLEET_KEYS, operatorIatas } from "../airlines/registry";
+import { AIRLINES, SUBFLEET_KEYS, operatorIatas, resolveSite } from "../airlines/registry";
 import { CHROME_EXTENSION_ID } from "../utils/chrome-extension";
 import { tracer } from "./tracer";
 
@@ -139,6 +157,17 @@ export function normalizeProbeOutcome(raw: string | null | undefined): string {
   return PROBE_OUTCOMES.has(raw) ? raw : "other";
 }
 
+/** passenger.probe airborne_match: the stored flag as a tag, so the banner's
+ * hit rate reads from the counter. `none` = the post named no flight we
+ * recognise, so there was nothing to match. */
+export function normalizeAirborneMatch(
+  claimedFlight: string | null | undefined,
+  matched: boolean
+): "yes" | "no" | "none" {
+  if (!claimedFlight) return "none";
+  return matched ? "yes" : "no";
+}
+
 // Bounded user-agent classification, most-specific first. Still a fixed enum —
 // never the raw UA — but the named crawlers are split out: collapsing every
 // crawler into one `bot` bucket meant no metric could see a single engine's
@@ -155,12 +184,50 @@ const NAMED_CRAWLERS: ReadonlyArray<readonly [string, RegExp]> = [
   ["gptbot", /GPTBot|OAI-SearchBot|ChatGPT-User/i],
   ["perplexity", /PerplexityBot|Perplexity-User/i],
   ["seo-crawler", /AhrefsBot|SemrushBot|DotBot|MJ12bot|PetalBot|DataForSeoBot|BLEXBot/i],
-  ["social", /facebookexternalhit|meta-externalagent|Twitterbot|Slackbot|Discordbot/i],
+  // Meta's AI crawlers (training, Meta AI search, Meta AI's live fetcher) sat
+  // in `social` and were nearly all of it; `social` is now link previews only.
+  ["meta-ai", /meta-externalagent|meta-externalfetcher|meta-webindexer/i],
+  ["social", /facebookexternalhit|Twitterbot|Slackbot|Discordbot/i],
 ];
 
-export function classifyUserAgent(ua: string | null | undefined): string {
-  if (!ua) return "unknown";
+// Agents that dress as a browser but are one known scraper, matched as the
+// whole string so a real browser on the same version is never caught by a
+// looser pattern. The first: ~20,000 flight and route pages a week from ~1,600
+// addresses, all with this exact Chrome 139 agent (Nov 2026). It undercounts by
+// design: the scraper leaves `scraper` the day it changes one character, and
+// the few people still on that exact Chrome build are counted here with it.
+const KNOWN_SCRAPER_AGENTS: ReadonlySet<string> = new Set([
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+]);
+// Scrapers that give their own name, which no browser carries, so the name is
+// enough and a version bump stays in the class. PageIndexer sends "Mozilla/5.0
+// (compatible; PageIndexer/1.0)": 2,497 requests to Alaska's site from one
+// address on 25 Nov 2026, counted as `browser` for the "Mozilla".
+const NAMED_SCRAPER_AGENTS = /\bPageIndexer\b/i;
+
+// The header is a stranger's text. Real agents run under ~300 characters;
+// past this cap the rest is never read, so a huge value costs nothing to class.
+const MAX_UA_LENGTH = 512;
+
+// The team's own post-deploy check names itself in its agent. It is `bot`, not
+// a class of its own (the client_class budget is spent), so it leaves the
+// browser and MCP-client counts that reach is judged by. Anyone can copy the
+// name: that only moves their requests out of those counts. `bot` is metered,
+// budgeted and served exactly like any other non-browser caller.
+const OWN_MONITOR_AGENT = /\bua-starlink-live-check\b/i;
+
+export function isOwnMonitorAgent(ua: string | null | undefined): boolean {
+  return (
+    !!ua && OWN_MONITOR_AGENT.test(ua.length > MAX_UA_LENGTH ? ua.slice(0, MAX_UA_LENGTH) : ua)
+  );
+}
+
+export function classifyUserAgent(raw: string | null | undefined): string {
+  if (!raw) return "unknown";
+  const ua = raw.length > MAX_UA_LENGTH ? raw.slice(0, MAX_UA_LENGTH) : raw;
   if (/UA-Starlink-Extension|starlink-tracker-ext/i.test(ua)) return "extension";
+  if (OWN_MONITOR_AGENT.test(ua)) return "bot";
+  if (KNOWN_SCRAPER_AGENTS.has(ua) || NAMED_SCRAPER_AGENTS.test(ua)) return "scraper";
   for (const [bucket, re] of NAMED_CRAWLERS) {
     if (re.test(ua)) return bucket;
   }
@@ -207,6 +274,317 @@ export function requestClientTags(req: Request, url: URL): Tags {
   };
 }
 
+// ============ Visit source ============
+
+/**
+ * Where a request came from, as one of nine fixed words. The referrer, origin
+ * and utm_source are read here and nowhere else, and only the word leaves:
+ * no host, path or query of the referring page reaches a metric, span or log.
+ */
+export const VISIT_SOURCES = [
+  "extension",
+  "search",
+  "assistant",
+  "social",
+  "calendar",
+  "own",
+  "direct",
+  "other",
+  "none",
+] as const;
+export type VisitSource = (typeof VISIT_SOURCES)[number];
+const VISIT_SOURCE_SET: ReadonlySet<string> = new Set(VISIT_SOURCES);
+type OutsideSource = "search" | "assistant" | "social";
+
+// Registrable domains; a host matches as the domain itself or any subdomain.
+const SOURCE_DOMAINS: ReadonlyArray<
+  readonly [Exclude<OutsideSource, "search">, readonly string[]]
+> = [
+  [
+    "assistant",
+    [
+      "chatgpt.com",
+      "chat.openai.com",
+      "claude.ai",
+      "perplexity.ai",
+      "gemini.google.com",
+      "copilot.microsoft.com",
+      "grok.com",
+      "meta.ai",
+      "chat.mistral.ai",
+      "chat.deepseek.com",
+      "poe.com",
+      "you.com",
+      "phind.com",
+    ],
+  ],
+  [
+    "social",
+    [
+      "facebook.com",
+      "instagram.com",
+      "threads.net",
+      "threads.com",
+      "t.co",
+      "twitter.com",
+      "x.com",
+      "reddit.com",
+      "linkedin.com",
+      "lnkd.in",
+      "youtube.com",
+      "tiktok.com",
+      "bsky.app",
+      "pinterest.com",
+      "news.ycombinator.com",
+      "flyertalk.com",
+    ],
+  ],
+];
+
+// "search" is watched week by week, so it has to mean a results page as far
+// as a host can say: these exact hosts (a leading "www." aside), never their
+// subdomains. A portal's mail, finance, news, blog and forum hosts are "other".
+const SEARCH_HOSTS: ReadonlySet<string> = new Set([
+  "bing.com",
+  "cn.bing.com",
+  "duckduckgo.com",
+  "html.duckduckgo.com",
+  "lite.duckduckgo.com",
+  "search.yahoo.com",
+  "search.yahoo.co.jp",
+  "yandex.com",
+  "yandex.ru",
+  "yandex.com.tr",
+  "ya.ru",
+  "baidu.com",
+  "m.baidu.com",
+  "ecosia.org",
+  "search.brave.com",
+  "kagi.com",
+  "startpage.com",
+  "qwant.com",
+  "search.naver.com",
+  "m.search.naver.com",
+  "search.aol.com",
+]);
+// Yahoo serves results from per-country hosts (uk.search.yahoo.com).
+const YAHOO_SEARCH_SUFFIX = ".search.yahoo.com";
+// google.com and Google's country hosts (google.de, google.co.uk,
+// google.com.au, google.cat), bare or www. Every other google.* host, and
+// every other subdomain (mail., news., docs.), is not search.
+const GOOGLE_SEARCH_HOST = /^google\.(?:com|[a-z]{2}|com?\.[a-z]{2}|cat)$/;
+
+// Maps, not object literals: a visitor chooses the key, and a plain object
+// also answers for the names it inherits ("constructor", "__proto__").
+// An Android app's referrer names its package where a site would name a host.
+const ANDROID_PACKAGES: ReadonlyMap<string, OutsideSource> = new Map([
+  ["com.google.android.googlequicksearchbox", "search"],
+  ["com.reddit.frontpage", "social"],
+  ["com.twitter.android", "social"],
+  ["com.facebook.katana", "social"],
+  ["com.linkedin.android", "social"],
+]);
+
+// utm_source is free text; a bare product name counts like its host.
+const UTM_ALIASES: ReadonlyMap<string, OutsideSource> = new Map([
+  ["chatgpt", "assistant"],
+  ["openai", "assistant"],
+  ["perplexity", "assistant"],
+  ["claude", "assistant"],
+  ["copilot", "assistant"],
+  ["gemini", "assistant"],
+  ["reddit", "social"],
+  ["twitter", "social"],
+  ["facebook", "social"],
+  ["linkedin", "social"],
+]);
+// The utm_sources this site writes itself: the link inside a calendar event
+// (utils/ics.ts), and the live-page line that ends an MCP answer
+// (api/mcp-live-page.ts). A person who follows the second was sent by an
+// assistant, and most MCP clients open links with no referrer.
+const OWN_CALENDAR_UTM = "cal";
+const OWN_MCP_UTM = "mcp";
+
+function outsideSourceOfHost(host: string): OutsideSource | null {
+  for (const [source, domains] of SOURCE_DOMAINS) {
+    if (domains.some((d) => host === d || host.endsWith(`.${d}`))) return source;
+  }
+  const bare = host.startsWith("www.") ? host.slice(4) : host;
+  const search =
+    SEARCH_HOSTS.has(bare) || bare.endsWith(YAHOO_SEARCH_SUFFIX) || GOOGLE_SEARCH_HOST.test(bare);
+  return search ? "search" : null;
+}
+
+/** own | search | assistant | social | other for a Referer or Origin value, null when it names nothing. */
+function sourceOfReferrer(raw: string | null): VisitSource | null {
+  if (!raw || raw === "null") return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (!host) return null;
+  if (parsed.protocol === "android-app:") return ANDROID_PACKAGES.get(host) ?? "other";
+  if (resolveSite(host)) return "own";
+  return outsideSourceOfHost(host) ?? "other";
+}
+
+function sourceOfUtm(raw: string | null): VisitSource | null {
+  if (!raw) return null;
+  const value = raw.slice(0, 64).trim().toLowerCase();
+  if (!value) return null;
+  if (value === OWN_CALENDAR_UTM) return "calendar";
+  if (value === OWN_MCP_UTM) return "assistant";
+  // A utm_source never proves a search visit (ads and newsletters say "google" too).
+  const named = UTM_ALIASES.get(value) ?? outsideSourceOfHost(value);
+  return named && named !== "search" ? named : "other";
+}
+
+/**
+ * The first rule that fires wins:
+ *  1. our extension, or another one, by `clientClass`                → extension
+ *  2. Referer (else Origin) names a search engine, assistant or
+ *     social site. A search engine on /api/* is some script on that
+ *     engine's page: not a search visit, and not our extension
+ *     either, which sends no referrer and is known by rule 1 alone   → that class | other
+ *  3. Referer/Origin is one of our own hosts                         → own
+ *  4. utm_source: ours (cal, mcp), an assistant's or a social site's → calendar | assistant | social
+ *  5. Sec-Fetch-Site same-origin/same-site. Our pages send no
+ *     referrer (Referrer-Policy: no-referrer), so this is how
+ *     in-site clicks and our own scripts' calls are seen             → own
+ *  6. any other referrer, origin or utm_source, or Sec-Fetch-Site
+ *     cross-site with nothing named                                  → other
+ *  7. Sec-Fetch-Site none: typed, bookmarked or opened from an app   → direct
+ *  8. no signal at all: most robots and scripts                      → none
+ *
+ * A user agent alone never makes a request "assistant": an assistant's
+ * fetcher is already `client_class` claude | gptbot | perplexity, and this
+ * tag is about where a visit came from, not who is asking.
+ */
+export function classifyVisitSource(req: Request, url: URL, clientClass: string): VisitSource {
+  // The type promises one of nine words; this holds it at run time too,
+  // whatever a later edit to the rules or lists lets through.
+  const source: unknown = visitSourceByRule(req, url, clientClass);
+  return typeof source === "string" && VISIT_SOURCE_SET.has(source)
+    ? (source as VisitSource)
+    : "other";
+}
+
+function visitSourceByRule(req: Request, url: URL, clientClass: string): VisitSource {
+  if (clientClass === "extension" || clientClass === "other-extension") return "extension";
+  const referred =
+    sourceOfReferrer(req.headers.get("referer")) ?? sourceOfReferrer(req.headers.get("origin"));
+  if (referred === "search") return url.pathname.startsWith("/api/") ? "other" : "search";
+  if (referred && referred !== "other") return referred;
+  const utm = sourceOfUtm(url.searchParams.get("utm_source"));
+  if (utm && utm !== "other") return utm;
+  const fetchSite = req.headers.get("sec-fetch-site");
+  if (fetchSite === "same-origin" || fetchSite === "same-site") return "own";
+  if (referred || utm || fetchSite === "cross-site") return "other";
+  return fetchSite === "none" ? "direct" : "none";
+}
+
+// ============ Market ============
+
+export type Market = "home" | "abroad" | "unknown";
+
+/**
+ * Whether a request came from the site's home market, as one of three words.
+ * The country is Cloudflare's cf-ipcountry, which only counts on a request
+ * that came through Cloudflare (`viaCloudflare`): straight to the origin,
+ * anyone can write the header. A value that is not two capital letters, and
+ * Cloudflare's own XX (unknown) and T1 (Tor), are `unknown`. Only the word
+ * leaves here: the country goes to no metric, span or log.
+ */
+export function classifyMarket(
+  country: string | null | undefined,
+  home: ReadonlySet<string>,
+  viaCloudflare: boolean
+): Market {
+  if (!viaCloudflare || typeof country !== "string") return "unknown";
+  if (!/^[A-Z]{2}$/.test(country) || country === "XX" || country === "T1") return "unknown";
+  return home.has(country) ? "home" : "abroad";
+}
+
+// ============ Preload ============
+
+export const PRELOADS = ["none", "prefetch", "prerender"] as const;
+export type Preload = (typeof PRELOADS)[number];
+
+// Every header a browser has used to say "nobody asked for this page yet":
+// Sec-Purpose is the standard one (Chrome's speculation rules and its search
+// prefetch proxy, Firefox's link prefetch), Purpose is what Chrome sent before
+// it, X-Moz is Firefox's old one and X-Purpose Safari's.
+const PRELOAD_HEADERS = ["sec-purpose", "purpose", "x-purpose", "x-moz"] as const;
+// Real values are a few words ("prefetch;anonymous-client-ip"); the rest of a
+// longer one is never read.
+const MAX_PURPOSE_LENGTH = 128;
+
+/**
+ * Whether the browser loaded this ahead of any click, as one of three words.
+ * Chrome marks a prerender as `prefetch;prerender`, so prerender is looked
+ * for first. Safari's `preview` is a prefetch here. Only whole tokens count,
+ * and only the word leaves: the header's text goes to no metric, span or log.
+ *
+ * A click that follows a prefetch or prerender is served from the browser's
+ * copy and sends no second request, so these loads are possible arrivals,
+ * not failed ones: `visit_source` is deliberately left as it would be for a
+ * click.
+ */
+export function classifyPreload(req: Request): Preload {
+  let prefetch = false;
+  for (const name of PRELOAD_HEADERS) {
+    const raw = req.headers.get(name);
+    if (!raw) continue;
+    // "prerender=?0" is a structured field's way of saying no.
+    const tokens = raw
+      .slice(0, MAX_PURPOSE_LENGTH)
+      .toLowerCase()
+      .split(/[;,\s]+/)
+      .filter((t) => !t.endsWith("=?0"))
+      .map((t) => t.split("=")[0]);
+    if (tokens.includes("prerender")) return "prerender";
+    if (tokens.includes("prefetch") || tokens.includes("preview")) prefetch = true;
+  }
+  return prefetch ? "prefetch" : "none";
+}
+
+const LOOKUP_CALLERS = ["page", "api", "extension", "mcp", "other"] as const;
+export type LookupCaller = (typeof LOOKUP_CALLERS)[number];
+const LOOKUP_CALLER_SET: ReadonlySet<string> = new Set(LOOKUP_CALLERS);
+
+export function normalizeLookupCaller(raw: string | null | undefined): LookupCaller {
+  return raw && LOOKUP_CALLER_SET.has(raw) ? (raw as LookupCaller) : "other";
+}
+
+const LOOKUP_SHED_REASONS = ["breaker", "bucket", "queue", "budget"] as const;
+export type LookupShedReason = (typeof LOOKUP_SHED_REASONS)[number];
+const LOOKUP_SHED_REASON_SET: ReadonlySet<string> = new Set(LOOKUP_SHED_REASONS);
+
+/** An unknown reason reads as `queue`, the reason every shed had before the others existed. */
+export function normalizeLookupShedReason(raw: string | null | undefined): LookupShedReason {
+  return raw && LOOKUP_SHED_REASON_SET.has(raw) ? (raw as LookupShedReason) : "queue";
+}
+
+/**
+ * Who a shed live lookup was for, on /api/*. `extension` is our own store
+ * build only (classifyRequest); `page` is a browser on one of our own pages,
+ * by the same rule that makes a visit `own`; `api` is any other request with a
+ * browser's agent: the API opened directly, called from someone else's page,
+ * or a script dressed as a browser. The rest, a copycat extension, a named
+ * tool or crawler, a bare script, is `other`. `mcp` is never returned here:
+ * the /mcp route sets it. A script can forge any of these headers, so read
+ * `page` as "says it is our page".
+ */
+export function classifyLookupCaller(req: Request, url: URL): LookupCaller {
+  const clientClass = classifyRequest(req, url);
+  if (clientClass === "extension") return "extension";
+  if (clientClass !== "browser") return "other";
+  return classifyVisitSource(req, url, clientClass) === "own" ? "page" : "api";
+}
+
 /** `client_class` for /mcp tool calls, which carry no request of their own to classify. */
 export function mcpClientTags(): Tags {
   return { client_class: "mcp" };
@@ -216,10 +594,10 @@ export function mcpClientTags(): Tags {
 // handshake's clientInfo — the user agent is the only per-call signal.
 // Patterns from production /mcp spans: Claude-User (claude.ai connectors),
 // claude-code/x, the Claude desktop app's "Claude/x" Electron UA,
-// openai-mcp/x (ChatGPT and Codex), Cursor/x.
+// openai-mcp/x (ChatGPT), codex-mcp-client/x (OpenAI's Codex), Cursor/x.
 const MCP_CLIENTS: ReadonlyArray<readonly [string, RegExp]> = [
   ["claude", /Claude-User|claude-code|\bClaude\/|anthropic/i],
-  ["chatgpt", /openai-mcp|ChatGPT/i],
+  ["chatgpt", /openai-mcp|ChatGPT|codex-mcp-client/i],
   ["cursor", /^Cursor\//i],
   ["vscode", /vscode|Visual Studio Code|Copilot/i],
 ];
@@ -227,6 +605,7 @@ const MCP_CLIENTS: ReadonlyArray<readonly [string, RegExp]> = [
 /** claude | chatgpt | cursor | vscode | bot | other | unknown */
 export function classifyMcpClient(ua: string | null | undefined): string {
   if (!ua) return "unknown";
+  if (isOwnMonitorAgent(ua)) return "bot";
   for (const [bucket, re] of MCP_CLIENTS) {
     if (re.test(ua)) return bucket;
   }
@@ -251,6 +630,22 @@ export function flightAirlineTag(flightNumber: string): string {
 /** airline tag for a reader/tenant scope: the hub scope is `all`, not an airline. */
 export function normalizeScopeTag(scope: string): string {
   return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
+}
+
+const MCP_ERROR_REASONS = new Set([
+  "missing_argument",
+  "invalid_argument",
+  "unknown_airport",
+  "same_airport",
+  "not_tracked",
+  "config",
+  "exception",
+]);
+
+/** `reason` on mcp.tool_call: why a call ended in an error, `none` otherwise. */
+export function normalizeMcpErrorReason(raw: string | null | undefined): string {
+  if (!raw) return "none";
+  return MCP_ERROR_REASONS.has(raw) ? raw : "other";
 }
 
 const LEG_MATCHES = new Set(["exact", "origin", "unmatched", "no_data", "unscoped"]);
@@ -313,6 +708,13 @@ const UNTRACKED_PREFIXES = new Set([
   "VS",
   "SK",
   "LX",
+  "ZG",
+  "XE",
+  "EI",
+  "IB",
+  "BT",
+  "KE",
+  "CM",
 ]);
 
 /** IATA designator of a caller-typed flight number, bounded to the registry
@@ -349,12 +751,27 @@ export const SETTLE_RULES = [
   "sustained_other",
   "regional_flap",
   "legacy_only",
+  "first_read",
+  "first_read_taken_back",
 ] as const;
 export type SettleRule = (typeof SETTLE_RULES)[number];
 const SETTLE_RULE_SET: ReadonlySet<string> = new Set(SETTLE_RULES);
 
 export function normalizeSettleRule(raw: string | null | undefined): string {
   return raw && SETTLE_RULE_SET.has(raw) ? raw : "other";
+}
+
+const CHART_REJECT_REASONS: ReadonlySet<string> = new Set([
+  "date_invalid",
+  "date_future",
+  "date_old",
+  "count_invalid",
+  "type_size",
+  "types_left_out",
+]);
+
+export function normalizeChartRejectReason(raw: string | null | undefined): string {
+  return raw && CHART_REJECT_REASONS.has(raw) ? raw : "other";
 }
 
 // ============ Metric Names ============
@@ -364,14 +781,23 @@ export function normalizeSettleRule(raw: string | null | undefined): string {
  */
 export const COUNTERS = {
   // Scraper events
-  SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error|noop)
+  SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error|noop|timeout)
   PLANES_DISCOVERED: "planes.discovered", // tags: source, airline
   // A fleet write refused at the membership gate (fleet-admission.ts) —
   // tags: source (FleetSource), reason (invalid_registration|non_airliner), airline
   FLEET_ROW_REJECTED: "fleet.row_rejected",
+  // An airline's own chart failed its bounds (database/chart-bounds.ts), so
+  // it was not stored (parse), cannot stand in a headline (sync, read), or
+  // had a complete type's tails left unsettled (settle) —
+  // tags: stage (parse|sync|settle|read), reason (normalizeChartRejectReason), airline
+  CHART_REJECTED: "fleet_progress.chart_rejected",
   // Sheet tab list drifted from the gids we know (utils.ts reconcileSheetTabs) —
   // tags: state (vanished_empty|vanished_listed|new), airline
   SHEET_TAB_DRIFT: "sheet.tab_drift",
+  // A scheduled read of an outside source failed, counting "answered with
+  // nothing usable" as a failure (utils/source-health.ts) — tags: source
+  // (SourceId), kind (error|timeout|blocked|empty|refused|partial), airline
+  SOURCE_FAILURE: "source.failure",
 
   // Trusted positive Starlink verification. Fires on EVERY positive re-check,
   // not only new installs (~50x the install count) — for installs use
@@ -388,15 +814,24 @@ export const COUNTERS = {
   // External API calls
   // tags: vendor (fr24|flightaware|united|qatar|alaska|adsb|indexnow), type, status
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
-  // fr24/flightaware/adsb/indexnow status values: success | error | rate_limited
+  // fr24/flightaware/adsb status values: success | error | rate_limited
+  // indexnow (type:ping, airline) status values: success | rate_limited | timeout |
+  //   error | shed (our own daily cap, or a 429 pause still running)
   // fr24 assignments adds status:shed (request-path guard refused), tagged
-  //   reason (breaker|bucket|queue) and airline
+  //   reason (breaker|bucket|queue), caller (page|extension|other) and airline
   // qatar status values: success | error | partial
   VENDOR_REQUEST: "vendor.request",
 
   // HTTP requests
-  // tags: method, route (allowlisted), status_code, tenant, client_class
+  // tags: method, route (allowlisted), status_code, tenant, client_class,
+  //   visit_source (classifyVisitSource), market (classifyMarket),
+  //   preload (classifyPreload)
   HTTP_REQUEST: "http.request",
+
+  // A Host header that is not a host at all, answered 400 before any tenant
+  // or route exists to tag — tags: method, airline (always "unknown").
+  // A well-formed Host we don't serve is a 421 and is not counted here.
+  HTTP_BAD_HOST: "http.bad_host",
 
   // A new SEC filing surfaced for anchor review — tags: company, form, airline
   SEC_FILING_SEEN: "sec.filing_seen",
@@ -414,9 +849,18 @@ export const COUNTERS = {
 
   // A listing's settled wifi crossed the equipped line (verified_wifi between
   // Starlink/unverified and another provider). tags: direction (to_starlink|
-  //   from_starlink), reason (normalizeSettleRule), path (reconcile|verifier),
+  //   from_starlink|first_settle: a never-settled listing's first settle off
+  //   Starlink, not a move), reason (normalizeSettleRule), path (reconcile|verifier),
   //   airline. Normal is ~0–1 from_starlink a day; a burst means upstream noise.
   CONSENSUS_SETTLE_TRANSITION: "consensus.settle_transition",
+
+  // A sheet-listed tail counted on our first Starlink read (first-read.ts),
+  // and how each such count ended. tags: outcome (counted|confirmed|
+  //   taken_back), reason (first_read for counted; second_read for confirmed;
+  //   other_provider|sheet_delisted for taken_back), path (verifier|reconcile),
+  //   airline. taken_back over counted is the rule's error rate: none in the
+  //   30 days it was backtested on.
+  FIRST_READ_COUNT: "consensus.first_read_count",
 
   // Consensus verdict disagrees with the Google Sheet's wifi claim
   // tags: fleet, sheet_says (starlink|not_starlink), crawler_says, airline
@@ -424,9 +868,20 @@ export const COUNTERS = {
   // accurate as the sheet.
   FLEET_SHEET_DISAGREEMENT: "fleet.sheet_disagreement",
 
-  // A discovery check was skipped (couldn't run the United.com scrape)
-  // tags: fleet, reason (no_flights), airline
+  // A discovery check was skipped: no_flights (couldn't run the United.com
+  // scrape), verifier_fresh (a settled-Starlink tail the verifier confirmed
+  // inside its own re-check window, so discovery put its turn off unspent) or
+  // just_read (a tail still being settled that either job read within the
+  // last half day; a second reading that soon is not an independent one)
+  // tags: fleet, reason (no_flights|verifier_fresh|just_read), airline
   FLEET_CHECK_SKIPPED: "fleet.check_skipped",
+
+  // A job tick that had an aircraft due and sat out because the united.com
+  // check budget (scripts/united-check-budget.ts) was closed to it. `reconfirm`
+  // held with `settle` at zero is the ceiling doing its job; `settle` held
+  // means even new and unsettled tails are waiting.
+  // tags: job (verifier|discovery), class (settle|reconfirm), airline
+  UNITED_CHECK_HELD: "united_check.held",
 
   // User-facing flight lookup outcome — how often we actually answer the question.
   // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|type_yes|type_no|
@@ -453,7 +908,8 @@ export const COUNTERS = {
   // Starlink geofeed — tags: tenant, client_class
   PASSENGER_DETECT: "passenger.detect",
   // Probe beacon outcome — tags: outcome (onboard_api|cors_blocked|csp_blocked|
-  //   fetch_error|timeout|onboard_http_*|onboard_noflight|unknown), in_geofeed (0|1), airline
+  //   fetch_error|timeout|onboard_http_*|onboard_noflight|unknown), in_geofeed (0|1), airline,
+  //   airborne_match (yes|no|none: a listed tail is flying the claimed flight now)
   PASSENGER_PROBE: "passenger.probe",
 
   // A flight-number lookup for a carrier we don't answer (web, REST, MCP) —
@@ -475,6 +931,16 @@ export const COUNTERS = {
   //   outcome (ok|redirect|not_found), verdict (all|all_checked|most|some|verifying|installing|none|
   //   official_none|unknown|n/a), indexable (true|false)
   AIRCRAFT_PAGE_VIEW: "aircraft_page.view",
+  // /fleet/{tail} page request — tags: airline, outcome (ok|redirect),
+  //   answer (verified|listed|reported|observed|other|unchecked|n/a), indexable (true|false).
+  //   Never the tail: a registration is not a tag value.
+  TAIL_PAGE_VIEW: "tail_page.view",
+  // /static/share/* picture request — tags: airline, kind (flight|tail|airport|invalid),
+  //   outcome (drawn|cached|moved|site_card|shed|error). moved: a dated flight address
+  //   answered by the undated picture; site_card: no picture, the site's card;
+  //   shed: over the drawing budget; error: the drawing threw. Never the
+  //   flight, tail or airport.
+  SHARE_PICTURE: "share_picture.request",
   // "Every flight on this route" board served — tags: airline, surface (api|page),
   //   outcome (nonstop|no_nonstop), dated (true|false)
   ROUTE_FLIGHTS_VIEW: "route_flights.view",
@@ -493,6 +959,13 @@ export const GAUGES = {
   // tags: job (see FRESHNESS_QUERIES in data-freshness.ts for the full set),
   //   dataset (mirrors job — DD monitors group by dataset), airline
   DATA_FRESHNESS_SECONDS: "data.freshness_seconds",
+  // Hours since an outside source last gave us usable data, from the stored
+  // per-source record (utils/source-health.ts), sampled every 5 minutes.
+  // tags: source (SourceId), airline
+  SOURCE_HOURS_SINCE_SUCCESS: "source.hours_since_success",
+  // 1 while that source is past its own quiet threshold, else 0: one monitor
+  // covers every source without repeating the thresholds. tags: source, airline
+  SOURCE_QUIET: "source.quiet",
 
   // Backtest precision of firm "yes/no Starlink" calls — tags: airline, window, call
   PRECISION_FIRM_CALL: "precision.firm_call",
@@ -503,6 +976,13 @@ export const GAUGES = {
 
   // Headline equipped count (equippedSql over the listings) — tags: airline
   FLEET_EQUIPPED: "fleet.equipped",
+
+  // united.com checks started in the last 24 hours, against the fixed ceiling
+  // (scripts/united-check-budget.ts), sampled on every verifier and discovery
+  // tick. `used` at `limit` with united_check.held rising is the ceiling
+  // holding. tags: airline
+  UNITED_CHECK_BUDGET_USED: "united_check.budget_used",
+  UNITED_CHECK_BUDGET_LIMIT: "united_check.budget_limit",
   // Tails with both a Starlink and a named other-provider clean read in the
   // last 7 days — upstream feed disagreement. tags: airline
   CONSENSUS_CONFLICTING_TAILS: "consensus.conflicting_tails",
@@ -553,6 +1033,11 @@ export const GAUGES = {
   ADSB_SHADOW_ACCURACY: "adsb_shadow.accuracy",
   ADSB_SHADOW_BLIND_SHARE: "adsb_shadow.blind_share",
 
+  // Flight draws that began 6-30 hours ago, by which ends an aircraft-on-the-
+  // ground report put on an airport. tags: ends (both|origin_only|
+  // destination_only|neither), airline
+  ADSB_DRAWS_PLACED: "adsb_draws.placed",
+
   // Share of tails at the upcoming_flights row cap whose first row is more than
   // an hour after their refresh — the signature of a cap keeping the furthest
   // flights instead of the nearest. tags: airline
@@ -567,6 +1052,18 @@ export const GAUGES = {
   // them under the aging policy. tags: airline, state (starlink_listed|
   // not_starlink_current|not_starlink_expired|not_in_guide)
   COMMUNITY_GUIDE_TAILS: "community_guide.tails",
+
+  // Rollout outlook, route months replayed daily on a fixed sample of routes
+  // (src/scripts/route-backtest.ts): mean |projected − actual| Starlink share
+  // in points, pooled over every checked month, and how many months were
+  // checked. tags: airline, source (numbers|placed: how departures were found)
+  OUTLOOK_ROUTE_BACKTEST_ERROR_POINTS: "outlook.route_backtest.error_points",
+  OUTLOOK_ROUTE_BACKTEST_CHECKS: "outlook.route_backtest.checks",
+
+  // Exited children of the server not yet reaped (state Z, parent = server).
+  // 0 under the image's tini init; a climb means the server is PID 1 again and
+  // every United check's orphaned Chromium helpers pile up. tags: airline:all
+  PROCESS_ZOMBIES: "process.zombies",
 } as const;
 
 /**
@@ -581,6 +1078,16 @@ export const DISTRIBUTIONS = {
   // Vendor request latency in milliseconds
   // tags: vendor, type, status
   VENDOR_DURATION_MS: "vendor.duration_ms",
+
+  // Hours between our last non-Starlink reading of a tail and the moment it
+  // became known as Starlink. One point per newly found tail that had such a
+  // reading; new deliveries have none and emit nothing.
+  // tags: first_source (own = a discovery check got there first | sheet = the
+  //   community sheet listed it first), trigger (scheduled | ground_gap for an
+  //   own find, sheet otherwise), fleet, airline
+  // The count by first_source is who was first; p50/p90 is how late we were;
+  // trigger says whether the ground-gap allowance is finding anything.
+  DISCOVERY_LAG_HOURS: "discovery.lag_hours",
 
   // MCP tool latency in milliseconds — tags: tool, airline, outcome, client_class
   MCP_TOOL_DURATION_MS: "mcp.tool_duration_ms",

@@ -314,7 +314,8 @@ describe("MCP check_flight", () => {
       destination: "LAX",
     });
     expect(text).toContain("UA2333 ORD → DEN");
-    expect(text.trimEnd()).toEndWith("leg only.");
+    // The answer ends with the hop's note; only the live-page line follows it.
+    expect(text.replace(/\n\nLive answer, [^\n]*$/, "").trimEnd()).toEndWith("leg only.");
   });
 
   test("without a leg the text is unchanged vs empty strings", async () => {

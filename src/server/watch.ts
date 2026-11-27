@@ -1,6 +1,7 @@
 /**
  * Starlink Watch routes: GET /cal/{FN}/{YYYY-MM-DD}[.ics] and the same-day
- * alternatives attached to firm-no check-flight answers.
+ * alternatives attached to firm-no check-flight answers. A date already flown
+ * answers with a final event for a year (flownFeed), then 404.
  *
  * Served from the DB only: a calendar app re-polls every subscription on its
  * own schedule, so an FR24 call per fetch would turn every subscriber into a
@@ -10,6 +11,7 @@
 
 import {
   buildAirlineFlightNumberVariants,
+  buildFlightLookupVariants,
   canonicalPermalinkFor,
   ensureAirlinePrefix,
 } from "../airlines/flight-number";
@@ -17,15 +19,27 @@ import type { AirlineConfig, SiteConfig } from "../airlines/registry";
 import {
   type FlightVerdict,
   type ResolveDeps,
+  listedWording,
   resolveFlightVerdict,
   verdictSummary,
 } from "../api/check-flight-core";
 import { type FallbackSegment, resolveTailVerdict } from "../api/flight-verdict";
-import type { AssignmentLogRow, SameDayAlternative } from "../database/assignment-log";
+import {
+  type AssignmentLogRow,
+  FLOWN_RETENTION_DAYS,
+  type SameDayAlternative,
+} from "../database/assignment-log";
 import { unixNow } from "../database/sql/windows";
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { flightDateWindow, isRealIsoDate } from "../utils/airport-tz";
-import { type WatchVerdict, buildWatchIcs, watchFeedEnabled, watchFeedState } from "../utils/ics";
+import {
+  type WatchVerdict,
+  buildFlownWatchIcs,
+  buildWatchIcs,
+  flownFeedState,
+  watchFeedEnabled,
+  watchFeedState,
+} from "../utils/ics";
 import { type RequestContext, type ScopedReader, tenantConfig } from "./context";
 import { CACHE, CORS_ANY_ORIGIN, text } from "./respond";
 
@@ -68,7 +82,7 @@ interface WatchLeg {
   arrUnix: number | null;
 }
 
-type VerdictWithWindow = Exclude<
+export type VerdictWithWindow = Exclude<
   FlightVerdict,
   { kind: "invalid_date" } | { kind: "invalid_flight_number" }
 >;
@@ -139,7 +153,7 @@ export function loggedTailLookup(
     const byLeg = new Map<string, AssignmentLogRow>();
     for (const r of history) {
       if (r.departure_time === null || r.arrival_time === null) continue;
-      if (reader.getStarlinkPlaneByTail(r.tail_number)) continue;
+      if (reader.assignedTails.getStarlinkPlaneByTail(r.tail_number)) continue;
       const cur = byLeg.get(r.departure_airport);
       if (!cur || r.last_seen > cur.last_seen) byLeg.set(r.departure_airport, r);
     }
@@ -224,6 +238,59 @@ export function recordWatchCtaShown(req: Request, site: SiteConfig, cfg: Airline
   });
 }
 
+function calendarResponse(
+  ctx: RequestContext,
+  body: string,
+  fn: string,
+  date: string,
+  cache: string
+): Response {
+  return text(ctx.req.method === "HEAD" ? null : body, "text/calendar; charset=utf-8", {
+    cache,
+    headers: {
+      "Content-Disposition": `inline; filename="starlink-watch-${fn}-${date}.ics"`,
+      "X-Robots-Tag": "noindex",
+      ...CORS_ANY_ORIGIN,
+    },
+  });
+}
+
+/**
+ * A date more than a day past. A calendar app keeps polling a subscription
+ * long after the flight, and a 404 there shows as a failing calendar, so a
+ * real flight gets a final event built from our stored rows alone. The date
+ * window and the known-number gate keep the answerable URL space bounded.
+ */
+function flownFeed(
+  ctx: RequestContext,
+  cfg: AirlineConfig,
+  fn: string,
+  date: string,
+  daysOut: number,
+  now: number
+): Response {
+  if (daysOut < -FLOWN_RETENTION_DAYS) return watchNotFound();
+  const history = ctx.reader.getFlownAssignmentHistory(
+    buildAirlineFlightNumberVariants(cfg, fn),
+    date
+  );
+  if (history.length === 0 && !ctx.reader.isKnownFlightNumber(buildFlightLookupVariants(cfg, fn))) {
+    return watchNotFound();
+  }
+  metrics.increment(COUNTERS.WATCH_FEED_FETCH, {
+    airline: normalizeAirlineTag(cfg.code),
+    state: flownFeedState(history),
+  });
+  const body = buildFlownWatchIcs({
+    canonicalHost: ctx.site.canonicalHost,
+    fn,
+    date,
+    history,
+    now,
+  });
+  return calendarResponse(ctx, body, fn, date, CACHE.day);
+}
+
 export async function watchFeed(ctx: RequestContext): Promise<Response> {
   const cfg = tenantConfig(ctx.tenant);
   if (!cfg || !watchFeedEnabled(ctx.site)) return watchNotFound();
@@ -232,8 +299,9 @@ export async function watchFeed(ctx: RequestContext): Promise<Response> {
 
   const now = unixNow();
   const window = flightDateWindow(parsed.date, now);
-  if (!window || window.daysOut < -1 || window.daysOut > WATCH_MAX_DAYS_OUT) {
-    return watchNotFound();
+  if (!window || window.daysOut > WATCH_MAX_DAYS_OUT) return watchNotFound();
+  if (window.daysOut < -1) {
+    return flownFeed(ctx, cfg, parsed.fn, parsed.date, window.daysOut, now);
   }
 
   const history = ctx.reader.getAssignmentHistory(
@@ -248,7 +316,9 @@ export async function watchFeed(ctx: RequestContext): Promise<Response> {
     return watchNotFound();
   }
 
-  const { verdict: watch, leg } = watchVerdictFrom(verdict, history);
+  const { verdict: seen, leg } = watchVerdictFrom(verdict, history);
+  const watch: WatchVerdict =
+    seen.state === "yes" ? { ...seen, listedStatus: listedWording(cfg).status } : seen;
   const alternatives = sameDayAlternativesFor(ctx.reader, verdict, parsed.date) ?? [];
 
   metrics.increment(COUNTERS.WATCH_FEED_FETCH, {
@@ -266,12 +336,5 @@ export async function watchFeed(ctx: RequestContext): Promise<Response> {
     ...leg,
     now,
   });
-  return text(ctx.req.method === "HEAD" ? null : body, "text/calendar; charset=utf-8", {
-    cache: CACHE.fifteenMinutes,
-    headers: {
-      "Content-Disposition": `inline; filename="starlink-watch-${parsed.fn}-${parsed.date}.ics"`,
-      "X-Robots-Tag": "noindex",
-      ...CORS_ANY_ORIGIN,
-    },
-  });
+  return calendarResponse(ctx, body, parsed.fn, parsed.date, CACHE.fifteenMinutes);
 }

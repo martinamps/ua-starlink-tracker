@@ -32,6 +32,8 @@ const TODAY = "2026-09-19";
 const D1 = addDaysISO(TODAY, 1);
 const FAR = addDaysISO(TODAY, 10);
 const PAST = addDaysISO(TODAY, -5);
+// Inside the dates Aer Lingus's statement is applied to (the clock here is before it).
+const EI_DAY = "2026-12-01";
 const at = (date: string, hhmm: string) => utc(`${date}T${hhmm}:00Z`);
 
 type Leg = {
@@ -118,6 +120,9 @@ function qrHistory(db: Database, fn: string, date: string, eq: string): void {
   );
 }
 
+const QR_777 = { airline: "QR", aircraftType: "Boeing 777-3DZ(ER)" };
+const QR_788 = { airline: "QR", aircraftType: "Boeing 787-8 Dreamliner" };
+
 function seed(): Database {
   const db = makeFreshDb();
   // Scheduled yes, verified and spreadsheet-only.
@@ -149,6 +154,13 @@ function seed(): Database {
     airline: "AS",
   });
   // QR: published yes / no / rolling / cancelled, history beyond the window, and no data.
+  // A roster for the two types with held-back aircraft, so their odds are pinned.
+  for (let i = 0; i < 48; i++) addFleet(db, `A7-B${i}`, "confirmed", QR_777);
+  for (const t of ["OA", "OB", "OC", "OD", "OE", "OF", "OG", "OH", "OI"]) {
+    addFleet(db, `A7-B${t}`, "unknown", QR_777);
+  }
+  for (let i = 0; i < 30; i++) addFleet(db, `A7-BC${i}`, "confirmed", QR_788);
+  for (const t of ["UA", "UB"]) addFleet(db, `A7-B${t}`, "unknown", QR_788);
   qrSchedule(db, "QR1", D1, "77W");
   qrSchedule(db, "QR3", D1, "388");
   qrSchedule(db, "QR5", D1, "788");
@@ -232,6 +244,17 @@ const CASES: Case[] = [
   api(HUB, "/api/check-any-flight", "UA1001", "bad"),
   { name: "HUB any missing params", host: HUB, path: "/api/check-any-flight?date=2026-09-20" },
   api(UA, "/api/check-any-flight", "UA1001", D1),
+  // Aer Lingus, by its statement: the ask for a route, and a covered route.
+  api(HUB, "/api/check-any-flight", "EI105", EI_DAY),
+  api(HUB, "/api/check-any-flight", "EI105", EI_DAY, "&origin=DUB&destination=JFK"),
+  // Virgin Atlantic and SAS, by their statements on one aircraft type: the
+  // ask for the type, the stated type that is covered, and one that is not.
+  api(HUB, "/api/check-any-flight", "VS3", EI_DAY),
+  api(HUB, "/api/check-any-flight", "VS3", EI_DAY, "&aircraft_type=Airbus%20A350-1000"),
+  api(HUB, "/api/check-any-flight", "VS3", EI_DAY, "&aircraft_type=Boeing%20787-9"),
+  api(HUB, "/api/check-any-flight", "SK903", EI_DAY),
+  api(HUB, "/api/check-any-flight", "SK903", EI_DAY, "&aircraft_type=Airbus%20A320neo"),
+  api(HUB, "/api/check-any-flight", "SK903", EI_DAY, "&aircraft_type=Airbus%20A320"),
   ...(
     [
       ["AS100", D1],

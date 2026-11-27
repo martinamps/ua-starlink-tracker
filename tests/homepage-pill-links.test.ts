@@ -20,13 +20,14 @@ const HUB_HOST = "airlinestarlinktracker.com";
 
 const PILL_RE = /<a\b[^>]*?class="[^"]*flight-pill[^"]*"[^>]*?>([\s\S]*?)<\/a>/g;
 const HREF_RE = /href="([^"]*)"/;
-const TOOLTIP_RE = /data-flight-tooltip="([^"]*)"/;
+const NUMBER_RE = /<b>([^<]*)<\/b>/;
 const ARIA_RE = /aria-label="([^"]*)"/;
 
 interface Pill {
   tag: string;
   href: string;
-  tooltip: string;
+  /** The flight number printed on the pill. */
+  number: string;
   ariaLabel: string;
   /** Words a sighted user actually reads on the pill, arrows dropped. */
   visibleWords: string[];
@@ -38,7 +39,7 @@ function pillsOf(html: string): Pill[] {
     return {
       tag,
       href: tag.match(HREF_RE)?.[1] ?? "",
-      tooltip: tag.match(TOOLTIP_RE)?.[1] ?? "",
+      number: m[1].match(NUMBER_RE)?.[1] ?? "",
       ariaLabel: tag.match(ARIA_RE)?.[1] ?? "",
       visibleWords: m[1]
         .replace(/<[^>]*>/g, " ")
@@ -58,10 +59,10 @@ function searchIndexFor(html: string, tail: string): string {
 /** The substring test the inline search script runs against `data-flights`. */
 const searchFinds = (index: string, term: string) => index.includes(term.toLowerCase());
 
-/** Pills whose row flight number is `fn` — matched via the tooltip, which
- * carries either the marketing number (when linked) or the raw callsign. */
-function pillFor(pills: Pill[], tooltip: string): Pill | undefined {
-  return pills.find((p) => p.tooltip === tooltip);
+/** The pill printing flight number `fn`: the marketing number where the
+ * row's airline maps the callsign, else the callsign itself. */
+function pillFor(pills: Pill[], fn: string): Pill | undefined {
+  return pills.find((p) => p.number === fn);
 }
 
 // Departures are only "upcoming" while departure_time > now, so every fixture
@@ -78,6 +79,9 @@ const seedFlightTimes = {
   UA0100: soon(5),
   HA11: soon(2),
   QX2304: soon(2),
+  OO3053: soon(3),
+  SKW3133: soon(4),
+  ASA800: soon(3),
 };
 
 /**
@@ -109,6 +113,12 @@ function seedDb() {
     arrivalAirport: "LAX",
     airline: "HA",
   });
+  // Since the merger Hawaiian metal also flies Alaska's AS800-999, which the
+  // feed stores as Alaska's radio callsign: no one can book "ASA800".
+  addFlight(db, "N999HA", "ASA800", "LAX", seedFlightTimes.ASA800, {
+    arrivalAirport: "KOA",
+    airline: "HA",
+  });
 
   // Horizon flies AS metal under QX — the same operating/marketing split as UA,
   // under a different carrier, so it proves the mapping reads each site's own
@@ -121,6 +131,24 @@ function seedDb() {
   });
   addFlight(db, "N654QX", "QX2304", "SEA", seedFlightTimes.QX2304, {
     arrivalAirport: "PDX",
+    airline: "AS",
+  });
+
+  // SkyWest flies for both United and Alaska, so OO/SKW is no carrier prefix
+  // of either: only the row's airline says which number it is sold under. The
+  // feed stores both spellings.
+  addPlane(db, "N181SY", "Starlink", { airline: "AS", aircraft: "Embraer ERJ-175LR" });
+  addFleet(db, "N181SY", "confirmed", {
+    airline: "AS",
+    aircraftType: "Embraer ERJ-175LR",
+    verifiedWifi: "Starlink",
+  });
+  addFlight(db, "N181SY", "OO3053", "SEA", seedFlightTimes.OO3053, {
+    arrivalAirport: "BOI",
+    airline: "AS",
+  });
+  addFlight(db, "N181SY", "SKW3133", "YYJ", seedFlightTimes.SKW3133, {
+    arrivalAirport: "SEA",
     airline: "AS",
   });
   return db;
@@ -203,21 +231,21 @@ describe("homepage flight pills link to flight permalinks", () => {
     }
   });
 
-  test("the hover label names the permalink target", () => {
+  test("the printed number is the one the permalink is filed under", () => {
     for (const p of pills) {
       if (!p.href.startsWith("/check-flight/")) continue;
-      expect(p.tooltip).toBe(p.href.slice("/check-flight/".length));
+      expect(p.number).toBe(p.href.slice("/check-flight/".length));
     }
   });
 
-  test("the link's accessible name carries the flight number, not just a route", () => {
-    // The pill's visible text is an airport pair and a clock time; the flight
-    // number is the target page's whole subject, so it has to reach a screen
-    // reader and a crawler reading link text — the hover tooltip is a data
-    // attribute and does neither.
+  test("the link's text and accessible name carry the flight number, not just a route", () => {
+    // The flight number is the target page's whole subject: a traveller's
+    // find-in-page, a screen reader and a crawler reading link text all need
+    // it in the link, not in a hover-only attribute.
     for (const p of pills) {
-      expect(p.ariaLabel).toContain(p.tooltip);
-      expect(p.ariaLabel).not.toBe("");
+      expect(p.number).not.toBe("");
+      expect(p.visibleWords[0]).toBe(p.number);
+      expect(p.ariaLabel).toContain(p.number);
     }
     expect(pillFor(pills, "UA4561")?.ariaLabel).toContain("UA4561");
   });
@@ -237,7 +265,7 @@ describe("homepage flight pills link to flight permalinks", () => {
       // Regression: the index used to be built with a /^[A-Z]+/ strip, so the
       // row advertised UA4561 while indexing UA74561 — typing the number the
       // page had just shown matched nothing.
-      expect(searchFinds(index, p.tooltip)).toBe(true);
+      expect(searchFinds(index, p.number)).toBe(true);
     }
     // The operating callsign stays searchable too; this adds, never replaces.
     expect(searchFinds(index, "G74561")).toBe(true);
@@ -258,6 +286,19 @@ describe("each tenant normalizes to its own marketing code", () => {
       if (p.href.startsWith("/check-flight/")) expect(p.href).toStartWith("/check-flight/AS");
     }
   });
+
+  test("Alaska's SkyWest rows print the Alaska number, not the operating callsign", async () => {
+    const app = createApp(seedDb());
+    const html = await (await app.dispatch(req("/", AS_HOST))).text();
+    const pills = pillsOf(html);
+    expect(pillFor(pills, "AS3053")?.ariaLabel).toContain("Flight AS3053,");
+    expect(pillFor(pills, "AS3133")?.ariaLabel).toContain("Flight AS3133,");
+    expect(pills.filter((p) => /^(OO|SKW)\d+$/.test(p.number))).toEqual([]);
+    const index = searchIndexFor(html, "N181SY");
+    for (const term of ["AS3053", "AS3133", "OO3053", "SKW3133"]) {
+      expect(searchFinds(index, term)).toBe(true);
+    }
+  });
 });
 
 /**
@@ -266,6 +307,38 @@ describe("each tenant normalizes to its own marketing code", () => {
  * Pinning a non-UTC TZ makes a server-zone regression fail everywhere rather
  * than only on machines that happen not to run in UTC.
  */
+describe("Alaska's SkyWest pills link to Alaska flight pages", () => {
+  test("OO and SKW rows link to /check-flight/AS…, an indexable page for that number", async () => {
+    const app = createApp(seedDb());
+    const pills = pillsOf(await app.dispatch(req("/", AS_HOST)).then((r) => r.text()));
+    const skywest = pills.filter((p) => ["AS3053", "AS3133"].includes(p.number));
+    expect(skywest.length).toBe(2);
+    for (const p of skywest) {
+      expect(p.href).toBe(`/check-flight/${p.number}`);
+      expect(p.tag.includes('target="_blank"')).toBe(false);
+      const res = await app.dispatch(req(p.href, AS_HOST));
+      expect(res.status).toBe(200);
+      const page = await res.text();
+      expect(page).not.toContain("noindex");
+      expect(page).toContain(`<link rel="canonical" href="https://${AS_HOST}${p.href}"`);
+    }
+    expect(pills.some((p) => /\/check-flight\/(OO|SKW)/.test(p.href))).toBe(false);
+  });
+
+  test("United's site never links a SkyWest row to an Alaska page, nor Alaska's to a United one", async () => {
+    const app = createApp(seedDb());
+    for (const [host, own] of [
+      [UA_HOST, "UA"],
+      [AS_HOST, "AS"],
+    ] as const) {
+      const pills = pillsOf(await app.dispatch(req("/", host)).then((r) => r.text()));
+      for (const p of pills) {
+        if (p.href.startsWith("/check-flight/")) expect(p.href).toStartWith(`/check-flight/${own}`);
+      }
+    }
+  });
+});
+
 describe("the pill states a departure the permalink page agrees with", () => {
   // Resolved rather than read straight off the env, because under `bun test`
   // TZ is unset (the runner defaults ICU to UTC without exporting it) and
@@ -290,7 +363,7 @@ describe("the pill states a departure the permalink page agrees with", () => {
     expect(linked.length).toBeGreaterThan(0);
 
     for (const p of linked) {
-      // Visible text, hover text and accessible name all read the same clock —
+      // Visible text and accessible name read the same clock —
       // an unlabeled time reads as the viewer's own zone to everyone.
       const stamped = p.visibleWords.join(" ").match(/([A-Z]{3}) (\d{2}:\d{2}) UTC$/);
       expect(stamped).not.toBeNull();
@@ -344,9 +417,23 @@ describe("sites without a flight-permalink page keep pills outbound", () => {
     for (const p of pills) {
       expect(p.href).toStartWith("https://www.flightaware.com/live/flight/");
     }
-    // The hub 404s /check-flight entirely, so linking there would be a dead end.
-    expect(await app.dispatch(req("/check-flight/UA123", HUB_HOST)).then((r) => r.status)).toBe(
-      404
+    // Still printed as the number a traveller books: UA4757 and AS2304, not
+    // the operating callsigns OO4757 and QX2304 the outbound links track.
+    expect(pillFor(pills, "UA4757")?.href).toBe("https://www.flightaware.com/live/flight/OO4757");
+    expect(pillFor(pills, "AS2304")?.href).toBe("https://www.flightaware.com/live/flight/QX2304");
+    expect(pillFor(pills, "HA11")).toBeDefined();
+    // A Hawaiian row flying Alaska's callsign prints the Alaska number.
+    expect(pillFor(pills, "AS800")?.href).toBe("https://www.flightaware.com/live/flight/ASA800");
+    expect(pills.filter((p) => /^[A-Z]{3}\d+$/.test(p.number))).toEqual([]);
+    expect(searchFinds(searchIndexFor(html, "N999HA"), "AS800")).toBe(true);
+    expect(pillFor(pills, "AS3053")?.href).toBe("https://www.flightaware.com/live/flight/OO3053");
+    expect(pills.filter((p) => /^(OO|SKW)\d+$/.test(p.number))).toEqual([]);
+    // The hub has no flight page of its own: a typed flight hops to its
+    // airline's site, so a pill linking the hub's address would be a detour.
+    const typed = await app.dispatch(req("/check-flight/UA123", HUB_HOST));
+    expect(typed.status).toBe(302);
+    expect(typed.headers.get("location")).toBe(
+      "https://unitedstarlinktracker.com/check-flight/UA123"
     );
   });
 });

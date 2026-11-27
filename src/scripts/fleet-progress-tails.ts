@@ -14,8 +14,10 @@ import { looksLikeValidTailNumber } from "../airlines/registry";
 import {
   getFleetProgressTails,
   insertPipelineEvents,
+  metaJobStamps,
   replaceFleetProgressTails,
 } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { FleetProgressTailRow, FleetProgressTailState, PipelineEventRow } from "../types";
 import { type JobHandle, startJob } from "../utils/job-runner";
@@ -489,6 +491,7 @@ export async function runFleetProgressTailsSync(
         status: outcome,
       });
       span.setTag("result", outcome);
+      recordSyncOutcome(db, "fleet_progress_tails", "UA", outcome);
       if (outcome === "error") {
         logError("fleet-progress-tails: every progress sheet failed; nothing written");
       } else {
@@ -507,6 +510,7 @@ export async function runFleetProgressTailsSync(
 export function startFleetProgressTailsJob(db: Database): JobHandle {
   return startJob({
     name: "fleet_progress_tails",
+    stamps: metaJobStamps(db),
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 7 * 60 * 1000,
     run: async () => {

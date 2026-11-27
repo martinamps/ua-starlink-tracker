@@ -43,12 +43,15 @@ export function ShareBarRow({
   n,
   total,
   counts,
+  status,
 }: {
   label: string;
   href?: string;
   n: number;
   total: number;
   counts?: ProviderCounts;
+  /** Replaces the "n/total · pct" figure (types outside the programme). */
+  status?: string;
 }) {
   const segments = counts
     ? PROVIDER_ORDER.filter((p) => p !== "none" && p !== "unknown" && counts[p] > 0).map((p) => ({
@@ -61,30 +64,47 @@ export function ShareBarRow({
         .map((p) => `${fmt(counts[p])} ${PROVIDER_LABEL[p]}`)
         .join(", ")
     : "";
+  // The spaces between the grid's cells, and after the row, draw nothing but
+  // keep the label, the figure and the next row's label apart in the page's
+  // plain text ("CRJ55099/104 · 95%E175").
   return (
-    <li className="grid grid-cols-[minmax(0,5.5rem)_1fr_7rem] sm:grid-cols-[minmax(0,7rem)_1fr_7rem] items-center gap-3 py-1.5 text-sm">
-      {href ? (
-        <a
-          href={href}
-          className="truncate text-secondary underline decoration-subtle underline-offset-4 hover:text-accent transition-colors"
-        >
-          {label}
-        </a>
-      ) : (
-        <span className="truncate text-secondary">{label}</span>
-      )}
-      <Meter
-        label={`${label}: ${fmt(n)} of ${fmt(total)} with Starlink (${pct(n, total)})${detail ? `. ${detail}` : ""}`}
-        segments={
-          total > 0
-            ? segments.map((s) => ({ key: s.p, share: s.n / total, className: WIFI_CLASS[s.p] }))
-            : []
-        }
-      />
-      <span className="text-right font-mono text-xs text-muted tabular-nums whitespace-nowrap">
-        {fmt(n)}/{fmt(total)} · <span className={n > 0 ? "text-accent" : ""}>{pct(n, total)}</span>
-      </span>
-    </li>
+    <>
+      <li className="grid grid-cols-[minmax(0,5.5rem)_1fr_7rem] sm:grid-cols-[minmax(0,7rem)_1fr_7rem] items-center gap-3 py-1.5 text-sm">
+        {href ? (
+          <a
+            href={href}
+            className="truncate text-secondary underline decoration-subtle underline-offset-4 hover:text-accent transition-colors"
+          >
+            {label}
+          </a>
+        ) : (
+          <span className="truncate text-secondary">{label}</span>
+        )}{" "}
+        <Meter
+          label={
+            status
+              ? `${label}: ${status} (${fmt(total)})`
+              : `${label}: ${fmt(n)} of ${fmt(total)} with Starlink (${pct(n, total)})${detail ? `. ${detail}` : ""}`
+          }
+          segments={
+            !status && total > 0
+              ? segments.map((s) => ({ key: s.p, share: s.n / total, className: WIFI_CLASS[s.p] }))
+              : []
+          }
+        />{" "}
+        {status ? (
+          // Words, not a figure: longer than the 7rem column, so it wraps inside it.
+          <span className="text-right font-mono text-xs leading-tight text-muted break-words">
+            {status}
+          </span>
+        ) : (
+          <span className="text-right font-mono text-xs text-muted tabular-nums whitespace-nowrap">
+            {fmt(n)}/{fmt(total)} ·{" "}
+            <span className={n > 0 ? "text-accent" : ""}>{pct(n, total)}</span>
+          </span>
+        )}
+      </li>{" "}
+    </>
   );
 }
 
@@ -126,16 +146,17 @@ export function TypeBarsSection({
       />
       <div className="grid gap-x-8 gap-y-6 lg:grid-cols-3">
         {groups.map((g) => {
-          const total = g.families.reduce((s, f) => s + f.total, 0);
-          const starlink = g.families.reduce((s, f) => s + f.starlink, 0);
+          const live = g.families.filter((f) => !f.outsideProgramme);
+          const total = live.reduce((s, f) => s + f.total, 0);
+          const starlink = live.reduce((s, f) => s + f.starlink, 0);
           return (
             <div key={g.key}>
               <h3 className="flex items-baseline justify-between gap-3 border-b border-subtle pb-2 text-sm">
-                <span className="font-display text-base text-primary">{g.label}</span>
+                <span className="font-display text-base text-primary">{g.label}</span>{" "}
                 <span className="text-muted tabular-nums">
                   {fmt(starlink)} of {fmt(total)} · {pct(starlink, total)}
                 </span>
-              </h3>
+              </h3>{" "}
               <ul className="mt-1">
                 {g.families.map((f) => {
                   const link = typeLinks.get(f.family);
@@ -147,14 +168,15 @@ export function TypeBarsSection({
                       n={f.starlink}
                       total={f.total}
                       counts={providerCounts(f.tails)}
+                      status={f.outsideProgramme?.label}
                     />
                   );
                 })}
-              </ul>
+              </ul>{" "}
             </div>
           );
         })}
-      </div>
+      </div>{" "}
       {unlisted && (
         <p className="mt-4 text-xs text-muted">
           {fmt(unlisted.total)} more aircraft have no type on record, {fmt(unlisted.starlink)} of

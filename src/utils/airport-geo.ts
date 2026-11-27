@@ -112,6 +112,7 @@ export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
   CAY: [4.8197, -52.3619],
   CCU: [22.6540, 88.4476],
   CDG: [49.0090, 2.5541],
+  CEB: [10.3093, 123.9797],
   CFE: [45.7867, 3.1692],
   CFR: [49.1733, -0.4499],
   CGK: [-6.1256, 106.6560],
@@ -280,6 +281,7 @@ export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
   JST: [40.3161, -78.8339],
   JTR: [36.3992, 25.4793],
   KEF: [63.9850, -22.6056],
+  KHH: [22.5771, 120.3500],
   KHI: [24.9065, 67.1608],
   KIN: [17.9357, -76.7875],
   KIV: [46.9277, 28.9310],
@@ -354,6 +356,7 @@ export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
   MGA: [12.1415, -86.1682],
   MGM: [32.3006, -86.3940],
   MGW: [39.6433, -79.9176],
+  MHK: [39.1410, -96.6708],
   MHT: [42.9326, -71.4357],
   MIA: [25.7960, -80.2898],
   MID: [20.9305, -89.6455],
@@ -390,6 +393,7 @@ export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
   NBO: [-1.3189, 36.9282],
   NCE: [43.6584, 7.2159],
   NDJ: [12.1337, 15.0340],
+  NGO: [34.8584, 136.8050],
   NIM: [13.4815, 2.1836],
   NKC: [18.3061, -15.9647],
   NRT: [35.7686, 140.3887],
@@ -537,6 +541,7 @@ export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
   SUX: [42.3976, -96.3822],
   SVO: [55.9726, 37.4146],
   SVQ: [37.4180, -5.8931],
+  SWF: [41.5042, -74.1089],
   SXB: [48.5383, 7.6282],
   SXM: [18.0410, -63.1089],
   SYD: [-33.9461, 151.1770],
@@ -544,6 +549,7 @@ export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
   TAM: [22.2926, -97.8671],
   TBS: [41.6692, 44.9547],
   TEV: [40.4103, -1.2174],
+  TGZ: [16.5636, -93.0225],
   TIA: [41.4147, 19.7206],
   TKK: [7.4619, 151.8430],
   TLS: [43.6291, 1.3638],
@@ -606,11 +612,39 @@ export function airportDistanceMiles(a: string, b: string): number | null {
   const ca = AIRPORT_COORDS[a];
   const cb = AIRPORT_COORDS[b];
   if (!ca || !cb) return null;
-  const dLat = rad(cb[0] - ca[0]);
-  const dLon = rad(cb[1] - ca[1]);
+  return milesBetween(ca[0], ca[1], cb[0], cb[1]);
+}
+
+function milesBetween(aLat: number, aLon: number, bLat: number, bLon: number): number {
+  const dLat = rad(bLat - aLat);
+  const dLon = rad(bLon - aLon);
   const h =
-    Math.sin(dLat / 2) ** 2 + Math.cos(rad(ca[0])) * Math.cos(rad(cb[0])) * Math.sin(dLon / 2) ** 2;
+    Math.sin(dLat / 2) ** 2 + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLon / 2) ** 2;
   return 2 * EARTH_RADIUS_MI * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * The airport whose reference point is nearest a position, when that is
+ * within `withinMiles`; null otherwise. The table holds the route network
+ * only, so a position at a field outside it (a maintenance base) names none.
+ * Separate fields in it are at least 2.8 miles apart (SAN and NZY).
+ */
+export function nearestAirport(lat: number, lon: number, withinMiles: number): string | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  let best: string | null = null;
+  let bestMiles = withinMiles;
+  for (const code in AIRPORT_COORDS) {
+    const [aLat, aLon] = AIRPORT_COORDS[code];
+    // A degree of latitude is ~69 miles: skips the trigonometry for all but a few rows.
+    if (Math.abs(aLat - lat) * 69 > bestMiles) continue;
+    const miles = milesBetween(lat, lon, aLat, aLon);
+    // Strictly nearer: two codes for one field (BSL and MLH, DJT and PBI)
+    // answer with the first in the table, the same one every time.
+    if (miles > withinMiles || (best !== null && miles >= bestMiles)) continue;
+    best = code;
+    bestMiles = miles;
+  }
+  return best;
 }
 
 // "On the way" = within 1.5x the direct great-circle (+250 mi for short hops).

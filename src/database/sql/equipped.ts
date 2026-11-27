@@ -10,11 +10,16 @@
  *  2. starlink_planes.verified_wifi names another provider: listed, then
  *     observed on something else.
  *  3. starlink_planes.verified_wifi = 'Starlink': listed and observed.
- *  4. listed (sheet, discovery, type rule, community guide), not yet observed.
- *  5. not listed, but united_fleet says 'confirmed' (a settle the listing
+ *  4. listed and never observed, while the sheet's own hangar note says the
+ *     jet is in for its Starlink fit (sheet_mod_notes, holding). The listing
+ *     ran ahead of the install: not equipped until the note lapses or we
+ *     observe Starlink. A note never outranks an observation, so a stranger's
+ *     cell can only withdraw the sheet's own unobserved listing.
+ *  5. listed (sheet, discovery, type rule, community guide), not yet observed.
+ *  6. not listed, but united_fleet says 'confirmed' (a settle the listing
  *     hasn't caught up with). Evidence, not equipped: every count starts
  *     from the listing.
- * Equipped = 3 or 4.
+ * Equipped = 3 or 5.
  */
 
 import type { StarlinkStatus, WifiProvider } from "../../types";
@@ -23,6 +28,7 @@ export type TailEvidence =
   | "settled_negative"
   | "verified_other"
   | "verified"
+  | "in_mod"
   | "listed"
   | "fleet_confirmed"
   | "unknown";
@@ -32,12 +38,14 @@ export interface TailEvidenceInput {
   listed: { verified_wifi: string | null } | null;
   /** The tail's united_fleet row, or null when it isn't on the roster. */
   fleet: { starlink_status: string | null } | null;
+  /** A hangar note holds for the tail: modHoldSql, or its twin modNoteHolds. */
+  inMod?: boolean;
 }
 
-export function tailEvidence({ listed, fleet }: TailEvidenceInput): TailEvidence {
+export function tailEvidence({ listed, fleet, inMod }: TailEvidenceInput): TailEvidence {
   if (fleet?.starlink_status === "negative") return "settled_negative";
   if (listed) {
-    if (listed.verified_wifi === null) return "listed";
+    if (listed.verified_wifi === null) return inMod ? "in_mod" : "listed";
     return listed.verified_wifi === "Starlink" ? "verified" : "verified_other";
   }
   return fleet?.starlink_status === "confirmed" ? "fleet_confirmed" : "unknown";
@@ -58,7 +66,7 @@ export function isStarlinkProvider(p: WifiProvider): boolean {
  */
 export function starlinkFlag(e: TailEvidence): 1 | 0 | null {
   if (e === "unknown") return null;
-  return e === "settled_negative" || e === "verified_other" ? 0 : 1;
+  return e === "settled_negative" || e === "verified_other" || e === "in_mod" ? 0 : 1;
 }
 
 /** united_fleet status that a starlink_planes verified_wifi implies (null = unverified). */
@@ -72,11 +80,25 @@ export function fleetStatusFromWifi(verifiedWifi: string | null): StarlinkStatus
 const NEG = "_neg";
 
 /**
- * SQL: the starlink_planes row aliased `sp` is equipped (evidence 3 or 4).
+ * SQL: a hangar note holds for the tail (evidence 4's condition): the sheet is
+ * sure it is a Starlink fit, and the note has not lapsed. date('now') is UTC,
+ * as holds_until is.
+ */
+export function modHoldSql(tailExpr: string, airlineExpr: string): string {
+  return `EXISTS (
+      SELECT 1 FROM sheet_mod_notes _mod
+      WHERE _mod.tail_number = ${tailExpr} AND _mod.airline = ${airlineExpr}
+        AND _mod.unsure = 0 AND _mod.holds_until >= date('now')
+    )`;
+}
+
+/**
+ * SQL: the starlink_planes row aliased `sp` is equipped (evidence 3 or 5).
  * Correlated on the tail, so it embeds anywhere `sp` is in scope.
  */
 export function equippedSql(sp: string): string {
-  return `(${sp}.verified_wifi IS NULL OR ${sp}.verified_wifi = 'Starlink')
+  return `(${sp}.verified_wifi = 'Starlink'
+      OR (${sp}.verified_wifi IS NULL AND NOT ${modHoldSql(`${sp}.TailNumber`, `${sp}.airline`)}))
     AND NOT EXISTS (
       SELECT 1 FROM united_fleet ${NEG}
       WHERE ${NEG}.tail_number = ${sp}.TailNumber AND ${NEG}.airline = ${sp}.airline
@@ -131,10 +153,12 @@ export function settledNegativeJoin(alias: string, tailExpr: string, airlineExpr
 export function rowEvidence(r: {
   settled_negative: number;
   verified_wifi: string | null;
+  in_mod?: number;
 }): TailEvidence {
   return tailEvidence({
     listed: { verified_wifi: r.verified_wifi },
     fleet: r.settled_negative ? { starlink_status: "negative" } : null,
+    inMod: r.in_mod === 1,
   });
 }
 

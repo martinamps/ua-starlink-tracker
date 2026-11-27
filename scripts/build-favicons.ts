@@ -88,6 +88,8 @@ interface Tenant {
 function tenants(): Tenant[] {
   const out: Tenant[] = [{ code: "hub", accent: HUB_BRAND.faviconAccent ?? HUB_BRAND.accentColor }];
   for (const cfg of Object.values(AIRLINES)) {
+    // An airline answered from its statement alone has no site of its own.
+    if (cfg.statementRule) continue;
     out.push({
       code: cfg.code.toLowerCase(),
       accent: cfg.brand.faviconAccent ?? cfg.brand.accentColor,

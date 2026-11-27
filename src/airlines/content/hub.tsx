@@ -1,9 +1,5 @@
-import {
-  AirlineProgressList,
-  RecentInstallsFeed,
-  completeScope,
-  trackingMethod,
-} from "../../components/atoms";
+import { Fragment } from "react";
+import { AirlineProgressList, RecentInstallsFeed, completeScope } from "../../components/atoms";
 import { FlightSearchForm } from "../../components/flight-search-form";
 import {
   Chip,
@@ -20,6 +16,13 @@ import {
 import type { Link } from "../../components/layout";
 import { TrackerLinks } from "../../components/tracker-links";
 import { fmt } from "../../components/ui/format";
+import {
+  byPublishedCount,
+  countingMethodSentences,
+  ownCountSourced,
+  publishedCount,
+  typeSumFigure,
+} from "../published-count";
 import { AIRLINES, SITES, airlineHomeUrl, publicAirlines } from "../registry";
 import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
@@ -40,11 +43,6 @@ function list(names: string[]): string {
   if (names.length <= 1) return names.join("");
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
-
-const byType = (code: string) => {
-  const cfg = AIRLINES[code];
-  return cfg ? trackingMethod(cfg) === "type" : false;
-};
 
 // Matches the progress row's label: the airline's own site counts partner fleets too.
 const operatedBy = (code: string) => {
@@ -124,7 +122,7 @@ function RouteComparePanel() {
       <Eyebrow className="mb-1">Starlink odds by airline</Eyebrow>
       <div className="text-xs font-mono text-muted leading-relaxed mb-3">
         Share of each airline's planes on this nonstop route that have Starlink today.
-      </div>
+      </div>{" "}
       <form id="hub-compare-route" className="flex flex-col sm:flex-row gap-2">
         <input
           type="text"
@@ -132,7 +130,7 @@ function RouteComparePanel() {
           aria-label="From airport code"
           placeholder="From (SFO)"
           maxLength={3}
-          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
+          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
           required
         />
         <input
@@ -141,27 +139,28 @@ function RouteComparePanel() {
           aria-label="To airport code"
           placeholder="To (HNL)"
           maxLength={3}
-          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
+          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
           required
         />
         <button type="submit" className={buttonClass()}>
           Compare
         </button>
-      </form>
+      </form>{" "}
       <div className="flex flex-wrap items-center gap-2 mt-2">
         {PRESET_ROUTES.map((r) => (
-          <button
-            key={`${r.o}-${r.d}`}
-            type="button"
-            data-preset-origin={r.o}
-            data-preset-dest={r.d}
-            className={chipClass("sm")}
-          >
-            {r.o} → {r.d}
-          </button>
+          <Fragment key={`${r.o}-${r.d}`}>
+            <button
+              type="button"
+              data-preset-origin={r.o}
+              data-preset-dest={r.d}
+              className={chipClass("sm")}
+            >
+              {r.o} → {r.d}
+            </button>{" "}
+          </Fragment>
         ))}
-      </div>
-      <div id="hub-compare-result" className="mt-3 hidden" />
+      </div>{" "}
+      <div id="hub-compare-result" className="mt-3 hidden" />{" "}
       <div
         id="hub-compare-footer"
         className="mt-3 text-xs font-mono text-muted leading-relaxed hidden"
@@ -195,17 +194,15 @@ const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: 
             All {AIRLINE_FACTS.length} airlines, including the ones that said no →
           </a>
         </p>
-      </section>
-      <HubAirlineGrid links={hubLinks} />
-      <TrackerLinks />
-      <RouteComparePanel />
+      </section>{" "}
+      <HubAirlineGrid links={hubLinks} /> <TrackerLinks /> <RouteComparePanel />
       <Panel pad="sm">
         <Eyebrow className="mb-2">Check a flight</Eyebrow>
         <FlightSearchForm
           site={site}
           id="hub-check-flight"
           mode="check-any"
-          placeholder="UA1736, HA51, AS118, QR1…"
+          placeholder="UA1736, AS118, QR1…"
           prefillDate
           hideLabels
           withScript={false}
@@ -228,13 +225,8 @@ export const content: AirlineContent = {
 
   intro: () => (
     <>
-      {AIRLINE_FACTS.length} airlines, each with a dated source. We count{" "}
-      {list(
-        publicAirlines()
-          .filter((a) => !a.communitySource && a.rollout.rosterIsProgramScope)
-          .map((a) => a.shortName)
-      )}{" "}
-      plane by plane.
+      {AIRLINE_FACTS.length} airlines, each with a dated source.{" "}
+      {countingMethodSentences(publicAirlines())}
     </>
   ),
 
@@ -258,12 +250,32 @@ export const content: AirlineContent = {
     {
       q: "Which airline has the most Starlink planes?",
       a: ({ perAirline = [] }) => {
-        const [top, ...rest] = [...perAirline].sort((a, b) => b.starlink - a.starlink);
+        const rows = byPublishedCount(
+          perAirline.flatMap((r) => {
+            const cfg = AIRLINES[r.code];
+            return cfg ? [{ ...r, published: publishedCount(cfg, r.starlink) }] : [];
+          })
+        );
+        // Only a count ranks: plane by plane, the airline's own dated figure, or
+        // our sum of the whole-type counts its source gives.
+        const figure = (r: (typeof rows)[number]) =>
+          r.published.basis === "tracked"
+            ? `${fmt(r.published.count)}${operatedBy(r.code)}`
+            : r.published.basis === "airline"
+              ? `${fmt(r.published.count)}, its own figure ${ownCountSourced(r.published)}`
+              : r.published.basis === "type-sum"
+                ? typeSumFigure(r.published)
+                : null;
+        const [top, ...rest] = rows.filter((r) => r.published.basis !== "type");
         if (!top) return <p>See the full list for each airline's count.</p>;
-        const typeCounted = [top, ...rest].filter((r) => byType(r.code)).map((r) => r.name);
+        const names = (basis: "airline" | "type-sum" | "type") =>
+          rows.filter((r) => r.published.basis === basis).map((r) => r.name);
+        const ownFigure = names("airline");
+        const summed = names("type-sum");
+        const unranked = names("type");
         return (
           <p>
-            {top.name}, with <StatInline n={top.starlink} />
+            {top.name}, with <StatInline>{figure(top)}</StatInline>
             {top.code === "UA" ? (
               <>
                 {" "}
@@ -274,17 +286,25 @@ export const content: AirlineContent = {
                 )
               </>
             ) : null}
-            .{" "}
-            {rest.length > 0 && (
+            . {rest.length > 0 && <>Next: {list(rest.map((r) => `${r.name} (${figure(r)})`))}. </>}
+            {ownFigure.length > 0 && (
               <>
-                Next: {list(rest.map((r) => `${r.name} (${fmt(r.starlink)}${operatedBy(r.code)})`))}
-                .{" "}
+                {list(ownFigure)} {ownFigure.length === 1 ? "is" : "are"} counted by aircraft type
+                here, so {ownFigure.length === 1 ? "that figure is" : "those figures are"} the
+                airline's own.{" "}
               </>
             )}
-            {typeCounted.length > 0 && (
+            {summed.length > 0 && (
               <>
-                {list(typeCounted)} {typeCounted.length === 1 ? "is" : "are"} counted by aircraft
-                type.
+                {list(summed)} {summed.length === 1 ? "is" : "are"} counted by aircraft type here,
+                so {summed.length === 1 ? "that figure adds" : "those figures add"} up the per-type
+                counts a source gives.{" "}
+              </>
+            )}
+            {unranked.length > 0 && (
+              <>
+                {list(unranked)} {unranked.length === 1 ? "is" : "are"} counted by aircraft type and{" "}
+                {unranked.length === 1 ? "has" : "have"} no figure to rank.
               </>
             )}
           </p>
@@ -295,8 +315,9 @@ export const content: AirlineContent = {
       q: "Is Starlink Wi-Fi free on every airline?",
       a: () => (
         <p>
-          It varies. United's is free for MileagePlus members, Alaska's for Atmos Rewards members,
-          and Hawaiian's and Qatar's for every passenger. Each airline's page on the{" "}
+          It varies. United's is free for MileagePlus members, and Alaska's and Hawaiian's for Atmos
+          Rewards members. Qatar gives everyone 45 minutes, and the whole flight with a Privilege
+          Club login. All three programmes are free to join. Each airline's page on the{" "}
           <a href="/airlines" className={LINK}>
             full list
           </a>{" "}
@@ -361,10 +382,11 @@ export const content: AirlineContent = {
           q: "How is this data collected?",
           a: () => (
             <p>
-              Fleet rosters and flight schedules come from public aviation data. Starlink status is
-              confirmed per aircraft against each airline's own systems where they show it (United,
-              Alaska), and by aircraft type where the airline has finished whole types (Hawaiian,
-              Qatar). Other airlines get a status page with dated sources.
+              Fleet rosters and flight schedules come from public aviation data.{" "}
+              {countingMethodSentences(publicAirlines(), "tracked")} An aircraft checked on its own
+              is checked against its airline's own systems. Airlines that have finished whole types
+              are tracked by aircraft type (Hawaiian, Qatar). Other airlines get a status page with
+              dated sources.
             </p>
           ),
         },

@@ -9,7 +9,7 @@ import {
   canonicalFlightInput,
   stripFlightNumberZeros,
 } from "./flight-input";
-import { AIRLINES, type AirlineConfig, enabledAirlines } from "./registry";
+import { AIRLINES, type AirlineConfig, enabledAirlines, hubLookupAirlines } from "./registry";
 
 export { canonicalFlightFor, canonicalFlightInput, stripFlightNumberZeros };
 
@@ -137,6 +137,24 @@ export function icaoCallsignToIata(fn: string): string {
     }
   }
   return fn;
+}
+
+const lettersOnly = (s: string) => s.toUpperCase().replace(/[^A-Z]/g, "");
+
+/**
+ * A flight typed with the airline's name where its code goes ("ALASKA654",
+ * "United Airlines 123"), as that airline's coded number. Only the carriers
+ * the lookup surfaces answer are recognised, by their registry names; the
+ * digits keep the permalink's 1-4 bound, so nothing typed mints a new shape.
+ */
+export function spelledOutFlight(
+  input: string,
+  airlines: readonly AirlineConfig[] = hubLookupAirlines()
+): { cfg: AirlineConfig; flightNumber: string } | null {
+  const m = canonicalFlightInput(input).match(/^([A-Z]{4,})0*(\d{1,4})$/);
+  if (!m) return null;
+  const cfg = airlines.find((a) => [a.shortName, a.name].some((n) => lettersOnly(n) === m[1]));
+  return cfg ? { cfg, flightNumber: `${cfg.iata}${m[2]}` } : null;
 }
 
 /**
@@ -282,6 +300,18 @@ const permalinkPattern = (code: string) => `^${code}${PERMALINK_DIGITS}$`;
  * router 404'd it.
  */
 export const CANONICAL_FLIGHT_PERMALINK = new RegExp(permalinkPattern(IATA_CODE));
+
+/**
+ * Flight 0 however it is typed: UA0, UA000, UAL0 by callsign, "United 0" by
+ * name. No airline flies it, so it is no flight's page and no flight's hop,
+ * though it fits the permalink shape. The pages 404 it; the API answers it as
+ * it always has, so its contract stays as pinned.
+ */
+const FLIGHT_ZERO = new RegExp(String.raw`^(?:${IATA_CODE}|[A-Z]{3,})0+$`);
+
+export function isFlightZero(raw: string): boolean {
+  return FLIGHT_ZERO.test(canonicalFlightInput(raw));
+}
 
 /**
  * What may be persisted into the flight_routes cache. Looser than the permalink

@@ -5,11 +5,16 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { AIRLINES, SITES } from "../src/airlines/registry";
+import { trackingMethod } from "../src/airlines/published-count";
+import { AIRLINES, SITES, publicAirlines } from "../src/airlines/registry";
 import { airlinesWithTargetEntry, rolloutTargets } from "../src/airlines/targets";
 import {
+  chartDescription,
+  chartModel,
   cumulativeSeries,
+  measuredPaceText,
   nearestPaceGap,
+  paceWindowSpan,
   requiredMonthlyPace,
 } from "../src/components/charts/rollout-math";
 import { createApp } from "../src/server/app";
@@ -20,7 +25,7 @@ import {
   excludeMassWriteDays,
   zeroFillMonths,
 } from "../src/utils/install-rate";
-import { bodyOf, openSnapshot } from "./helpers";
+import { addFleet, bodyOf, makeSyntheticDb, openSnapshot } from "./helpers";
 
 const NOW = Date.parse("2026-06-15T00:00:00Z");
 
@@ -368,6 +373,46 @@ describe("rollout chart math", () => {
   });
 });
 
+describe("a month of our own making is said as the measured pace carried forward", () => {
+  const stats = computeInstallRate({
+    daily: daily(["2026-03", 30], ["2026-04", 24], ["2026-05", 30]),
+    equipped: 400,
+    total: 1400,
+    targets: [TARGET],
+    nowMs: NOW,
+  });
+
+  test("the pace is named with the months it was measured over", () => {
+    expect(paceWindowSpan(stats)).not.toBe("");
+    expect(measuredPaceText(stats)).toBe(
+      `the ${paceWindowSpan(stats)} pace of about ${Math.round(stats.paceMonthly as number)} a month`
+    );
+  });
+
+  test("the chart's spoken summary states its months under that condition", () => {
+    const model = chartModel(stats);
+    if (!model) throw new Error("no chart model: nothing is tested");
+    const said = chartDescription(model, "Example Air");
+    expect(stats.projections[0].projectedMonth).not.toBeNull();
+    expect(said).toContain(`If ${measuredPaceText(stats)} holds:`);
+    expect(said).not.toContain("At the current pace");
+    expect(said.indexOf("reached around")).toBeGreaterThan(said.indexOf(" holds:"));
+  });
+
+  test("with no pace there is no pace sentence and no month", () => {
+    const thin = computeInstallRate({
+      daily: daily(["2026-05", 30]),
+      equipped: 30,
+      total: 1400,
+      targets: [TARGET],
+      nowMs: NOW,
+    });
+    expect(measuredPaceText(thin)).toBeNull();
+    const model = chartModel(thin);
+    if (model) expect(chartDescription(model, "Example Air")).not.toContain("reached around");
+  });
+});
+
 describe("rolloutTargets config", () => {
   test("every source is a real https URL and every deadline parses", () => {
     for (const code of ["UA", "HA", "AS", "QR"]) {
@@ -446,12 +491,15 @@ describe("/install-rate page", () => {
     }
   });
 
-  test("hub page covers every public airline", async () => {
+  test("hub page covers every public airline counted on this site, and no by-type one", async () => {
     const { status, text } = await bodyOf(app, "/install-rate", SITES.airline.canonicalHost);
     expect(status).toBe(200);
-    for (const code of ["ua", "ha", "as"]) {
-      expect(text).toContain(`id="install-rate-stat-${code}"`);
+    for (const a of publicAirlines()) {
+      const section = `id="install-rate-stat-${a.code.toLowerCase()}"`;
+      if (trackingMethod(a) === "type") expect(text).not.toContain(section);
+      else expect(text).toContain(section);
     }
+    expect(text).toContain('id="install-rate-stat-ua"');
   });
 
   test("a count we derived is labelled as ours, not the airline's", async () => {
@@ -460,5 +508,79 @@ describe("/install-rate page", () => {
     expect(rolloutTargets("UA").some((t) => t.count === undefined)).toBe(true);
     const { text } = await bodyOf(app, "/install-rate", SITES.united.canonicalHost);
     expect(text).toContain("Fleet size is our count, not United&#x27;s.");
+  });
+});
+
+describe("/install-rate with a running pace", () => {
+  const UA = SITES.united.canonicalHost;
+  let page: string;
+  let fleet: string;
+  let rows: string[];
+
+  // 40 dated installs in each of the last six full months, on a fleet of 1,000.
+  beforeAll(async () => {
+    const db = makeSyntheticDb();
+    const now = new Date();
+    const listing = db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+       VALUES ('Boeing 737-900', 'StrLnk', '5', 'mainline', ?, ?, 'United Airlines', 'mainline', 'Starlink', 'UA')`
+    );
+    let n = 0;
+    for (let back = 6; back >= 1; back--) {
+      for (let i = 0; i < 40; i++) {
+        const day = new Date(
+          Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1 + (i % 27))
+        );
+        const tail = `N${10000 + n++}`;
+        listing.run(day.toISOString().slice(0, 10), tail);
+        addFleet(db, tail, "confirmed", { verifiedWifi: "Starlink" });
+      }
+    }
+    for (let i = n; i < 1000; i++)
+      addFleet(db, `N${50000 + i}`, "negative", { verifiedWifi: "Viasat" });
+    const meta = db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)");
+    for (const key of ["totalAircraftCount", "mainlineTotal", "combinedTotal"]) {
+      meta.run(`UA:${key}`, "1000");
+    }
+    meta.run("UA:expressTotal", "0");
+    meta.run("UA:lastUpdated", now.toISOString());
+    const app = createApp(db);
+    const text = (html: string) => html.replace(/<!-- -->/g, "").replace(/&#x27;/g, "'");
+    page = text((await bodyOf(app, "/install-rate", UA)).text);
+    fleet = text((await bodyOf(app, "/fleet", UA)).text);
+    rows = [...page.matchAll(/<p class="mt-1 text-sm text-secondary">(Due [^<]*)<\/p>/g)].map(
+      (m) => m[1]
+    );
+    db.close();
+  });
+
+  test("the fixture has open targets with a month of ours beside them", () => {
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((r) => /reached in [A-Z][a-z]{2} \d{4}/.test(r))).toBe(true);
+  });
+
+  test("each month of ours carries the pace and the months it was measured over", () => {
+    // "Due <date> · N to go" is the airline's date and our count; anything
+    // after that is ours to qualify.
+    for (const ours of rows.flatMap((r) => r.split(" · ").slice(2))) {
+      expect(ours).toMatch(
+        /^(reached in [A-Z][a-z]{2} \d{4} if|more than four years out at) the [A-Z][a-z]{2}.*\d{4} pace of about [\d,]+ a month( holds)?$/
+      );
+    }
+    expect(page).not.toContain("at current pace");
+    expect(page).not.toContain("At the current pace");
+  });
+
+  test("the page says the month is no forecast, and an airline's own date stays credited", () => {
+    expect(page).toContain("that pace carried forward unchanged, not a forecast");
+    for (const t of rolloutTargets("UA")) expect(page).toContain(t.source.url);
+    expect(rows.every((r) => r.startsWith("Due "))).toBe(true);
+  });
+
+  test("the fleet page's link promises no more than the page gives", () => {
+    const link = fleet.match(/<a href="\/install-rate" class="text-accent[^>]*>([^<]*)<\/a>/)?.[1];
+    expect(link).toBeDefined();
+    expect(link).toContain("against stated targets");
+    expect(link).not.toMatch(/project|finish|forecast/i);
   });
 });

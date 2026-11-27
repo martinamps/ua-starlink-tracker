@@ -6,12 +6,16 @@ import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import { closeFR24Transport } from "./src/api/fr24-browser-transport";
 import {
   archivePastDepartures,
+  expirePassengerDedupeKeys,
+  metaJobStamps,
   migrate,
   openDatabase,
   pruneCrashRows,
   recordFirstFlights,
+  refreshSheetOwnedFleetMeta,
   warmAircraftTypePages,
 } from "./src/database/database";
+import { startSourceHealthJob } from "./src/database/source-health";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
 import { startAlaskaTrackerJob } from "./src/scripts/alaska-tracker";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
@@ -22,7 +26,9 @@ import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetProgressJob } from "./src/scripts/fleet-progress";
 import { startFleetProgressTailsJob } from "./src/scripts/fleet-progress-tails";
 import { startFleetSync } from "./src/scripts/fleet-sync";
+import { activateIndexNow, ensureIndexNowKey, indexNowOn } from "./src/scripts/indexnow";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
+import { startRouteBacktestJob } from "./src/scripts/route-backtest";
 import { startSecAnchorsJob } from "./src/scripts/sec-anchors";
 import { runSheetScrape } from "./src/scripts/sheet-scrape";
 import { startGeofeedJob } from "./src/scripts/starlink-geofeed";
@@ -30,9 +36,13 @@ import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import { createApp } from "./src/server/app";
 import { passengerVerifyEnabled } from "./src/server/passenger-detect";
-import { pingIndexNow } from "./src/utils/indexnow";
+import {
+  DEDUPE_KEY_SWEEP_INTERVAL_SEC,
+  DEDUPE_WINDOW_SEC,
+} from "./src/server/passenger-report-fields";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
+import { BUILD_COMMIT, PROCESS_STARTED } from "./src/utils/running-build";
 import { sleep } from "./src/utils/sleep";
 
 process.on("unhandledRejection", (reason) => {
@@ -47,9 +57,14 @@ const JOBS_ENABLED = process.env.DISABLE_JOBS !== "1";
 // One handle for the server and every in-process job; migrations run once, here.
 const db = openDatabase();
 migrate(db);
+refreshSheetOwnedFleetMeta(db);
+// Before createApp: the app reads the key once, to serve its key file.
+const indexNowKey = indexNowOn() ? ensureIndexNowKey(db) : null;
 const app = createApp(db);
 
-info(`Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`);
+info(
+  `Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}. Commit: ${BUILD_COMMIT}, started ${PROCESS_STARTED}`
+);
 
 Bun.serve({
   port: PORT,
@@ -85,19 +100,18 @@ const track = (handle?: JobHandle) => {
 };
 
 if (JOBS_ENABLED) {
+  const jobStamps = metaJobStamps(db);
   // updateStarlinkData (Google Sheets scrape) is UA-only — no other airline has
   // a community sheet. updateDatabase() is airline-scoped so HA rows survive.
   track(
     startJob({
       name: "sheet_scrape",
+      stamps: jobStamps,
       intervalMs: 60 * 60 * 1000,
       initialDelayMs: 0,
       run: async (ctx) => {
         info("Running scheduled update...");
-        const result = await updateStarlinkData(ctx);
-        // A successful scrape re-stamps lastUpdated and can settle wifi
-        // statuses — the pages whose lastmod just moved are / and /fleet.
-        if (result.outcome === "success") pingIndexNow("UA", ["/", "/fleet"]);
+        await updateStarlinkData(ctx);
       },
     })
   );
@@ -121,6 +135,11 @@ if (JOBS_ENABLED) {
   // Data-freshness gauges: derived from MAX(timestamp) in the DB, not a
   // ran-at heartbeat — catches "loop alive but writes nothing" silent failures.
   track(startFreshnessEmitter(db));
+
+  // Per-source last success/failure, kept in meta: gauges every 5 minutes and
+  // one Slack notice when a source passes its quiet threshold, one when it
+  // returns (the freshness gauges above have no memory and no voice).
+  track(startSourceHealthJob(db));
 
   track(
     startJob({
@@ -148,10 +167,33 @@ if (JOBS_ENABLED) {
     })
   );
 
+  // IndexNow: every source that lists a tail (sheet, discovery, verifiers,
+  // fleet sync) writes the same table, so one look at it catches them all.
+  // The timer only reads the database; a submission happens when a tail has
+  // newly joined a list, and for the pages that changed with it. The same
+  // pass compares the deployed rollout facts with the last recorded ones and
+  // submits the hub /timeline and airline pages of any that changed.
+  if (indexNowKey) {
+    const indexNow = activateIndexNow({ db, key: indexNowKey, dispatch: app.dispatch });
+    track(
+      startJob({
+        name: "indexnow_new_tails",
+        intervalMs: 5 * 60 * 1000,
+        initialDelayMs: 60 * 1000,
+        // Tails first: they are what the cap is kept for.
+        run: async () => {
+          await indexNow.announceNewTails();
+          await indexNow.announceFactChanges();
+        },
+      })
+    );
+  }
+
   // Daily UA ship→tail sheet sync.
   track(
     startJob({
       name: "ship_number_sync",
+      stamps: jobStamps,
       intervalMs: 24 * 3600 * 1000,
       initialDelayMs: 10 * 60 * 1000,
       run: () => syncShipNumbers({ db }),
@@ -176,11 +218,29 @@ if (JOBS_ENABLED) {
   // assignments, metrics-only — FR24 stays the serving source.
   track(startAdsbSweepJob(db));
 
+  // Daily replay of the outlook's route months on a sample of routes: logs and
+  // gauges only, so its error is readable without database access.
+  track(startRouteBacktestJob(db, jobStamps));
+
   // BTS FGK monthly shadow ingest (daily check; ingests when a new month posts).
   track(startBtsSyncJob(db));
 
   // Starlink RFC 8805 geofeed → backs the passenger-verify dark-launch probe.
   if (passengerVerifyEnabled) track(startGeofeedJob(db));
+
+  // Blanks report dedupe keys past their window when no new report has done
+  // it; the banner tells visitors the key is gone within a day. Not gated on
+  // PASSENGER_VERIFY: switching the probe off must not strand the last keys.
+  track(
+    startJob({
+      name: "expire_passenger_dedupe_keys",
+      intervalMs: DEDUPE_KEY_SWEEP_INTERVAL_SEC * 1000,
+      initialDelayMs: 5 * 60 * 1000,
+      run: () => {
+        expirePassengerDedupeKeys(db, DEDUPE_WINDOW_SEC);
+      },
+    })
+  );
 
   // Daily prune of subprocess-crash log rows (no observation, just noise).
   track(

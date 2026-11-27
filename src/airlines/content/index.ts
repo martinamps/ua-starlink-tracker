@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import type { Link } from "../../components/layout";
+import type { AirlineChartCount, AirlineChartGaps } from "../../database/roster";
 import type { Aircraft, FleetStats, PerAirlineStat, RecentInstall } from "../../types";
-import type { AirlineCode, KnownAirlineCode, SiteConfig, Tenant } from "../registry";
+import type { AirlineCode, RosterAirlineCode, SiteConfig, Tenant } from "../registry";
 import { content as af } from "./af";
 import { content as as } from "./as";
 import { content as ha } from "./ha";
@@ -31,6 +32,11 @@ export interface ContentStats {
   noun?: string;
   /** The partner slices inside that headline, one per partner. */
   partners?: Array<{ label: string; starlink: number; total: number }>;
+  /** The airline's own stored chart, while it counts more than the tails
+   * named here (starlinkCount stays the named count). */
+  airlineCount?: AirlineChartCount | null;
+  /** Types and mainline jets that chart counts beyond the named tails. */
+  chartGaps?: AirlineChartGaps | null;
 }
 
 /**
@@ -88,9 +94,10 @@ export interface AirlineContent {
   faq: FaqSection[];
 }
 
-// Exhaustive over the registry: adding an airline without homepage content is
-// a compile error, never a silent fallback to another tenant's copy.
-const CONTENT: Record<KnownAirlineCode, AirlineContent> = {
+// Exhaustive over the registry's roster airlines: adding one without homepage
+// content is a compile error, never a silent fallback to another tenant's
+// copy. An airline answered by statement alone has no homepage.
+const CONTENT: Record<RosterAirlineCode, AirlineContent> = {
   UA: ua,
   HA: ha,
   AS: as,

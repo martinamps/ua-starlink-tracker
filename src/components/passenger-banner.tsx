@@ -2,12 +2,20 @@
 // UA tenant — the gate lives in passenger-detect.ts, not here. Behavior is
 // src/client/passenger-banner.ts, shipped in the homepage bundle.
 import type { SiteConfig } from "../airlines/registry";
+import { PASSENGER_REPORT_PRIVACY_NOTE } from "../server/passenger-report-fields";
 import { FlightSearchForm } from "./flight-search-form";
 
 export function PassengerBanner({ site }: { site: SiteConfig }) {
   return (
-    <div id="psgr-banner" className="relative mx-auto mt-4 mb-4 hidden w-full max-w-3xl">
-      <div className="rounded-lg border border-accent/40 bg-surface-elevated p-4 shadow-lg shadow-accent/10 sm:p-5">
+    // A named region: it sits above the site bar, outside the page's main landmark.
+    <section
+      id="psgr-banner"
+      aria-labelledby="psgr-title"
+      className="relative mx-auto mt-4 mb-4 hidden w-full max-w-3xl"
+    >
+      {/* The panel's own surface, not the raised one: the Send button's accent
+          text on its tint is 4.65:1 here and was 4.1:1 on the lighter fill. */}
+      <div className="rounded-lg border border-accent/40 bg-surface p-4 shadow-lg shadow-accent/10 sm:p-5">
         <button
           id="psgr-dismiss"
           type="button"
@@ -16,7 +24,7 @@ export function PassengerBanner({ site }: { site: SiteConfig }) {
         >
           ×
         </button>
-        <h2 className="mb-1 pr-6 font-display text-lg text-primary">
+        <h2 id="psgr-title" className="mb-1 pr-6 font-display text-lg text-primary">
           Are you on a Starlink flight?
         </h2>
         <p className="mb-3 pr-6 text-sm text-secondary">
@@ -35,10 +43,10 @@ export function PassengerBanner({ site }: { site: SiteConfig }) {
         <output id="psgr-thanks" className="mt-2 hidden text-sm text-success">
           Thanks, recorded.
         </output>
-        <p className="mt-2 text-xs text-muted">
-          We store only the flight number and that your IP is in Starlink's published range.
+        <p id="psgr-privacy" className="mt-2 text-xs text-muted">
+          {PASSENGER_REPORT_PRIVACY_NOTE}
         </p>
       </div>
-    </div>
+    </section>
   );
 }

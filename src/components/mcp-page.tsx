@@ -1,4 +1,9 @@
-import { type SiteConfig, siteAirline } from "../airlines/registry";
+import {
+  type SiteConfig,
+  hubLookupAirlines,
+  mcpScopeAirlines,
+  siteAirline,
+} from "../airlines/registry";
 import { ClientScriptTag } from "./layout";
 import type { Link } from "./layout";
 import {
@@ -17,8 +22,61 @@ interface McpPageProps {
   currentPath?: string;
 }
 
-export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) {
+// Both screenshots are of this airline's connector (a United itinerary, the
+// United URL in the dialog), so they only illustrate its own page.
+const SCREENSHOT_AIRLINE = "UA";
+
+const EITHER = new Intl.ListFormat("en-GB", { style: "long", type: "disjunction" });
+
+/** What the connector on this host answers, in the words of its own tools:
+ * the hub looks up every hub-lookup airline and compares them on a route, a
+ * planner airline also builds connections, any other airline answers per
+ * flight and per aircraft type. */
+export function mcpPageCopy(site: SiteConfig): {
+  dek: string;
+  /** The dek for a meta description, where the hub's list of airlines no
+   * longer fits whole. */
+  metaDek?: string;
+  prompts: string[];
+} {
+  if (site.scope === "ALL") {
+    const airlines = hubLookupAirlines();
+    return {
+      dek: `Ask Claude whether your ${EITHER.format(airlines.map((a) => a.shortName))} flight has Starlink, and compare airlines on a route.`,
+      metaDek: `Ask Claude whether your flight has Starlink on ${airlines.length} airlines, and compare airlines on a route.`,
+      prompts: [
+        `Does ${airlines[0].iata}544 tomorrow have Starlink?`,
+        "Which airline has the best Starlink odds from Seattle to San Francisco?",
+        "How far along is each airline's Starlink rollout?",
+      ],
+    };
+  }
   const cfg = siteAirline(site);
+  if (!cfg.flightHistoryModel) {
+    return {
+      dek: `Ask Claude whether your ${cfg.shortName} flight has Starlink.`,
+      prompts: [
+        `Does ${cfg.iata}1 tomorrow have Starlink?`,
+        `Which ${cfg.shortName} aircraft types have Starlink?`,
+        `What's the Starlink install rate on ${cfg.shortName}'s fleet?`,
+      ],
+    };
+  }
+  return {
+    dek: `Ask Claude whether your ${cfg.shortName} flight has Starlink, and get alternatives if it doesn't.`,
+    prompts: [
+      `I'm on ${cfg.iata}642 on 3/13 — does it have Starlink? If not, what are my options?`,
+      "Flying SFO to EWR next month — plan me the best Starlink routing",
+      `Does ${cfg.iata}4680 tomorrow have Starlink?`,
+      `What's the Starlink install rate on ${cfg.shortName}'s fleet?`,
+    ],
+  };
+}
+
+export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) {
+  const { dek, prompts } = mcpPageCopy(site);
+  const screenshots = site.scope === SCREENSHOT_AIRLINE;
+  const scopeCodes = site.scope === "ALL" ? mcpScopeAirlines().map((a) => a.code) : [];
   const mcpUrl = `https://${site.canonicalHost}/mcp`;
   const claudeConnectorsUrl = "https://claude.ai/settings/connectors?modal=add-custom-connector";
   const claudeCodeCommand = `claude mcp add --transport http starlink ${mcpUrl}`;
@@ -26,26 +84,20 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
   const vscodeInstallUrl = `vscode:mcp/install?${encodeURIComponent(JSON.stringify({ name: "starlink", type: "http", url: mcpUrl }))}`;
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
-      <PageHeader
-        title="Starlink Tracker for Claude"
-        dek={
-          <>
-            Ask Claude whether your {cfg.shortName} flight has Starlink, and get alternatives if it
-            doesn't.
-          </>
-        }
-      />
+      <PageHeader title="Starlink Tracker for Claude" dek={dek} />
 
       {/* Hero: show the result first */}
-      <div className="relative max-w-3xl mx-auto w-full mb-8">
-        <img
-          src="/static/mcp-demo.webp"
-          alt="Claude Desktop window: user asks 'I'm on UA642 on 3/13 — does it have Starlink?' Response shows ~1% for the nonstop (4.2h), then a ranked table with two 1-stop alternatives at 93-94% Starlink via Savannah or Richmond (~5.3h total)."
-          width="1676"
-          height="1802"
-          className="rounded-xl border border-subtle w-full shadow-2xl glow-accent"
-        />
-      </div>
+      {screenshots && (
+        <div className="relative max-w-3xl mx-auto w-full mb-8">
+          <img
+            src="/static/mcp-demo.webp"
+            alt="Claude Desktop window: user asks 'I'm on UA642 on 3/13 — does it have Starlink?' Response shows ~1% for the nonstop (4.2h), then a ranked table with two 1-stop alternatives at 93-94% Starlink via Savannah or Richmond (~5.3h total)."
+            width="1676"
+            height="1802"
+            className="rounded-xl border border-subtle w-full shadow-2xl glow-accent"
+          />
+        </div>
+      )}
 
       {/* URL + one-line setup */}
       <div className="relative max-w-2xl mx-auto w-full mb-8">
@@ -64,7 +116,7 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
               Copy
             </button>
           </div>
-          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-subtle text-xs text-muted">
+          <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-subtle text-xs text-muted">
             <span className="whitespace-nowrap">Using Claude.ai or mobile?</span>
             <ButtonLink
               href={claudeConnectorsUrl}
@@ -84,23 +136,21 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
         <Panel>
           <SectionTitle className="mb-3">Try asking</SectionTitle>
           <ul className="space-y-2 text-sm text-muted">
-            <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>I'm on {cfg.iata}642 on 3/13 — does it have
-              Starlink? If not, what are my options?<span className="text-secondary">"</span>
-            </li>
-            <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>Flying SFO to EWR next month — plan me the
-              best Starlink routing<span className="text-secondary">"</span>
-            </li>
-            <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>Does {cfg.iata}4680 tomorrow have Starlink?
-              <span className="text-secondary">"</span>
-            </li>
-            <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>What's the Starlink install rate on{" "}
-              {cfg.shortName}'s fleet?<span className="text-secondary">"</span>
-            </li>
+            {prompts.map((prompt) => (
+              <li key={prompt} className="pl-4 -indent-4">
+                <span className="text-secondary">"</span>
+                {prompt}
+                <span className="text-secondary">"</span>
+              </li>
+            ))}
           </ul>
+          {scopeCodes.length > 0 && (
+            <p className="mt-4 pt-3 border-t border-subtle text-xs text-muted">
+              One address answers all {hubLookupAirlines().length} airlines. To pin one, add{" "}
+              <code className="font-mono text-accent">?scope={scopeCodes[0]}</code> (or{" "}
+              {scopeCodes.slice(1).join(", ")}) to the URL.
+            </p>
+          )}
         </Panel>
       </div>
 
@@ -135,21 +185,23 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
               </p>
               <p>
                 2. Paste{" "}
-                <code className="font-mono text-xs text-accent bg-base px-1.5 py-0.5 rounded">
+                <code className="font-mono text-xs text-accent bg-base px-1.5 py-0.5 rounded break-all">
                   {mcpUrl}
                 </code>{" "}
                 and name it "Starlink Tracker"
               </p>
               <p>3. The tools are available in your next chat.</p>
             </div>
-            <img
-              src="/static/mcp-add-dialog.webp"
-              alt="Claude Desktop 'Add custom connector' dialog with Starlink Tracker URL filled in"
-              width="700"
-              height="548"
-              className="rounded-lg border border-subtle w-full max-w-md"
-              loading="lazy"
-            />
+            {screenshots && (
+              <img
+                src="/static/mcp-add-dialog.webp"
+                alt="Claude Desktop 'Add custom connector' dialog with Starlink Tracker URL filled in"
+                width="700"
+                height="548"
+                className="rounded-lg border border-subtle w-full max-w-md"
+                loading="lazy"
+              />
+            )}
             <p className="pt-2 border-t border-subtle">
               <strong className="text-secondary">ChatGPT &amp; other MCP clients:</strong> same URL,{" "}
               <code className="font-mono text-xs">http</code> transport. Standard JSON-RPC 2.0, no

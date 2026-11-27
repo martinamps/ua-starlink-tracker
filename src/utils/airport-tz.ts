@@ -128,6 +128,9 @@ export const AIRPORT_TZ: Record<string, string> = {
   SGU: "America/Denver",
   SHR: "America/Denver",
   WYS: "America/Denver",
+  DIK: "America/Denver",
+  FMN: "America/Denver",
+  RKS: "America/Denver",
   // Arizona (no DST)
   PHX: "America/Phoenix",
   TUS: "America/Phoenix",
@@ -160,6 +163,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   MAF: "America/Chicago",
   MCI: "America/Chicago",
   MEM: "America/Chicago",
+  MHK: "America/Chicago",
   MFE: "America/Chicago",
   MKE: "America/Chicago",
   MLI: "America/Chicago",
@@ -200,6 +204,23 @@ export const AIRPORT_TZ: Record<string, string> = {
   RFD: "America/Chicago",
   SLN: "America/Chicago",
   SUX: "America/Chicago",
+  ABI: "America/Chicago",
+  ATY: "America/Chicago",
+  DDC: "America/Chicago",
+  DEC: "America/Chicago",
+  DVL: "America/Chicago",
+  EAU: "America/Chicago",
+  FOD: "America/Chicago",
+  GPT: "America/Chicago",
+  HYS: "America/Chicago",
+  JAN: "America/Chicago",
+  JMS: "America/Chicago",
+  LBL: "America/Chicago",
+  LRD: "America/Chicago",
+  MCW: "America/Chicago",
+  MOB: "America/Chicago",
+  PIR: "America/Chicago",
+  RHI: "America/Chicago",
   // US Eastern
   ABE: "America/New_York",
   ALB: "America/New_York",
@@ -279,6 +300,13 @@ export const AIRPORT_TZ: Record<string, string> = {
   PBI: "America/New_York",
   CMX: "America/Detroit",
   MBS: "America/Detroit",
+  CIU: "America/Detroit",
+  CKB: "America/New_York",
+  LAF: "America/Indiana/Indianapolis",
+  LYH: "America/New_York",
+  MGW: "America/New_York",
+  PLN: "America/Detroit",
+  SWF: "America/New_York",
   // Canada
   YEG: "America/Edmonton",
   YYC: "America/Edmonton",
@@ -301,6 +329,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   OAX: "America/Mexico_City",
   PVR: "America/Mexico_City",
   PXM: "America/Mexico_City",
+  TGZ: "America/Mexico_City",
   SLP: "America/Mexico_City",
   ZIH: "America/Mexico_City",
   MTY: "America/Monterrey",
@@ -472,6 +501,9 @@ export const AIRPORT_TZ: Record<string, string> = {
   KTI: "Asia/Phnom_Penh",
   CKG: "Asia/Shanghai",
   HGH: "Asia/Shanghai",
+  CEB: "Asia/Manila",
+  KHH: "Asia/Taipei",
+  NGO: "Asia/Tokyo",
   // Air France / HOP network (France, overseas departments, Africa, Europe)
   ABV: "Africa/Lagos",
   AJA: "Europe/Paris",
@@ -628,6 +660,32 @@ export function airportLocalDate(iata: string, unixSec: number): string | null {
   return tz ? localDateISO(unixSec, tz) : null;
 }
 
+/**
+ * Seconds from `nowSec` until the first of these airports' local dates turns
+ * over, or null when none is mapped. Airports sharing a zone are timed once.
+ * Each zone is bisected on its local date, so a 23- or 25-hour DST day comes
+ * out exact: no calendar day runs past 26 hours.
+ */
+export function secondsToFirstLocalMidnight(
+  airports: readonly string[],
+  nowSec: number
+): number | null {
+  const zones = new Set(airports.map(airportTimezone).filter((z): z is string => Boolean(z)));
+  let first: number | null = null;
+  for (const tz of zones) {
+    const today = localDateISO(nowSec, tz);
+    let lo = nowSec;
+    let hi = nowSec + 26 * 3600;
+    while (hi - lo > 1) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (localDateISO(mid, tz) === today) lo = mid;
+      else hi = mid;
+    }
+    if (first === null || hi - nowSec < first) first = hi - nowSec;
+  }
+  return first;
+}
+
 export interface FlightDateWindow {
   /** Strict UTC bounds of the calendar date — kept for FR24 fallback + days_out math. */
   start: number;
@@ -685,6 +743,40 @@ export function matchesLocalDate(
     debug(`no timezone mapping for airport ${iata} — using strict UTC day window`);
   }
   return departureTimeSec >= fallbackStart && departureTimeSec < fallbackEnd;
+}
+
+const wallCache = new Map<string, Intl.DateTimeFormat>();
+
+/** Minutes after the UTC epoch day's midnight, as the zone's wall clock reads `sec`. */
+function wallMinutes(sec: number, timeZone: string): number {
+  let fmt = wallCache.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    wallCache.set(timeZone, fmt);
+  }
+  const parts = fmt.formatToParts(new Date(sec * 1000));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+  return Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute")) / 60000;
+}
+
+/**
+ * The UTC instant of a wall-clock time (minutes after midnight) on `date` in
+ * `timeZone`. Two passes, so a date that a DST change splits settles on the
+ * offset in force at the answer; a skipped wall time lands within the hour.
+ */
+export function zonedWallTimeSec(date: string, minutes: number, timeZone: string): number {
+  const target = Date.parse(`${date}T00:00:00Z`) / 60000 + minutes;
+  let sec = target * 60;
+  for (let pass = 0; pass < 2; pass++) sec += (target - wallMinutes(sec, timeZone)) * 60;
+  return sec;
 }
 
 /** First UTC instant after `date` ends locally at the airport; unmapped

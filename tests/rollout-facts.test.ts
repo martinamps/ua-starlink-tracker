@@ -77,6 +77,17 @@ describe("rollout-facts structure", () => {
     }
   });
 
+  // A market site's machine-written summary of the call once stood here;
+  // the company's own filed release says the same and names no speaker.
+  test("Copa's fleet share is cited to its own filed results, and credits no one the filing doesn't name", () => {
+    const copa = factsBySlug("copa");
+    const share = copa?.facts.find((f) => /quarter of Copa's fleet/.test(f.fact));
+    expect(share).toBeDefined();
+    expect(new URL(share?.source.url ?? "").hostname).toBe("www.sec.gov");
+    expect(share?.fact).not.toMatch(/earnings call|executive/i);
+    expect(copa?.summary).not.toMatch(/earnings call|executive/i);
+  });
+
   test("accessed-only entries contribute no lastmod and say 'checked'", () => {
     for (const entry of AIRLINE_FACTS) {
       const stamp = factsStamp(entry);

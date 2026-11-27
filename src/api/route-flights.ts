@@ -37,6 +37,7 @@ import {
   TREND_WINDOW_DAYS,
 } from "../scripts/leg-estimate";
 import {
+  USUAL_TIME_DAYS,
   carrierPrediction,
   legAsPrediction,
   predictLeg,
@@ -51,9 +52,6 @@ export const ROUTE_BOARD_MIN_OBSERVATIONS = LEG_MIN_DRAWS;
 /** Weeks the odds history charts (the trend's window), and departures it lists. */
 const HISTORY_WEEKS = TREND_WINDOW_DAYS / 7;
 const HISTORY_RECENT = 6;
-
-/** Logged days a departure time needs before the board calls it usual. */
-const USUAL_TIME_DAYS = 3;
 
 /** A date the board answers for: yesterday through the booking horizon. */
 const DATE_PAST_DAYS = 1;

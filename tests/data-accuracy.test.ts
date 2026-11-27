@@ -587,7 +587,7 @@ describe("route flight numbers need corroboration", () => {
 });
 
 describe("homepage list", () => {
-  test("past the cap, ALL counts the rendered rows and the note names the whole list", async () => {
+  test("past the cap, the tabs count the whole list and the note says how many rows show", async () => {
     const sdb = makeSyntheticDb();
     for (let i = 0; i < 130; i++) addPlane(sdb, `N${String(i).padStart(3, "0")}CP`, "Starlink");
     const equipped = createReaderFactory(sdb)("UA").getStarlinkPlanes().length;
@@ -602,6 +602,14 @@ describe("homepage list", () => {
     expect(all["data-filter"]).toBe("all");
     expect(Number(all["data-count"])).toBe(rows);
     expect(html).toContain(`The ${rows} most recently flown of ${equipped}`);
+    // A tab counts every aircraft of its kind, not the rendered rows: past the
+    // cap a row count read as the airline's own ("EXPRESS (0)").
+    expect(html).toMatch(new RegExp(`>ALL<span[^>]*> \\(${equipped}\\)</span></button>`));
+    expect(elementAttrs(html, "search-count")["data-default"]).toBe(`${rows} of ${equipped}`);
+    // The link sits in a paragraph, where the stylesheet underlines it at rest.
+    expect(html).toMatch(
+      /<p id="list-cap"[^>]*>[^<]*<a href="\/fleet" class="text-accent">See all\u00a0→<\/a><\/p>/
+    );
   });
 });
 

@@ -61,12 +61,12 @@ const verdict = (
   });
 
 describe("QR914 DOH→ADL→AKL: an origin-scoped leg is the one leaving that day", () => {
-  // Rotation A leaves Doha on at(1) (77W) and reaches ADL→AKL on at(2) 16:55
+  // Rotation A leaves Doha on at(1) (351) and reaches ADL→AKL on at(2) 16:55
   // Adelaide time; rotation B leaves Doha on at(2) (388).
   function qr914() {
     const db = makeSyntheticDb();
-    leg(db, "QR914", utc(`${at(1)}T16:30:00Z`), "77W", { arr: "ADL" });
-    leg(db, "QR914", utc(`${at(2)}T07:25:00Z`), "77W", { dep: "ADL", arr: "AKL" });
+    leg(db, "QR914", utc(`${at(1)}T16:30:00Z`), "351", { arr: "ADL" });
+    leg(db, "QR914", utc(`${at(2)}T07:25:00Z`), "351", { dep: "ADL", arr: "AKL" });
     leg(db, "QR914", utc(`${at(2)}T16:30:00Z`), "388", { arr: "ADL" });
     leg(db, "QR914", utc(`${at(3)}T07:25:00Z`), "388", { dep: "ADL", arr: "AKL" });
     return db;

@@ -22,13 +22,13 @@ function ToolCard({
   return (
     <Panel id={id} className="flex flex-col scroll-mt-4">
       <div className="flex items-start gap-3 mb-3">
-        {icon}
+        {icon}{" "}
         <div>
-          <div className="font-display text-primary text-sm">{name}</div>
+          <div className="font-display text-primary text-sm">{name}</div>{" "}
           <div className="text-xs text-muted">{audience}</div>
         </div>
-      </div>
-      <p className="text-sm text-secondary leading-relaxed mb-4 flex-1">{children}</p>
+      </div>{" "}
+      <p className="text-sm text-secondary leading-relaxed mb-4 flex-1">{children}</p>{" "}
       <a href={href} className="text-xs text-accent hover:underline font-mono">
         {cta}
       </a>
@@ -130,7 +130,7 @@ export function ToolsSection({ site }: { site: SiteConfig }) {
           >
             See which flights have Starlink right in your Google Flights results.
           </ToolCard>
-        )}
+        )}{" "}
         {f.mcpPage && (
           <ToolCard
             id="mcp"

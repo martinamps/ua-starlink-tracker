@@ -5,22 +5,34 @@
 
 import type { VerificationSource } from "../database/database";
 import type { RolloutStatus, StarlinkStatus } from "../types";
+import { airportCountry } from "../utils/airport-geo";
 import { isFreighterFamily, normalizeAircraftType } from "./aircraft-families";
+import { type StatedTypeMatch, sasA320neo, virginAtlanticA350 } from "./stated-type";
 
 // Registration patterns are stored as unanchored bodies; the anchored
 // validation pattern and the global scan pattern (for pulling registrations
 // out of prose) both derive from the same body, so they can never disagree.
-function tailPatterns(body: string): { tailPattern: RegExp; tailScanPattern: RegExp } {
+// Each register also names the countries it belongs to (ISO 3166-1 alpha-2):
+// an airline's home market is the country whose register its aircraft carry.
+function tailPatterns(
+  body: string,
+  registerCountries: readonly string[]
+): { tailPattern: RegExp; tailScanPattern: RegExp; registerCountries: readonly string[] } {
   return {
     tailPattern: new RegExp(`^${body}$`),
     tailScanPattern: new RegExp(`\\b(?:${body})\\b`, "g"),
+    registerCountries,
   };
 }
 
 // FAA N-numbers: N + 1-5 alphanumeric, first 1-9, no I/O in suffix.
-const FAA_TAIL = tailPatterns("N[1-9][0-9A-HJ-NP-Z]{0,4}");
-const QATAR_TAIL = tailPatterns("A7-[A-Z]{3}");
-const FRANCE_TAIL = tailPatterns("F-[GH][A-Z]{3}");
+const FAA_TAIL = tailPatterns("N[1-9][0-9A-HJ-NP-Z]{0,4}", ["US"]);
+const QATAR_TAIL = tailPatterns("A7-[A-Z]{3}", ["QA"]);
+const FRANCE_TAIL = tailPatterns("F-[GH][A-Z]{3}", ["FR"]);
+const IRELAND_TAIL = tailPatterns("EI-[A-Z]{3}", ["IE"]);
+const UK_TAIL = tailPatterns("G-[A-Z]{4}", ["GB"]);
+// Sweden, Norway and Denmark.
+const SCANDINAVIA_TAIL = tailPatterns("(?:SE|LN|OY)-[A-Z]{3}", ["SE", "NO", "DK"]);
 
 export type AirlineCode = string;
 
@@ -44,6 +56,10 @@ export interface SubfleetDef {
   /** Flies only a fixed network (e.g. intra-Hawaii), so absence-based route
    * inference must never credit it to an unobserved route elsewhere. */
   routeScoped?: boolean;
+  /** Aircraft families (normalizeAircraftType keys) the band speaks for. The
+   * number only implies the aircraft: a flight we know is on another family
+   * is answered for that aircraft, not for the band. */
+  families?: readonly string[];
 }
 
 export interface PageBrand {
@@ -121,6 +137,13 @@ export interface SiteFeatures {
   /** /fleet/{slug} aircraft-type pages. Single-airline tenants only: the hub
    * would need a page per airline per type, and those hosts already rank. */
   aircraftPages: boolean;
+  /** /routes/{airport}: the Starlink departures from one airport. Needs the
+   * route pages (every row links one) and a live departure window. */
+  airportPages: boolean;
+  /** /fleet/{tail}: one page per aircraft. Only where the verifier reads every
+   * tail and the roster is the airline's own: the page's answer is a per-plane
+   * check, which the type-rule airlines don't have. */
+  tailPages: boolean;
 }
 
 export interface SiteConfig {
@@ -134,6 +157,69 @@ export interface SiteConfig {
   features: SiteFeatures;
   headSnippet?: string;
 }
+
+/**
+ * The whole of what is held on an airline answered by rule alone: one dated
+ * statement of its own and the flights it speaks for. No roster, no schedule,
+ * no outside read. An answer built on it is never a yes of ours: it repeats
+ * the airline, with the date, for the flights the statement covers and no
+ * others (src/airlines/statement-rule.ts words it).
+ */
+interface StatementRuleBase {
+  /** The airline's sentence, word for word, as read on `source.url`. */
+  quote: string;
+  /** The day the airline said it; for a page that carries no date of its own
+   * (`asOfKind: "checked"`), the day it was last read. */
+  asOf: string;
+  /** "checked": the page is undated, so `asOf` is our reading day and every
+   * answer says "checked", never "said on". */
+  asOfKind?: "checked";
+  source: { label: string; url: string };
+  /** The same claim, completing "{Airline} said on {date} that …". It may say
+   * no more than `quote` and the page around it do. */
+  claim: string;
+  /** What the statement leaves out, as a sentence of its own. */
+  beyond: string;
+  /** The last flight date answered from the statement, and the last day it
+   * answers at all: past it the statement has to be read again, so an answer
+   * can't outlive what the airline said. */
+  validThrough: string;
+  /** Why that day, completing "…, {reason}". */
+  validThroughReason: string;
+}
+
+/** A statement about routes. A flight number can't be placed on a route
+ * without a schedule, so the caller gives both airports. */
+export interface RouteStatementRule extends StatementRuleBase {
+  by: "route";
+  /** The flights the statement speaks for. */
+  covers: (origin: string, destination: string) => boolean;
+  /** Names `covers`, completing "we apply that only to …". */
+  coversLabel: string;
+}
+
+/**
+ * A statement about one aircraft type. Nothing held says which aircraft flies
+ * a flight, so the caller states the type their booking shows, and the answer
+ * rests on that alone: it holds only if an aircraft of that type, flown by
+ * the airline itself, is on the flight, and every answer says so. A partner
+ * airline's aircraft under this airline's number is never covered, whatever
+ * its type.
+ */
+export interface TypeStatementRule extends StatementRuleBase {
+  by: "type";
+  /** The type as the airline names it, with its article: "an A350". */
+  typeName: string;
+  /** Reads a stated type strictly (src/airlines/stated-type.ts). */
+  matchType: (stated: string) => StatedTypeMatch;
+  /** Said of a stated type `matchType` calls "unclear", as a sentence. */
+  unclearNote?: string;
+  /** The airline's own caution about the very aircraft its claim covers, as
+   * a sentence: the yes repeats it, so it never says more than the airline. */
+  caution?: string;
+}
+
+export type StatementRule = RouteStatementRule | TypeStatementRule;
 
 export type LastUpdatedOwner =
   | "fleet-meta"
@@ -228,13 +314,24 @@ export interface AirlineConfig {
    * figures; UA's fleet_progress rows come from a community sheet instead. */
   officialTracker?: { label: string; url: string };
   /** For airlines whose Starlink status is fully determined by aircraft type
-   * (no per-tail observation needed). null = leave as unknown (in progress). */
-  typeDeterministicWifi?: (aircraftType: string) => StarlinkStatus | null;
+   * (no per-tail observation needed). null = leave as it is (in progress, or a
+   * type string we don't recognise). "unknown" = this tail is named as an
+   * exception to its type's rule: the reconcile un-settles it and drops its
+   * listing, so it counts nowhere as equipped. */
+  typeDeterministicWifi?: (aircraftType: string, tailNumber?: string) => StarlinkStatus | null;
+  /** Tails named as exceptions to their type's rule, with the evidence. Pages
+   * read it to say why a "done" type counts fewer aircraft than it flies. */
+  heldBackTail?: (tailNumber: string | null | undefined) => HeldBackTail | null;
   /** Type-deterministic route rule for airlines whose Starlink status depends only on aircraft type / route class, not per-tail observation. */
   routeTypeRule?: (
     origin: string,
     destination: string
   ) => { probability: number; reason: string } | null;
+  /** Answered from the airline's own dated statement alone (StatementRule).
+   * Such an airline has no roster, no tenant site and no homepage content, and
+   * every job that reads a fleet skips it for want of an fr24Slug or a
+   * verifier. */
+  statementRule?: StatementRule;
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
   metricTag: string;
   /** Which FR24 field becomes upcoming_flights.flight_number. "callsign"
@@ -254,10 +351,18 @@ export interface AirlineConfig {
      * statement that replaces a per-tail "no" nobody can refresh. */
     fleetTarget?: { text: string; asOf: string; source: { label: string; url: string } };
   };
-  /** Types flying today that the programme will never equip (retiring). They
-   * leave every denominator and render as "retiring"; status is never written
-   * from this list. */
-  programExclusions?: { families: readonly string[]; note: string; source: string };
+  /** Types flying today that the programme will never equip. They leave
+   * every denominator. `reason` chooses the label ("retiring" by default,
+   * matching Air France); status is never written from this list. */
+  programExclusions?: {
+    families: readonly string[];
+    note: string;
+    source: string;
+    reason?: ProgrammeExclusionReason;
+    /** The report that states the exclusion outright, linked wherever the
+     * airline's own whole-fleet line is shown beside it. */
+    report?: { label: string; url: string };
+  };
   /** Airline-local programme types, tested against the raw type string before
    * the shared family. For a carrier whose sub-variants have opposite status
    * (AF 777-200ER vs 777-300ER) while the global family must stay whole for
@@ -274,6 +379,10 @@ export interface AirlineConfig {
    * registrations out of prose. Safe to share:
    * String.match(/g/) and matchAll don't depend on lastIndex. */
   tailScanPattern: RegExp;
+  /** Countries of the register the tails above belong to (ISO 3166-1
+   * alpha-2), from the same tailPatterns() call. The airline's home market:
+   * the `market` tag on http.request reads it (homeMarketCountries). */
+  registerCountries: readonly string[];
   /** Rollout story — hub status card + llms.txt copy. Required so a new
    * airline without a rollout story is a compile error, not missing prose. */
   rollout: {
@@ -365,7 +474,28 @@ const AIRLINE_DEFS = {
     lastUpdatedOwner: "sheet-scrape",
     flightHistoryModel: true,
     verifySite: "united.com",
-    // Whole fleet eligible — Express + mainline both in the program.
+    programExclusions: {
+      families: ["ERJ-145"],
+      reason: "not_in_programme",
+      note: "Not in the programme",
+      // Two trade reports from March 2026, both in the reporter's own words,
+      // neither quoting United: PaxEx (24 Mar), "The ERJ145s will not be
+      // modified and, for now, will remain in the fleet", and Runway Girl
+      // (https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/),
+      // which calls the E145 "the sole unconnected aircraft in United's fleet
+      // once the Starlink rollout is complete in 2027". United itself has not
+      // said so in anything we found, so site copy attributes the claim
+      // ("not expected", "reports say") rather than stating United's intent.
+      // The same reports put the CRJ-200s in the rollout as CRJ-450s, which is
+      // why those stay in the denominator.
+      source: "https://paxex.aero/united-airlines-crj450-premium-twist-crj200/",
+      report: {
+        label: "Runway Girl Network, March 2026",
+        url: "https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/",
+      },
+    },
+    // Mainline and most Express types are in the programme; ERJ-145s are not
+    // (programExclusions). The remaining roster is the programme's own.
     rollout: {
       status: "in_progress",
       statusLabel: "Installing",
@@ -385,7 +515,7 @@ const AIRLINE_DEFS = {
         "{{starlinkCount}} of {{totalAircraftCount}} United aircraft have Starlink. Check any United flight by number and date.",
       ogTitle: "United Starlink Tracker: Live Fleet Rollout",
       ogDescription:
-        "Check any United flight for Starlink Wi-Fi, free with MileagePlus, with plane-by-plane status checked against united.com.",
+        "Starlink Wi-Fi on any United flight, any date: odds weeks ahead, a firm yes or no once a plane is assigned, and every equipped plane by tail number.",
       keywords: "united starlink tracker, united starlink wifi",
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
@@ -402,6 +532,7 @@ const AIRLINE_DEFS = {
     enabled: true,
     publicInHub: true,
     iata: "HA",
+    freeForMembersOf: "Atmos Rewards",
     icao: "HAL",
     operators: [{ icao: "HAL", iata: "HA" }],
     subfleets: [{ key: "mainline", label: "Hawaiian", match: () => true }],
@@ -449,7 +580,8 @@ const AIRLINE_DEFS = {
       keywords:
         "hawaiian airlines starlink, hawaiian airlines wifi, does hawaiian have wifi, hawaiian a330 starlink, hawaiian a321neo wifi, hawaiian 717 wifi, hawaiian interisland wifi, free wifi hawaiian airlines",
       accentColor: "#413691",
-      accentText: "#928ac9",
+      // Lifted like Alaska's: 4.5:1 on its own 20% tint, a primary button's fill.
+      accentText: "#9c95ce",
       accentColorDim: "#6b5fb3",
       faviconAccent: "#9d4edd", // Pualani purple, lifted to glow on dark
       socialImagePath: "/static/social-image-ha.webp",
@@ -493,12 +625,14 @@ const AIRLINE_DEFS = {
         label: "Hawaiian-operated (A330/A321neo)",
         flightNumberHint: "AS800-999",
         penetrationOverride: 1,
+        families: ["A330", "A321"],
         match: (fn) => isHaMetal(flightNum(fn)),
       },
       {
         key: "mainline",
         label: "Mainline (737/787)",
         flightNumberHint: "AS1-799, AS1300-1999",
+        families: ["B737-700", "B737-800", "B737-900", "B737-MAX8", "B737-MAX9", "B787"],
         match: (fn) => {
           const n = flightNum(fn);
           return Number.isFinite(n) && n < 2000 && !isHaMetal(n) && !isHaInterisland(n);
@@ -511,6 +645,7 @@ const AIRLINE_DEFS = {
         penetrationOverride: 0,
         overrideReason: HA_INTERISLAND_REASON,
         routeScoped: true,
+        families: ["B717"],
         match: (fn) => isHaInterisland(flightNum(fn)),
       },
       {
@@ -523,6 +658,7 @@ const AIRLINE_DEFS = {
         // override keeps predictions right even before the type reconcile
         // settles a fresh roster's statuses.
         penetrationOverride: 1,
+        families: ["E175"],
         // AS9xxx are charters/positioning on mixed 737/HA metal, not E175s.
         match: (fn) => {
           const n = flightNum(fn);
@@ -546,13 +682,13 @@ const AIRLINE_DEFS = {
       url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
     },
     typeDeterministicWifi: alaskaTypeToWifi,
-    // Alaska's own tracker (Aug. 28, 2026 fact in rollout-facts): E175s done,
-    // mainline only on the 737-8 MAX; no other 737 or 787 connected.
+    // Alaska's own tracker (Oct. 26, 2026 fact in rollout-facts): E175s done,
+    // mainline on the 737-8 MAX and 737-9 MAX; no 737-800, 737-900 or 787.
     rollout: {
       status: "phase_done",
       statusLabel: "Installing (regional done)",
       phaseNote:
-        "Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
+        "Every regional E175 has Starlink. Mainline has started with the 737-8 MAX and 737-9 MAX; no 737-800, 737-900 or 787 is connected yet.",
       // Mainline is in the programme too — the whole roster is the denominator.
       rosterIsProgramScope: true,
     },
@@ -566,7 +702,9 @@ const AIRLINE_DEFS = {
       keywords:
         "alaska airlines starlink, alaska starlink tracker, alaska wifi, 737 MAX starlink, E175 starlink, check alaska flight starlink",
       accentColor: "#01426a",
-      accentText: "#4b99c9",
+      // 4.5:1 on its own 20% tint over a panel too (a primary button's
+      // fill), where #4b99c9 gave 4.2:1.
+      accentText: "#55a1cf",
       accentColorDim: "#2b6a8f",
       faviconAccent: "#00b2e3", // Alaska secondary brand blue — primary #01426a is too dark to glow
       socialImagePath: "/static/social-image-as.webp",
@@ -617,11 +755,15 @@ const AIRLINE_DEFS = {
     flightHistoryModel: false,
     verifySite: "qatarairways.com",
     typeDeterministicWifi: qatarTypeToStarlink,
+    heldBackTail: qatarHeldBackTail,
     rollout: {
       status: "phase_done",
       statusLabel: "Mostly done (widebodies)",
-      phaseNote:
-        "777, A350 and 787-8 fleets done; 787-9 installs due by the end of 2026. The A380, A330, narrowbodies and freighters are not in the announced programme.",
+      // A getter, read at request time: the sentence is built from the phase
+      // table and the held-back list below, which this literal precedes.
+      get phaseNote() {
+        return qatarPhaseNote();
+      },
       // Roster counts ~277 including narrowbodies and freighters the programme
       // excludes; the in-scope widebody fleet is roughly half that.
       rosterIsProgramScope: false,
@@ -637,7 +779,8 @@ const AIRLINE_DEFS = {
       keywords:
         "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, B787 starlink, check qatar flight starlink, qr wifi",
       accentColor: "#5c0632",
-      accentText: "#d371a3",
+      // Lifted like Alaska's: 4.5:1 on its own 20% tint, a primary button's fill.
+      accentText: "#d77caa",
       accentColorDim: "#8a2851",
       faviconAccent: "#a3204e", // Qatar oryx burgundy, lifted
       socialImagePath: "/static/social-image-qr.webp",
@@ -678,11 +821,11 @@ const AIRLINE_DEFS = {
       url: "https://www.flyertalk.com/forum/air-france-frequence-plus/2213677-complete-guide-air-france-fleet.html",
       author: "hellolaurent",
       fleetTarget: {
-        text: "Air France plans to have Starlink on its entire fleet by the end of 2026",
-        asOf: "2025-09-23",
+        text: "Air France aims for a fleet fully equipped with its free high-speed Wi-Fi in 2027",
+        asOf: "2026-11-03",
         source: {
-          label: "Aviation Week",
-          url: "https://aviationweek.com/air-transport/interiors-connectivity/air-france-pushes-ahead-starlink-connectivity-installations",
+          label: "Aeronews Global, reporting Air France",
+          url: "https://aeronewsglobal.com/more-destinations-for-air-frances-new-la-premiere-cabin-this-winter/",
         },
       },
     },
@@ -703,7 +846,7 @@ const AIRLINE_DEFS = {
       statusLabel: "Mostly done",
       // Dated: an undated "has not started" outlives the rollout it describes.
       phaseNote:
-        "Nearly 60% of the fleet had Starlink as of June 2026; Air France plans the whole fleet by the end of 2026.",
+        "70% of the fleet had Air France's free Wi-Fi, which is Starlink, as of early November 2026; Air France expects 80% by the end of 2026 and the whole fleet in 2027.",
       // Freighters and programExclusions leave every AF denominator, so the
       // roster that remains is the programme's own.
       rosterIsProgramScope: true,
@@ -719,10 +862,222 @@ const AIRLINE_DEFS = {
       keywords:
         "air france starlink, air france wifi, air france 777 starlink, air france a350 wifi, air france a220 wifi",
       accentColor: "#002157",
-      accentText: "#5991ed",
+      // Lifted like Alaska's: 4.5:1 on its own 20% tint, a primary button's fill.
+      accentText: "#689bef",
       accentColorDim: "#2a4a80",
       faviconAccent: "#e4002b",
       socialImagePath: "/static/social-image-af.webp",
+      analyticsDomain: "airlinestarlinktracker.com",
+    },
+  },
+  EI: {
+    code: "EI",
+    name: "Aer Lingus",
+    shortName: "Aer Lingus",
+    enabled: true,
+    // Hub flight lookup only, and only from Aer Lingus's own statement: no
+    // aircraft is counted, so it joins no homepage, fleet or content surface.
+    // Its hub page stays the dated-facts page (rollout-facts.ts).
+    publicInHub: false,
+    hubFlightLookup: true,
+    iata: "EI",
+    icao: "EIN",
+    operators: [{ icao: "EIN", iata: "EI" }],
+    subfleets: [{ key: "mainline", label: "Aer Lingus", match: () => true }],
+    metricTag: "aerlingus",
+    ...IRELAND_TAIL,
+    // No roster is pulled (no fr24Slug), so there is nothing to sanity-check.
+    minFleetSanity: 0,
+    verifierBackend: null,
+    flightHistoryModel: false,
+    verifySite: "aerlingus.com",
+    statementRule: {
+      by: "route",
+      quote: "The service is already available across all Aer Lingus transatlantic routes.",
+      asOf: "2026-11-18",
+      source: {
+        label: "Aer Lingus media centre",
+        url: "https://mediacentre.aerlingus.com/pressrelease/details/108/26586",
+      },
+      // "Free" is from the same paragraph. The release's "in every cabin" is
+      // in a bullet on what the A330 refit "will deliver", so it is not said
+      // of today here.
+      claim: "free Starlink Wi-Fi is available across all its transatlantic routes",
+      // Its release of November 23, 2026: "Already available on select
+      // European services, Starlink is expected to extend across 29
+      // short-haul aircraft in early 2027". It names no routes, so a European
+      // flight still gets no yes or no.
+      beyond:
+        "Of European flights, it said on Nov 23, 2026 that Starlink is already on select services and is expected across 29 short-haul aircraft in early 2027, not that every flight has it",
+      // Ireland only: our own narrowing, never the airline's words, and the
+      // answer says so. Aer Lingus sells UK flights too, but its own
+      // transatlantic flights from Manchester were reported to end in March
+      // 2026 (Voyages d'Affaires, January 13, 2026), which leaves an EI number
+      // between Britain and North America to a partner's aircraft, and the
+      // statement doesn't speak for those. The Caribbean and South America
+      // are left out as well: its destination list names neither today.
+      covers: (o, d) => {
+        const [a, b] = [airportCountry(o), airportCountry(d)];
+        const farSide = (c: string | null) => c === "US" || c === "CA" || c === "MX";
+        return (a === "IE" && farSide(b)) || (b === "IE" && farSide(a));
+      },
+      coversLabel: "flights between Ireland and North America",
+      // The last day of the winter 2026-27 schedule season, the one the
+      // statement was made in. The summer schedule (from March 28, 2027) can
+      // bring routes and leased aircraft the statement never saw.
+      validThrough: "2027-03-27",
+      validThroughReason: "the end of the winter schedule it was made in",
+    },
+    rollout: {
+      status: "in_progress",
+      statusLabel: "All transatlantic routes; short-haul begun",
+      phaseNote:
+        "Aer Lingus said on November 18, 2026 that Starlink is available across all its transatlantic routes. On November 23, 2026 it said Starlink is already on select European services and is expected across 29 short-haul aircraft in early 2027; it has not said that every European flight has it.",
+      // No roster at all, so no count is ever shown beside a denominator.
+      rosterIsProgramScope: true,
+    },
+    // No tenant site: the hub's own card and colours stand in wherever a
+    // brand is read.
+    brand: {
+      title: "Aer Lingus Starlink",
+      siteTitle: "Does Aer Lingus Have Starlink?",
+      description:
+        "Aer Lingus says free Starlink Wi-Fi is available across all its transatlantic routes.",
+      ogTitle: "Aer Lingus Starlink",
+      ogDescription:
+        "Aer Lingus says free Starlink Wi-Fi is available across all its transatlantic routes.",
+      keywords: "aer lingus starlink, aer lingus wifi",
+      accentColor: "#0ea5e9",
+      accentColorDim: "#0284c7",
+      socialImagePath: "/static/social-image-hub.webp",
+      analyticsDomain: "airlinestarlinktracker.com",
+    },
+  },
+  VS: {
+    code: "VS",
+    name: "Virgin Atlantic",
+    shortName: "Virgin Atlantic",
+    enabled: true,
+    // Hub flight lookup only, and only from Virgin Atlantic's own page: no
+    // aircraft is counted, so it joins no homepage, fleet or content surface.
+    publicInHub: false,
+    hubFlightLookup: true,
+    iata: "VS",
+    icao: "VIR",
+    operators: [{ icao: "VIR", iata: "VS" }],
+    subfleets: [{ key: "mainline", label: "Virgin Atlantic", match: () => true }],
+    metricTag: "virginatlantic",
+    ...UK_TAIL,
+    minFleetSanity: 0,
+    verifierBackend: null,
+    flightHistoryModel: false,
+    verifySite: "virginatlantic.com",
+    statementRule: {
+      by: "type",
+      // Read on November 26, 2026; the page carries no date of its own.
+      quote:
+        "Starlink is now available across our A350 fleet, with more aircraft getting the Starlink treatment over time until rollout completes in 2027.",
+      asOf: "2026-11-26",
+      asOfKind: "checked",
+      source: {
+        label: "Virgin Atlantic's Starlink page",
+        url: "https://www.virginatlantic.com/en-US/experience/inflight-entertainment/connectivity/starlink",
+      },
+      claim: "Starlink is now available across its A350 fleet",
+      // Same page: "While it lands across more of our planes, availability
+      // may vary depending on your aircraft and route."
+      beyond:
+        "Of its other aircraft the page says that more get Starlink over time until rollout completes in 2027, and that availability may vary depending on your aircraft and route",
+      typeName: "an A350",
+      matchType: virginAtlanticA350,
+      caution: "The same page says that availability may vary depending on your aircraft and route",
+      // Our own choice, as for Aer Lingus: the page is undated and promises
+      // change ("more aircraft … over time"), so it is read again before the
+      // summer schedule (from March 28, 2027).
+      validThrough: "2027-03-27",
+      validThroughReason: "the end of the winter schedule we read it in",
+    },
+    rollout: {
+      status: "in_progress",
+      statusLabel: "On its A350 fleet",
+      phaseNote:
+        "Virgin Atlantic's own page, checked November 26, 2026, says Starlink is available across its A350 fleet, with more aircraft to follow until rollout completes in 2027.",
+      rosterIsProgramScope: true,
+    },
+    brand: {
+      title: "Virgin Atlantic Starlink",
+      siteTitle: "Does Virgin Atlantic Have Starlink?",
+      description: "Virgin Atlantic says Starlink is available across its A350 fleet.",
+      ogTitle: "Virgin Atlantic Starlink",
+      ogDescription: "Virgin Atlantic says Starlink is available across its A350 fleet.",
+      keywords: "virgin atlantic starlink, virgin atlantic wifi",
+      accentColor: "#0ea5e9",
+      accentColorDim: "#0284c7",
+      socialImagePath: "/static/social-image-hub.webp",
+      analyticsDomain: "airlinestarlinktracker.com",
+    },
+  },
+  SK: {
+    code: "SK",
+    name: "SAS",
+    shortName: "SAS",
+    enabled: true,
+    // Hub flight lookup only, and only from SAS's own release: no aircraft is
+    // counted, so it joins no homepage, fleet or content surface.
+    publicInHub: false,
+    hubFlightLookup: true,
+    iata: "SK",
+    icao: "SAS",
+    operators: [{ icao: "SAS", iata: "SK" }],
+    subfleets: [{ key: "mainline", label: "SAS", match: () => true }],
+    metricTag: "sas",
+    ...SCANDINAVIA_TAIL,
+    minFleetSanity: 0,
+    verifierBackend: null,
+    flightHistoryModel: false,
+    verifySite: "flysas.com",
+    statementRule: {
+      by: "type",
+      quote:
+        "With all 81 A320neo aircraft now equipped, high-speed WiFi from Starlink is available on a significant share of SAS’ European flights.",
+      asOf: "2026-09-01",
+      source: {
+        label: "SAS Group press release",
+        url: "https://www.sasgroup.net/newsroom/press-releases/2026/sas-completes-starlink-installation-across-entire-airbus-a320neo-fleet-in-just-six-months/",
+      },
+      claim: "all 81 of its A320neo aircraft are equipped with Starlink",
+      // Same release: "makes it the first aircraft type in the SAS fleet to
+      // be fully equipped", and "installation preparations progressing for
+      // the remaining aircraft types and further installations planned before
+      // the end of the year". It names no regional or partner-flown aircraft.
+      beyond:
+        "It called the A320neo the first aircraft type in its fleet to be fully equipped, and said that for the remaining types installation preparations were progressing, with further installations planned before the end of the year",
+      typeName: "an A320neo",
+      matchType: sasA320neo,
+      unclearNote:
+        "A booking that says only A320 can mean an A320neo or an older A320, and SAS's statement is about the A320neo alone: check whether yours says A320neo",
+      // Our own choice: the release counts the A320neos of September 1, 2026,
+      // and an aircraft that joins later was not among them.
+      validThrough: "2027-03-27",
+      validThroughReason: "the end of the winter schedule we last read it in",
+    },
+    rollout: {
+      status: "in_progress",
+      statusLabel: "On its A320neo fleet",
+      phaseNote:
+        "SAS said on September 1, 2026 that all 81 of its A320neo aircraft are equipped with Starlink, with its remaining aircraft types to follow.",
+      rosterIsProgramScope: true,
+    },
+    brand: {
+      title: "SAS Starlink",
+      siteTitle: "Does SAS Have Starlink?",
+      description: "SAS says all 81 of its A320neo aircraft are equipped with Starlink.",
+      ogTitle: "SAS Starlink",
+      ogDescription: "SAS says all 81 of its A320neo aircraft are equipped with Starlink.",
+      keywords: "sas starlink, sas wifi",
+      accentColor: "#0ea5e9",
+      accentColorDim: "#0284c7",
+      socialImagePath: "/static/social-image-hub.webp",
       analyticsDomain: "airlinestarlinktracker.com",
     },
   },
@@ -732,6 +1087,14 @@ const AIRLINE_DEFS = {
  * Record<KnownAirlineCode, T> so a missing airline is a compile error, not a
  * silent fallback to another tenant's data (the og:image bug class). */
 export type KnownAirlineCode = keyof typeof AIRLINE_DEFS;
+
+/** Airlines answered by statement alone. They take no homepage content: the
+ * per-tenant maps are keyed by RosterAirlineCode so that is a decision the
+ * types record, not a missing entry. */
+type StatementAirlineCode = {
+  [K in KnownAirlineCode]: (typeof AIRLINE_DEFS)[K] extends { statementRule: unknown } ? K : never;
+}[KnownAirlineCode];
+export type RosterAirlineCode = Exclude<KnownAirlineCode, StatementAirlineCode>;
 
 export const AIRLINES: Record<AirlineCode, AirlineConfig> = Object.fromEntries(
   Object.entries(AIRLINE_DEFS).map(([code, def]) => [
@@ -802,6 +1165,148 @@ const QATAR_PHASE_BY_FAMILY: Record<string, WifiPhase> = {
   B737: "negative",
 };
 
+/** How strong the case is that a tail is outside its type's rule. */
+export type HeldBackEvidence =
+  /** Passengers on these aircraft report paid Wi-Fi, and Qatar's own count leaves them out. */
+  | "passenger_reports"
+  /** Qatar's own count leaves the group out; nothing names the tails. */
+  | "count_only"
+  /** A fleet site reports them parked; whether they are fitted has no source. The thinnest. */
+  | "reported_parked";
+
+export interface HeldBackTail {
+  /** The IATA equipment code Qatar publishes for this airframe's type. */
+  equipment: string;
+  /** What sets the group apart, as a noun phrase for copy. */
+  group: string;
+  evidence: HeldBackEvidence;
+  /** Newest date a source supports the reason. */
+  asOf: string;
+  reason: string;
+}
+
+const EX_CATHAY: HeldBackTail = {
+  equipment: "77W",
+  group: "second-hand",
+  evidence: "passenger_reports",
+  asOf: "2026-07-15",
+  reason:
+    "Second-hand from Cathay Pacific. Qatar called 54 777s the whole 777 programme (The Peninsula, 2025-07-10) while flying 64; passengers on the ex-Cathay aircraft report paid Wi-Fi and no Starlink (One Mile at a Time reader comments, 2026-01-07 to 2026-07-15).",
+};
+const EX_VIRGIN_AUSTRALIA: HeldBackTail = {
+  equipment: "77W",
+  group: "second-hand",
+  evidence: "count_only",
+  asOf: "2026-03-12",
+  reason:
+    "Second-hand from Virgin Australia, still in Virgin Australia's cabin (Australian Frequent Flyer, 2026-03-12). Outside Qatar's count of 54 fitted 777s; no passenger report found either way.",
+};
+// Thinner than the 777s: the lease is well sourced, "parked since 03/2026" is
+// a fleet site's remark we could not open ourselves, and nothing says whether
+// they are fitted. Qatar's August 2026 count of 150 leaves no room for them.
+const OMAN_AIR_LEASE: HeldBackTail = {
+  equipment: "788",
+  group: "leased",
+  evidence: "reported_parked",
+  asOf: "2026-03",
+  reason:
+    "Leased from Oman Air, in Oman Air's cabin. Reported parked since March 2026 (Airfleets, read second-hand); fitted or not is unsourced, and Qatar's count of 150 in August 2026 leaves no room for them.",
+};
+
+// QR tails their type's phase does not settle. Qatar publishes no tail list,
+// so each entry rests on the evidence its `reason` names; none shows a tail's
+// wiring. A held-back tail is "not confirmed", never "negative": it leaves
+// every count and every listing, and its type's flight answers become odds
+// (qatarFittedShares). To restore one, delete its line — the next reconcile
+// settles it by type again. One more 777 with Qatar's own customer code is
+// outside Qatar's count of 54 and can't be named; it stays counted.
+const QATAR_HELD_BACK_TAILS: Readonly<Record<string, HeldBackTail>> = {
+  "A7-BOA": EX_CATHAY,
+  "A7-BOB": EX_CATHAY,
+  "A7-BOC": EX_CATHAY,
+  "A7-BOD": EX_CATHAY,
+  "A7-BOH": EX_CATHAY,
+  "A7-BOI": EX_CATHAY,
+  "A7-BOE": EX_VIRGIN_AUSTRALIA,
+  "A7-BOF": EX_VIRGIN_AUSTRALIA,
+  "A7-BOG": EX_VIRGIN_AUSTRALIA,
+  "A7-BUA": OMAN_AIR_LEASE,
+  "A7-BUB": OMAN_AIR_LEASE,
+};
+
+export function qatarHeldBackTail(tailNumber: string | null | undefined): HeldBackTail | null {
+  return tailNumber ? (QATAR_HELD_BACK_TAILS[tailNumber.toUpperCase()] ?? null) : null;
+}
+
+export function qatarHeldBackTails(): ReadonlyArray<readonly [string, HeldBackTail]> {
+  return Object.entries(QATAR_HELD_BACK_TAILS);
+}
+
+/** What Qatar's copy may say about each passenger type, read off the phase
+ * table and the held-back list: the two things the by-type table is built from. */
+export interface QatarProgrammeState {
+  /** Finished types with no aircraft held back, as copy names them: "A350". */
+  done: string[];
+  /** Finished types with aircraft held back, and how many of each. */
+  doneExcept: Array<{ name: string; held: number }>;
+  /** Types mid-install. */
+  installing: string[];
+  held: number;
+  /** What sets the held-back aircraft apart: "second-hand or leased". */
+  heldGroups: string;
+}
+
+export function qatarProgrammeState(
+  phases: Readonly<Record<string, WifiPhase>> = QATAR_PHASE_BY_FAMILY,
+  heldBack: ReadonlyArray<HeldBackTail> = Object.values(QATAR_HELD_BACK_TAILS)
+): QatarProgrammeState {
+  const name = (family: string) => family.replace(/^B(?=7)/, "");
+  const familyOf = (h: HeldBackTail) => QATAR_EQUIPMENT[h.equipment]?.family;
+  // A held-back tail of a type that isn't "done" changes no sentence.
+  const counted = heldBack.filter((h) => phases[familyOf(h) ?? ""] === "confirmed");
+  const heldByFamily = new Map<string, number>();
+  for (const h of counted) {
+    const family = familyOf(h) as string;
+    heldByFamily.set(family, (heldByFamily.get(family) ?? 0) + 1);
+  }
+  const confirmed = Object.keys(phases).filter((f) => phases[f] === "confirmed");
+  return {
+    done: confirmed.filter((f) => !heldByFamily.has(f)).map(name),
+    doneExcept: confirmed
+      .filter((f) => heldByFamily.has(f))
+      .map((f) => ({ name: name(f), held: heldByFamily.get(f) as number })),
+    installing: Object.keys(phases)
+      .filter((f) => phases[f] === "rolling")
+      .map(name),
+    held: counted.length,
+    heldGroups: [...new Set(counted.map((h) => h.group))].join(" or "),
+  };
+}
+
+export const listedTypes = (names: readonly string[]) =>
+  names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : (names[0] ?? "");
+
+/** Qatar's rollout in one line, for the hub, llms.txt, MCP and descriptions.
+ * A type is called done only while none of its aircraft is held back. */
+export function qatarPhaseNote(state: QatarProgrammeState = qatarProgrammeState()): string {
+  const fleets = (names: string[]) => `${listedTypes(names)} fleet${names.length === 1 ? "" : "s"}`;
+  const parts = [
+    state.done.length > 0 ? `${fleets(state.done)} done` : null,
+    state.doneExcept.length > 0
+      ? `${fleets(state.doneExcept.map((t) => t.name))} done except ${state.held} ${state.heldGroups} aircraft that aren't confirmed`
+      : null,
+    state.installing.length > 0
+      ? `${listedTypes(state.installing)} installs due by the end of 2026`
+      : null,
+  ].filter((p) => p !== null);
+  return `${parts.join("; ")}. The A380, A330, narrowbodies and freighters are not in the announced programme.`;
+}
+
+/** Aircraft of an airline's finished types that its type rule doesn't settle. */
+export function heldBackCount(code: AirlineCode): number {
+  return code === "QR" ? qatarProgrammeState().held : 0;
+}
+
 // Collapse normalizeAircraftType's granular families to QR program families:
 // the program treats the whole 737/A320 lineups uniformly. The 787 is the
 // opposite — QR's program splits it by sub-variant, which the shared family
@@ -853,6 +1358,24 @@ export function qatarEquipment(
   return QATAR_EQUIPMENT[code.toUpperCase()] ?? null;
 }
 
+// The roster names airframes the way FR24 does ("Boeing 777-3DZ(ER)"); Qatar's
+// schedule names them by IATA code. Only passenger types the programme fits
+// need a row: this joins a roster count to a scheduled code, nothing else.
+const QATAR_ROSTER_EQUIPMENT: ReadonlyArray<readonly [RegExp, string]> = [
+  [/777-3/i, "77W"],
+  [/777-2/i, "77L"],
+  [/787-8/i, "788"],
+  [/787-9/i, "789"],
+  [/A350-9/i, "359"],
+  [/A350-10/i, "351"],
+];
+
+/** The equipment code Qatar's schedule uses for a roster type string. */
+export function qatarEquipmentCodeOfType(aircraftType: string | null | undefined): string | null {
+  const raw = aircraftType ?? "";
+  return QATAR_ROSTER_EQUIPMENT.find(([re]) => re.test(raw))?.[1] ?? null;
+}
+
 export function qatarStarlinkPhase(family: string | null): WifiPhase | null {
   return family ? (QATAR_PHASE_BY_FAMILY[family] ?? null) : null;
 }
@@ -884,10 +1407,19 @@ export function providerLabel(status: StarlinkStatus | null): "Starlink" | "None
 // Catch-all is null so an FR24 type-string format drift produces no
 // observation instead of mass-flipping confirmed tails on reconcile
 // (unrecognized strings normalize to "other"/"unknown" — no phase).
-export function qatarTypeToStarlink(aircraftType: string): StarlinkStatus | null {
-  return phaseToStatus(
-    qatarStarlinkPhase(qatarProgramFamily(normalizeAircraftType(aircraftType), aircraftType))
-  );
+//
+// A held-back tail answers "unknown" whatever its type's phase says, so the
+// exception outlives a phase flip (the 787-9 switch included).
+export function qatarTypeToStarlink(
+  aircraftType: string,
+  tailNumber?: string,
+  /** The phase table to read; a test passes a flipped one to ask what a
+   * programme change would settle. */
+  phases: Readonly<Record<string, WifiPhase>> = QATAR_PHASE_BY_FAMILY
+): StarlinkStatus | null {
+  if (qatarHeldBackTail(tailNumber)) return "unknown";
+  const family = qatarProgramFamily(normalizeAircraftType(aircraftType), aircraftType);
+  return phaseToStatus(phases[family] ?? null);
 }
 
 // HA program truth: Airbus fleet complete (Sep 2024), 787s pending install,
@@ -960,6 +1492,21 @@ const VERIFIER_EVIDENCE: Record<
   "qatar-fltstatus": "type_derived",
 };
 
+/** The site each verifier backend reads, as a reader would name it. Hawaiian's
+ * check reads alaskaair.com, not the site its travellers are sent to. */
+export const VERIFIER_SITE: Record<NonNullable<AirlineConfig["verifierBackend"]>, string> = {
+  united: "united.com",
+  "alaska-json": "alaskaair.com",
+  "qatar-fltstatus": "qatarairways.com",
+};
+
+/** Whether this airline's own check reads Wi-Fi off the airline's site. Where
+ * it doesn't, a listed tail can never become a checked one, so nothing may
+ * say it is "not yet" verified. */
+export function verifierReadsWifi(cfg: Pick<AirlineConfig, "verifierBackend">): boolean {
+  return !!cfg.verifierBackend && VERIFIER_EVIDENCE[cfg.verifierBackend] === "observed_wifi";
+}
+
 /** Sources whose wifi field is an actually-observed signal — the only
  * evidence allowed to WRITE verified_wifi via consensus. Type-derived truth
  * flows through reconcileTypeDeterministicFleets instead, so a type inference
@@ -972,6 +1519,13 @@ export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
   ),
 ].sort();
 
+/** Why a programme exclusion is out. Air France's types are retiring;
+ * United's ERJ-145s keep flying and are reported to be left out of the
+ * rollout. The label says "not in the programme", not "no Starlink planned":
+ * the second would claim the airline ruled the type out, which it has not
+ * said (same reasoning as PHASE_LABEL.negative in airlines-page.tsx). */
+export type ProgrammeExclusionReason = "retiring" | "not_in_programme";
+
 /** The one denominator rule: freighters and a programme's declared
  * exclusions are in the roster but never in a "how many of how many". */
 export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
@@ -979,6 +1533,42 @@ export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
     isFreighterFamily(family) ||
     Boolean(AIRLINES[code]?.programExclusions?.families.includes(family))
   );
+}
+
+export function programmeExclusionReason(code: string): ProgrammeExclusionReason {
+  return AIRLINES[code]?.programExclusions?.reason ?? "retiring";
+}
+
+/** Short label for an excluded type: "Retiring" or "Not in the programme". */
+export function programmeExclusionLabel(code: string): string {
+  return programmeExclusionReason(code) === "not_in_programme"
+    ? "Not in the programme"
+    : "Retiring";
+}
+
+export interface ProgrammeExclusionCaveat {
+  text: string;
+  /** For a line under a count, where the whole-fleet statement is not quoted. */
+  short: string;
+  report?: { label: string; url: string };
+}
+
+/** United says "the whole fleet"; reports say the ERJ-145s are left out; our
+ * count follows the reports. Any page that prints the airline's whole-fleet
+ * line next to the exclusion (or to a count that applies it) prints this too,
+ * so a reader never meets the two answers without the sentence between them.
+ * Null for airlines with no reported exclusion: a retiring type contradicts
+ * nothing the airline said. */
+export function programmeExclusionCaveat(code: string): ProgrammeExclusionCaveat | null {
+  const cfg = AIRLINES[code];
+  const excl = cfg?.programExclusions;
+  if (!cfg || excl?.reason !== "not_in_programme") return null;
+  const types = excl.families.map((f) => `${f}s`).join(" and ");
+  return {
+    text: `${cfg.shortName}'s whole-fleet target does not name the ${types}. Reports say they are left out of the rollout, and we have found no ${cfg.shortName} statement on the type itself. Our count follows the reports and leaves them out.`,
+    short: `Our ${cfg.shortName} count leaves out the ${types}, which reports say are not part of the rollout.`,
+    ...(excl.report ? { report: excl.report } : {}),
+  };
 }
 
 /** Meta key (per airline) holding the community source's own last-edit date
@@ -1044,6 +1634,13 @@ export function hubLookupAirlines(): AirlineConfig[] {
   return enabledAirlines().filter((a) => a.publicInHub || Boolean(a.hubFlightLookup));
 }
 
+/** Airlines a `?scope=` on the MCP endpoint can pin: the one list behind the
+ * server's check and the page that offers the scopes. An airline answered by
+ * statement alone has no fleet for a scoped server's tools to read. */
+export function mcpScopeAirlines(): AirlineConfig[] {
+  return hubLookupAirlines().filter((a) => !a.statementRule);
+}
+
 /** The rule for "published on a hub content surface", as a predicate so it can
  * be tested against flag combinations no live airline happens to have today. */
 export function isHubContent(
@@ -1076,7 +1673,7 @@ export const HUB_BRAND: PageBrand = {
   heading: "Which airlines have Starlink Wi-Fi?",
   siteTitle: "Starlink Wi-Fi by Airline: Which Airlines Have Starlink in 2026?",
   description:
-    "Starlink Wi-Fi by airline. United and Alaska are tracked plane by plane, Hawaiian and Qatar by aircraft type, and every other announced rollout has a dated source.",
+    "Starlink Wi-Fi by airline. United, Alaska, Hawaiian and Qatar are tracked here, and every other announced rollout has a dated source.",
   ogTitle: "Which Airlines Have Starlink Wi-Fi? Full List and Comparison",
   ogDescription:
     "How far each airline's Starlink Wi-Fi rollout has got, with a dated source for each.",
@@ -1108,6 +1705,8 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   installRatePage: true,
   liveTvPage: false,
   aircraftPages: false,
+  airportPages: false,
+  tailPages: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -1132,6 +1731,8 @@ export const SITES: Record<string, SiteConfig> = {
       intentPages: true,
       liveTvPage: true,
       aircraftPages: true,
+      airportPages: true,
+      tailPages: true,
     },
   },
   airline: {
@@ -1156,13 +1757,16 @@ export const SITES: Record<string, SiteConfig> = {
       airlinesPages: true,
       comparePages: true,
       methodologyPage: false,
-      timelinePage: false,
+      // Every airline's dated facts (components/hub-timeline-page.tsx).
+      timelinePage: true,
       intentPages: false,
       newlyEquippedPage: true,
       embedPage: true,
       installRatePage: true,
       liveTvPage: false,
       aircraftPages: false,
+      airportPages: false,
+      tailPages: false,
     },
   },
   hawaiian: {
@@ -1282,6 +1886,16 @@ export function siteAirline(site: SiteConfig): AirlineConfig {
 export const HOST_REDIRECTS: Record<string, string> = {
   "deltastarlinktracker.com": "https://airlinestarlinktracker.com/airlines/delta",
 };
+
+/**
+ * A site's home market, as the countries of its airline's aircraft register:
+ * United, Alaska and Hawaiian are US; Qatar QA. The hub speaks for every
+ * enabled airline, so its home is the union of theirs.
+ */
+export function homeMarketCountries(scope: AirlineCode | "ALL"): ReadonlySet<string> {
+  const airlines = scope === "ALL" ? enabledAirlines() : AIRLINES[scope] ? [AIRLINES[scope]] : [];
+  return new Set(airlines.flatMap((a) => a.registerCountries));
+}
 
 export function resolveSite(host: string | null): SiteConfig | null {
   if (!host) return null;

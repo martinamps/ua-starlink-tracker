@@ -30,7 +30,7 @@
   const MAX_ATTR_SCAN_ELEMENTS = 400;
 
   const lookup = lib.createClaimLookup((message) => chrome.runtime.sendMessage(message));
-  // Settled cards → {signature, badged, badge}. Keyed by element so Google's
+  // Settled cards → {signature, badged, badge, tier}. Keyed by element so Google's
   // in-place re-renders (which strip our badges) can be repaired from memory.
   let settledCards = new WeakMap();
   // Bumped on every navigation; a pass that started under an older generation
@@ -92,6 +92,49 @@
     }`;
   }
 
+  const BADGE_SELECTOR = ".starlink-wifi-badge";
+
+  /**
+   * The card's text as the page prints it, without our own badge: the badge
+   * is hidden for the length of the read, so the lines fall as they would
+   * with no extension installed. Only an attribute changes, which the
+   * observer below does not watch.
+   */
+  function pageTextOf(card) {
+    const hidden = [];
+    try {
+      for (const badge of card.querySelectorAll(BADGE_SELECTOR)) {
+        hidden.push([badge, badge.style.display]);
+        badge.style.display = "none";
+      }
+      return card.innerText || "";
+    } finally {
+      for (const [badge, display] of hidden) badge.style.display = display;
+    }
+  }
+
+  /**
+   * The one aircraft type the card states for `flightNumber`, or null. The
+   * reader gets the page's language and the card's aria-labels too: it sends
+   * nothing unless it can rule out another operator (lib.statedAircraftType).
+   * Our own badge is left out of both: its label says "not a partner
+   * airline's", which the reader would take for an operator line.
+   */
+  function statedTypeOn(card, flightNumber, segmentCount, decoded) {
+    const labels = [];
+    for (const el of card.querySelectorAll("[aria-label]")) {
+      if (el.closest(BADGE_SELECTOR)) continue;
+      labels.push(el.getAttribute("aria-label") || "");
+    }
+    return lib.statedAircraftType(pageTextOf(card), {
+      flightNumber,
+      segmentCount,
+      decoded,
+      lang: document.documentElement.lang || "",
+      labels: labels.join("\n"),
+    });
+  }
+
   function attrFlightNumber(card, codes) {
     const elements = card.querySelectorAll("*");
     const scanLimit = Math.min(elements.length, MAX_ATTR_SCAN_ELEMENTS);
@@ -106,7 +149,9 @@
 
   /**
    * Flight segments for one card as {segments: [{flightNumber, date|null}],
-   * complete}, most-reliable source first. `complete` is false when the
+   * complete, decoded}, most-reliable source first. `decoded` is true only
+   * when the card's own itinerary data gave the segments: a count guessed from
+   * text is good enough to look a flight up, never to read its aircraft type. `complete` is false when the
    * itinerary has a leg we cannot judge (untracked carrier, or more legs than
    * we look up): the weakest-leg rule cannot vouch for such a card, so it gets
    * no badge. The heuristic paths only ever see our own carriers and are
@@ -127,6 +172,7 @@
       return {
         segments: tim.segments.slice(0, MAX_SEGMENTS_PER_CARD),
         complete: tim.untrackedLegs === 0 && tim.segments.length <= MAX_SEGMENTS_PER_CARD,
+        decoded: true,
       };
     }
 
@@ -134,10 +180,12 @@
     // named on the card may be matched out of its text or attribute soup.
     const text = cardText(card);
     const codes = lib.carriersNamedIn(text);
-    if (codes.length === 0) return { segments: [], complete: true };
+    if (codes.length === 0) return { segments: [], complete: true, decoded: false };
 
     const flightNumber = attrFlightNumber(card, codes);
-    if (flightNumber) return { segments: [{ flightNumber, date: null }], complete: true };
+    if (flightNumber) {
+      return { segments: [{ flightNumber, date: null }], complete: true, decoded: false };
+    }
 
     return {
       segments: lib
@@ -145,6 +193,7 @@
         .slice(0, MAX_SEGMENTS_PER_CARD)
         .map((fn) => ({ flightNumber: fn, date: null })),
       complete: true,
+      decoded: false,
     };
   }
 
@@ -217,7 +266,7 @@
 
   function removeBadge(card) {
     try {
-      retire(card.querySelector(".starlink-wifi-badge"));
+      retire(card.querySelector(BADGE_SELECTOR));
     } catch {
       // removal is cosmetic
     }
@@ -259,7 +308,10 @@
 
   // Dims, never hides: Google's result list is virtualized, and a card we
   // have no answer for may still be the flight the user wants.
-  const DIM_CLASS = "starlink-only-dim";
+  const TIER_CLASSES = Object.freeze({ no: "starlink-only-dim", maybe: "starlink-only-maybe" });
+  const TIER_CLASS_SELECTOR = Object.values(TIER_CLASSES)
+    .map((c) => `.${c}`)
+    .join(",");
   // In memory for the life of the tab: persisting it would need the "storage"
   // permission, which the manifest deliberately doesn't ask for.
   let starlinkOnly = false;
@@ -271,7 +323,8 @@
     filterChip.type = "button";
     filterChip.className = "starlink-only-toggle";
     filterChip.textContent = "Starlink only";
-    filterChip.title = "Dim flights without a verified, installed or predicted Starlink badge";
+    filterChip.title =
+      "Dim flights without a Starlink badge. Flights with better-than-even Starlink odds but no badge are dimmed less.";
     filterChip.setAttribute("aria-pressed", String(starlinkOnly));
     filterChip.addEventListener("click", () => {
       starlinkOnly = !starlinkOnly;
@@ -281,16 +334,23 @@
     document.body.appendChild(filterChip);
   }
 
-  /** Dims settled non-Starlink cards while the toggle is on; the chip shows
-   * only on pages where we answered for at least one card. */
+  function clearTier(card) {
+    card.classList.remove(...Object.values(TIER_CLASSES));
+  }
+
+  /** Dims settled cards by tier while the toggle is on: a no fully, a maybe
+   * lightly. The chip shows only on pages where we answered for at least one
+   * card. */
   function applyFilter() {
     try {
       let answered = false;
       for (const card of findFlightCards()) {
         const entry = settledCards.get(card);
-        const dim = entry?.dim === true && entry.signature === cardSignature(card);
-        if (entry?.badged || dim) answered = true;
-        card.classList.toggle(DIM_CLASS, starlinkOnly && dim);
+        const tier = entry && entry.signature === cardSignature(card) ? entry.tier : null;
+        if (tier) answered = true;
+        for (const [name, cls] of Object.entries(TIER_CLASSES)) {
+          card.classList.toggle(cls, starlinkOnly && tier === name);
+        }
       }
       if (answered) ensureFilterChip();
       if (filterChip) filterChip.hidden = !answered;
@@ -309,7 +369,7 @@
   /** True when the card needs no further passes. */
   async function processCard(card, pageDate, budget, gen) {
     const signature = cardSignature(card);
-    const { segments, complete } = extractSegments(card);
+    const { segments, complete, decoded } = extractSegments(card);
     if (segments.length === 0 || !complete) {
       // Nothing tracked here, or a leg we cannot judge — settled for this card.
       removeBadge(card);
@@ -320,8 +380,17 @@
     // Each TIM leg is its own lookup, two legs sharing a number included:
     // they can fly different aircraft.
     const legs = segments.map((seg) => lib.legOf(seg));
+    // The aircraft type the card itself shows, read only for an airline that
+    // is answered by stated type, and only on a one-flight card.
+    const wantsType = segments.some((seg) => lib.wantsAircraftType(seg.flightNumber));
+    const statedType = wantsType
+      ? statedTypeOn(card, segments[0].flightNumber, segments.length, decoded)
+      : null;
+    const types = segments.map((seg) =>
+      lib.wantsAircraftType(seg.flightNumber) ? statedType : null
+    );
     const keys = segments.map((seg, i) =>
-      lib.claimKey(seg.flightNumber, seg.date || pageDate, legs[i])
+      lib.claimKey(seg.flightNumber, seg.date || pageDate, legs[i], types[i])
     );
 
     // Respect the per-pass network budget BEFORE marking processed, so
@@ -334,7 +403,9 @@
     }
 
     const outcomes = await Promise.all(
-      segments.map((seg, i) => lookup.get(seg.flightNumber, seg.date || pageDate, legs[i]))
+      segments.map((seg, i) =>
+        lookup.get(seg.flightNumber, seg.date || pageDate, legs[i], types[i])
+      )
     );
     // The page moved on while this card waited; its answer belongs to a search
     // that is no longer on screen, and settledCards is a new map.
@@ -360,7 +431,23 @@
     // failure would strand it unbadged for the rest of the session: nothing
     // else clears settledCards short of an SPA navigation.
     const settled = outcomes.every((outcome) => !outcome.retryable);
-    if (settled) settledCards.set(card, { signature, badged, badge, dim: lib.shouldDim(combined) });
+    if (settled) {
+      settledCards.set(card, {
+        signature,
+        badged,
+        badge,
+        tier: lib.filterTier(combined),
+        // A card answered by stated type is looked up again when the type it
+        // shows changes: opening its details is what first shows one.
+        ...(wantsType
+          ? {
+              wantsType,
+              typeOf: { flightNumber: segments[0].flightNumber, count: segments.length, decoded },
+              statedType,
+            }
+          : {}),
+      });
+    }
     return settled;
   }
 
@@ -378,13 +465,19 @@
         continue;
       }
       const hasBadge = card.querySelector(".starlink-wifi-badge") !== null;
-      const action = lib.settledCardAction(entry, cardSignature(card), hasBadge);
+      const retyped =
+        entry.wantsType &&
+        statedTypeOn(card, entry.typeOf.flightNumber, entry.typeOf.count, entry.typeOf.decoded) !==
+          entry.statedType;
+      const action = retyped
+        ? "process"
+        : lib.settledCardAction(entry, cardSignature(card), hasBadge);
       if (action === "restore") {
         addBadge(card, entry.badge.claim, entry.badge.key, entry.badge.title);
       } else if (action === "process") {
         settledCards.delete(card);
         removeBadge(card);
-        card.classList.remove(DIM_CLASS);
+        clearTier(card);
         pending.push(card);
       }
     }
@@ -466,8 +559,8 @@
       for (const badge of document.querySelectorAll(".starlink-wifi-badge")) {
         retire(badge);
       }
-      for (const card of document.querySelectorAll(`.${DIM_CLASS}`)) {
-        card.classList.remove(DIM_CLASS);
+      for (const card of document.querySelectorAll(TIER_CLASS_SELECTOR)) {
+        clearTier(card);
       }
       if (filterChip) filterChip.hidden = true;
     } catch {
@@ -511,10 +604,25 @@
       }
     }, 150);
 
+    // A card answered by stated type shows its type only once its details
+    // are open, and nothing says the opened details carry the itinerary
+    // attribute: any change inside such a card is a reason to read it again.
+    // Our own badge going in or out is not.
+    const ownBadge = (node) =>
+      node.nodeType === 1 && node.classList.contains("starlink-wifi-badge");
+    const changesTypedCard = (mutation) => {
+      if (mutation.target.nodeType !== 1) return false;
+      if (!settledCards.get(canonicalCard(mutation.target))?.wantsType) return false;
+      for (const node of mutation.addedNodes) if (!ownBadge(node)) return true;
+      for (const node of mutation.removedNodes) if (!ownBadge(node)) return true;
+      return false;
+    };
+
     const observer = new MutationObserver((mutations) => {
       try {
         let hasNewFlights = false;
         let hasLostBadge = false;
+        let typedCardChanged = false;
         for (const mutation of mutations) {
           for (const node of mutation.addedNodes) {
             if (!hasNewFlights && looksLikeFlightNode(node)) hasNewFlights = true;
@@ -522,8 +630,9 @@
           for (const node of mutation.removedNodes) {
             if (!hasLostBadge && lostBadge(node)) hasLostBadge = true;
           }
+          if (!typedCardChanged && changesTypedCard(mutation)) typedCardChanged = true;
         }
-        if (hasLostBadge) debouncedRepair();
+        if (hasLostBadge || typedCardChanged) debouncedRepair();
         if (!hasNewFlights) return;
         if (passRunner.isRunning()) passRunner.requestRerun();
         else debouncedProcess();

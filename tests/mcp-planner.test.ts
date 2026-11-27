@@ -10,9 +10,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createReaderFactory } from "../src/database/reader";
 import {
   ENFORCE_ITINERARY_TIME_BUDGET,
+  type Itinerary,
+  USUAL_TIME_DAYS,
   elapsedHours,
+  emptyPlanMessage,
+  fitsHourBudget,
   itineraryHourBudget,
   planItinerary,
+  planRoute,
   routeBaseline,
 } from "../src/scripts/starlink-predictor";
 import {
@@ -250,9 +255,17 @@ describe("synthetic SFO→EWR", () => {
     expect(text).not.toContain("YYZ");
   });
 
-  test("unknown airport codes are tool errors; real ones are not", async () => {
+  test("malformed airport codes are tool errors; well-formed ones are not", async () => {
     for (const name of ["plan_starlink_itinerary", "predict_route_starlink"]) {
-      for (const origin of ["XXX", "SF0", "SFOO"]) {
+      // A well-formed code nothing has seen is answered, not refused: the
+      // tracker holds no complete airport list to call it unknown from.
+      const unseen = await mcp("UA", "tools/call", {
+        name,
+        arguments: { origin: "XXX", destination: "EWR" },
+      });
+      expect(unseen.result.isError, name).toBeUndefined();
+      expect(unseen.result.content[0].text).toContain("no United Airlines flights on record");
+      for (const origin of ["SF0", "SFOO"]) {
         const bad = await mcp("UA", "tools/call", {
           name,
           arguments: { origin, destination: "EWR" },
@@ -448,5 +461,220 @@ describe("MCP text edge cases (snapshot)", () => {
     );
     expect(isError).toBe(true);
     expect(text).toContain("not a valid flight number");
+  });
+});
+
+// The planner once kept one flight number per pair, the best odds with no
+// time, so three connections in four showed a second flight that had left
+// before the first one landed. Later legs now leave after the previous one
+// usually lands (plus a minimum connection), or the connection isn't shown.
+describe("synthetic connections at usual times", () => {
+  const DATE = "2027-06-11";
+  const H = 3600;
+  let sdb: Database;
+  let factory: ReturnType<typeof createReaderFactory>;
+  let reader: Reader;
+  let n = 0;
+
+  const leg = (fn: string, dep: string, arr: string, depIso: string, hours: number) => {
+    const tail = `N7${String(++n).padStart(3, "0")}`;
+    addPlane(sdb, tail, "Starlink");
+    const t = utc(depIso);
+    sdb
+      .query(
+        `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'UA')`
+      )
+      .run(tail, fn, dep, arr, t, t + Math.round(hours * H), t);
+  };
+  // Earlier departures in the assignment log, one per local date given.
+  const logged = (fn: string, dep: string, arr: string, dates: string[]) => {
+    for (const d of dates) {
+      const t = utc(`${d}T15:00:00Z`);
+      sdb
+        .query(
+          `INSERT INTO flight_assignment_log (airline, flight_number, dep_date, departure_airport, arrival_airport, tail_number, starlink, departure_time, arrival_time, first_seen, last_seen)
+           VALUES ('UA', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
+        )
+        .run(fn, d, dep, arr, `N8${String(++n).padStart(3, "0")}`, t, t + 2 * H, t, t);
+    }
+  };
+
+  beforeAll(() => {
+    sdb = makeSyntheticDb();
+    // SFO 8:00 AM → DEN lands 11:30 AM. 6002 leaves DEN before that; 6003 at 1:00 PM.
+    leg("UA6001", "SFO", "DEN", `${DATE}T15:00:00Z`, 2.5);
+    leg("UA6002", "DEN", "BOS", `${DATE}T16:30:00Z`, 4);
+    leg("UA6003", "DEN", "BOS", `${DATE}T19:00:00Z`, 4);
+    // SFO → IAH lands 2:00 PM; the only IAH→BOS left at 1:00 PM.
+    leg("UA6011", "SFO", "IAH", `${DATE}T15:00:00Z`, 4);
+    leg("UA6012", "IAH", "BOS", `${DATE}T18:00:00Z`, 3.5);
+    // A red-eye: LAX 11:00 PM → IAH 4:30 AM, on to MIA at 6:30 AM the next day.
+    leg("UA6021", "LAX", "IAH", "2027-06-12T06:00:00Z", 3.5);
+    leg("UA6022", "IAH", "MIA", "2027-06-12T11:30:00Z", 2.5);
+    // 6001 flew the two Fridays before: three days on record, a usual time.
+    logged("UA6001", "SFO", "DEN", ["2027-05-28", "2027-06-04"]);
+    // SEA 8:00 AM → DEN lands 11:30 AM. 6032 (1:00 PM) is seen Monday to
+    // Thursday only; 6033 (2:00 PM) on Fridays, the searched weekday.
+    leg("UA6031", "SEA", "DEN", `${DATE}T15:00:00Z`, 2.5);
+    leg("UA6032", "DEN", "MCO", "2027-06-10T19:00:00Z", 4);
+    leg("UA6033", "DEN", "MCO", `${DATE}T20:00:00Z`, 4);
+    logged("UA6032", "DEN", "MCO", ["2027-06-07", "2027-06-08", "2027-06-09"]);
+    logged("UA6033", "DEN", "MCO", ["2027-06-04", "2027-05-28"]);
+    factory = createReaderFactory(sdb);
+    reader = factory("UA");
+  });
+  afterAll(() => sdb.close());
+
+  const mid = () => utc(`${DATE}T12:00:00Z`);
+  const plan = (o: string, d: string) =>
+    planItinerary(reader, o, d, { maxItineraries: 12, targetDateUnix: mid() });
+
+  test("a later leg is the one that leaves after the first lands", () => {
+    const viaDen = plan("SFO", "BOS").find((it) => it.via.join(">") === "DEN");
+    expect(viaDen).toBeDefined();
+    if (!viaDen) return;
+    expect(viaDen.legs.map((l) => l.flight_number)).toEqual(["UA6001", "UA6003"]);
+    expect(viaDen.schedule).toBe("same_day");
+    expect(viaDen.connection_minutes).toEqual([90]);
+    expect(viaDen.elapsed_hours).toBeCloseTo(8, 6);
+    expect(viaDen.legs[0].typical_departure).toBe("8:00 AM");
+    expect(viaDen.legs[0].typical_arrival).toBe("11:30 AM");
+    expect(viaDen.legs[1].typical_departure).toBe("1:00 PM");
+    expect(viaDen.legs.map((l) => l.date)).toEqual([DATE, DATE]);
+  });
+
+  test("a hub whose only onward flight has left is not offered", () => {
+    for (const it of plan("SFO", "BOS")) {
+      expect(it.via.includes("IAH") && it.coverage === "full").toBe(false);
+    }
+  });
+
+  test("every timed connection leaves at least an hour after the previous leg lands", () => {
+    for (const [o, d] of [
+      ["SFO", "BOS"],
+      ["LAX", "MIA"],
+    ]) {
+      for (const it of plan(o, d).filter((i) => i.schedule === "same_day")) {
+        for (const wait of it.connection_minutes ?? []) {
+          expect(wait).not.toBeNull();
+          expect(wait as number).toBeGreaterThanOrEqual(60);
+          expect(wait as number).toBeLessThanOrEqual(6 * 60);
+        }
+      }
+    }
+  });
+
+  test("a leg that flies the next day carries that day's date", () => {
+    const viaIah = plan("LAX", "MIA").find((it) => it.via.join(">") === "IAH");
+    expect(viaIah).toBeDefined();
+    if (!viaIah) return;
+    expect(viaIah.schedule).toBe("same_day");
+    expect(viaIah.legs.map((l) => l.date)).toEqual([DATE, "2027-06-12"]);
+    expect(viaIah.connection_minutes).toEqual([120]);
+  });
+
+  test("an undated plan keeps the times but names no date", () => {
+    const viaDen = planItinerary(reader, "SFO", "BOS", { maxItineraries: 12 }).find(
+      (it) => it.via.join(">") === "DEN"
+    );
+    expect(viaDen?.legs.map((l) => l.flight_number)).toEqual(["UA6001", "UA6003"]);
+    expect(viaDen?.legs.every((l) => l.date === undefined)).toBe(true);
+  });
+
+  test("a time is usual only on repeated sightings", () => {
+    const viaDen = plan("SFO", "BOS").find((it) => it.via.join(">") === "DEN");
+    const [first, second] = viaDen?.legs ?? [];
+    expect(first?.days_seen).toBe(USUAL_TIME_DAYS);
+    expect(first?.time_basis).toBe("usual");
+    // 6003 is on record for its one scheduled day alone.
+    expect(second?.days_seen).toBe(1);
+    expect(second?.time_basis === "usual").toBe(false);
+  });
+
+  test("a later leg seen on the searched weekday beats an earlier one that isn't", () => {
+    const viaDen = plan("SEA", "MCO").find((it) => it.via.join(">") === "DEN");
+    expect(viaDen?.legs.map((l) => l.flight_number)).toEqual(["UA6031", "UA6033"]);
+    expect(viaDen?.legs[1].runs_on_date).toBe(true);
+    // Undated, no weekday is asked about: the earlier connection stands.
+    const undated = planItinerary(reader, "SEA", "MCO", { maxItineraries: 12 }).find(
+      (it) => it.via.join(">") === "DEN"
+    );
+    expect(undated?.legs.map((l) => l.flight_number)).toEqual(["UA6031", "UA6032"]);
+    expect(undated?.legs.every((l) => l.runs_on_date === undefined)).toBe(true);
+  });
+
+  test("the MCP planner says when a time was seen once, not 'usually'", async () => {
+    const json = await mcpDirect("UA", factory, "tools/call", {
+      name: "plan_starlink_itinerary",
+      arguments: { origin: "SFO", destination: "BOS", date: DATE },
+    });
+    const text: string = json.result.content[0].text;
+    expect(text).toContain("1:00 PM–7:00 PM (seen on 1 day only, not yet a usual time)");
+    expect(text).not.toContain("usually 1:00 PM");
+    expect(text).toContain("some seen on only one or two days");
+  });
+
+  test("the MCP planner prints each leg's usual time and the connection", async () => {
+    const json = await mcpDirect("UA", factory, "tools/call", {
+      name: "plan_starlink_itinerary",
+      arguments: { origin: "SFO", destination: "BOS", date: DATE },
+    });
+    const text: string = json.result.content[0].text;
+    expect(text).toContain("usually 8:00 AM–11:30 AM");
+    expect(text).toContain("to connect in DEN");
+    expect(text).not.toContain("UA6002");
+  });
+});
+
+describe("the planner's time budget", () => {
+  const it = (flying: number, stops: number, elapsed: number | null): Itinerary => ({
+    via: Array.from({ length: stops }, (_, i) => `H${i}`),
+    legs: [],
+    joint_probability: 0.5,
+    at_least_one_probability: 0.5,
+    coverage: "full",
+    total_flight_hours: flying,
+    expected_starlink_hours: flying / 2,
+    coverage_ratio: 0.5,
+    elapsed_hours: elapsed,
+  });
+  // MSY-SFO: a 4.9h nonstop, so a 7.4h budget.
+  const budget = itineraryHourBudget(4.9);
+
+  test("a timed connection is held to the same flying yardstick as an untimed one", () => {
+    // Via IAH: 5.7h flying, 2h 46m to connect, 8.5h door to door.
+    expect(fitsHourBudget(it(5.7, 1, 8.5), budget)).toBe(true);
+    expect(fitsHourBudget(it(5.7, 1, null), budget)).toBe(true);
+    expect(fitsHourBudget(it(6.6, 1, 7.6), budget)).toBe(false);
+  });
+
+  test("a long wait still runs out of room", () => {
+    expect(fitsHourBudget(it(5.7, 1, budget + 2.5), budget)).toBe(false);
+  });
+});
+
+describe("an empty plan says why", () => {
+  test("each reason reads as a sentence naming its cause", () => {
+    expect(
+      emptyPlanMessage({ kind: "over_budget", budget_hours: 7.4, nonstop_hours: 4.9 }, "SFO")
+    ).toContain("4.9 hours nonstop");
+    expect(emptyPlanMessage({ kind: "no_same_day", hubs: ["DEN", "IAH"] }, "SFO")).toContain(
+      "reach DEN, IAH, but none flies on to SFO"
+    );
+    expect(emptyPlanMessage({ kind: "no_route", max_stops: 2 }, "SFO")).toContain("within 2 stops");
+    expect(emptyPlanMessage({ kind: "no_route", max_stops: 0 }, "SFO")).toContain("No nonstop");
+  });
+
+  test("planRoute names a reason exactly when it offers nothing", () => {
+    const sdb = makeSyntheticDb();
+    try {
+      const reader = createReaderFactory(sdb)("UA");
+      const empty = planRoute(reader, "BIL", "ROC");
+      expect(empty.itineraries).toEqual([]);
+      expect(empty.empty?.kind).toBe("no_route");
+    } finally {
+      sdb.close();
+    }
   });
 });

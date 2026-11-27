@@ -175,6 +175,36 @@ describe("sheet tab reconciliation", () => {
     expect(r.added).toEqual([{ gid: 4, name: "Future" }]);
   });
 
+  test("ignored tabs are neither fetched nor reported as new", () => {
+    const live: SheetTab[] = [
+      { gid: 1, name: "a" },
+      { gid: 7, name: "Orders" },
+      { gid: 8, name: "Brand new" },
+    ];
+    const r = reconcileSheetTabs([1], live, new Set(), [7]);
+    expect(r.fetch).toEqual([1]);
+    expect(r.added).toEqual([{ gid: 8, name: "Brand new" }]);
+  });
+
+  test("mainline's known unread tabs stay quiet while an unknown tab still surfaces", () => {
+    const mainline = FLEET_SHEETS.find((s) => s.fleet === "mainline");
+    if (!mainline) throw new Error("no mainline sheet");
+    const known: SheetTab[] = [
+      { gid: 1855629492, name: "FutureMAX" },
+      { gid: 735685210, name: "Future321" },
+      { gid: 1151318329, name: "FutureWB" },
+      { gid: 636589161, name: "Starlink Summary" },
+    ];
+    const unknown = { gid: 424242, name: "New tab" };
+    const live = [...mainline.gids.map((gid) => ({ gid, name: String(gid) })), ...known, unknown];
+    const r = reconcileSheetTabs(mainline.gids, live, new Set(), mainline.ignoredGids);
+    expect(r.added).toEqual([unknown]);
+    expect(r.fetch).toEqual([...mainline.gids]);
+    for (const sheet of FLEET_SHEETS)
+      for (const gid of sheet.ignoredGids)
+        expect(sheet.gids as readonly number[]).not.toContain(gid);
+  });
+
   test("unreadable tab list falls back to every known gid", () => {
     expect(reconcileSheetTabs([1, 2], null, new Set()).fetch).toEqual([1, 2]);
   });

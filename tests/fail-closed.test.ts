@@ -22,10 +22,13 @@ import {
   SHEET_ROSTER_WHERE,
   addDiscoveredStarlinkPlane,
   countQatarForwardSchedule,
+  countStarlinkPlanes,
   getHubStats,
   getMeta,
   getNextAlaskaVerifyTarget,
   getNextPlanesToVerify,
+  getSheetListedTails,
+  getStarlinkPlanes,
   getVerificationObservations,
   reconcileTypeDeterministicFleets,
   recordQatarFetchCoverage,
@@ -39,7 +42,6 @@ import { checkOne } from "../src/scripts/alaska-verifier";
 import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
 import { runSheetScrape } from "../src/scripts/sheet-scrape";
 import type { FleetStats } from "../src/types";
-import { isInSpreadsheetCache, updateSpreadsheetCache } from "../src/utils/utils";
 import type { fetchAllSheets } from "../src/utils/utils";
 import { addFleet, addFlight, addQatarRow, makeSyntheticDb, stubPredict, utc } from "./helpers";
 
@@ -652,6 +654,56 @@ describe("updateDatabase roster floor", () => {
   });
 });
 
+describe("updateDatabase writes one listing per tail", () => {
+  const row = (tail: string, aircraft: string) => ({
+    TailNumber: tail,
+    Aircraft: aircraft,
+    WiFi: "StrLnk",
+    sheet_gid: "200",
+    sheet_type: "E175",
+    fleet: "express" as const,
+    OperatedBy: "Mesa dba UAX",
+  });
+  const listings = (db: Database, tail: string) =>
+    db
+      .query("SELECT aircraft FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'")
+      .all(tail) as { aircraft: string }[];
+
+  test("a tail on two sheet rows is listed once, and the headline counts it once", () => {
+    const db = makeSyntheticDb();
+    const rows = [
+      row("N89349", "ERJ-175"),
+      row("N88301", "ERJ-175"),
+      row("N89349", "E175SC"),
+      row("N88302", "ERJ-175"),
+    ];
+
+    expect(updateDatabase(db, 900, rows, STATS, "UA")).toBeNull();
+
+    expect(listings(db, "N89349")).toEqual([{ aircraft: "ERJ-175" }]);
+    expect(countStarlinkPlanes(db, "UA")).toBe(3);
+    expect(getStarlinkPlanes(db, "UA")).toHaveLength(3);
+
+    // The hourly rewrite must not bring the second row back.
+    updateDatabase(db, 900, rows, STATS, "UA");
+    expect(listings(db, "N89349")).toHaveLength(1);
+    db.close();
+  });
+
+  test("a discovered tail the sheet repeats keeps its one row", () => {
+    const db = makeSyntheticDb();
+    addDiscoveredStarlinkPlane(db, "N89349", "ERJ-175", "Starlink", "Mesa dba UAX", "express", {
+      airline: "UA",
+      evidence: "observed",
+    });
+
+    updateDatabase(db, 900, [row("N89349", "ERJ-175"), row("N89349", "E175SC")], STATS, "UA");
+
+    expect(listings(db, "N89349")).toHaveLength(1);
+    db.close();
+  });
+});
+
 describe("type-settled is not verified", () => {
   test("first HA reconcile: status settles, no verification-grade stamps, no install spike", () => {
     const db = makeSyntheticDb();
@@ -846,14 +898,20 @@ describe("runSheetScrape refusal still runs maintenance", () => {
       fleetStats: STATS,
     })) as unknown as typeof fetchAllSheets;
 
-    updateSpreadsheetCache(["N12345"]);
+    updateDatabase(
+      db,
+      900,
+      [{ TailNumber: "N12345", WiFi: "StrLnk", sheet_gid: "200", fleet: "express" }],
+      STATS,
+      "UA"
+    );
     const result = await runSheetScrape(db, emptySheets);
 
     expect(result.outcome).toBe("refused");
     expect(fleetRow(db, "A7-ALA").starlink_status).toBe("confirmed");
-    // Cache shares the DB refusal decision — a refused replace must not
-    // desync /api/fleet-discovery by emptying or replacing the cache.
-    expect(isInSpreadsheetCache("N12345")).toBe(true);
+    // /api/fleet-discovery reads the stored roster, so a refused replace
+    // leaves its sheet list as the last accepted read left it.
+    expect(getSheetListedTails(db).tails.has("N12345")).toBe(true);
     db.close();
   });
 

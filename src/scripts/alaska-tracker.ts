@@ -12,18 +12,31 @@
  *    freshness gauge and the fleet_progress.count gauges;
  *  - for a type Alaska marks "Update complete", a type-rule listing for every
  *    roster tail of that type in its operator's roster
- *    (settleOfficiallyCompleteType's guard applies).
+ *    (settleOfficiallyCompleteType's guard applies), and only from a chart
+ *    that passes chart-bounds.ts: a refused chart settles no tail.
  */
 
 import type { Database } from "bun:sqlite";
 import { normalizeAircraftType } from "../airlines/aircraft-families";
 import { AIRLINES } from "../airlines/registry";
+import { validateChartAgainstRoster } from "../database/airline-count";
+import {
+  CHART_MAX_CELL,
+  CHART_MAX_STORE_AGE_DAYS,
+  ChartRejected,
+  chartDateProblem,
+  isCalendarDay,
+  reportChartRejected,
+  utcDay,
+} from "../database/chart-bounds";
 import {
   equippedCountByFamily,
   initializeDatabase,
+  metaJobStamps,
   replaceFleetProgress,
   settleOfficiallyCompleteType,
 } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
@@ -66,14 +79,15 @@ export interface ParsedTracker {
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
-/** "Sept. 25, 2026" / "September 25, 2026" → "2026-09-25". */
+/** "Sept. 25, 2026" / "September 25, 2026" → "2026-09-25"; null for a date
+ * the calendar doesn't have ("Feb. 31"). */
 export function parseNewsroomDate(raw: string): string | null {
   const m = raw.match(/([A-Za-z]{3,9})\.?\s+(\d{1,2}),\s*(\d{4})/);
   if (!m) return null;
   const month = MONTHS.indexOf(m[1].slice(0, 3).toLowerCase());
-  const day = Number(m[2]);
-  if (month < 0 || day < 1 || day > 31) return null;
-  return `${m[3]}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  if (month < 0) return null;
+  const iso = `${m[3]}-${String(month + 1).padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  return isCalendarDay(iso) ? iso : null;
 }
 
 function cellText(html: string): string {
@@ -87,17 +101,20 @@ function cellText(html: string): string {
 }
 
 /** A count cell: "-" and blank are 0, "Update complete" in the pending column
- * is 0; anything else non-numeric is unparseable (null). */
+ * is 0; anything else non-numeric, or longer than a fleet of one type can be,
+ * is unparseable (null). */
 function countCell(raw: string): number | null {
   const t = raw.trim();
   if (t === "" || /^[-–—]+$/.test(t) || /complete/i.test(t)) return 0;
   const n = Number(t.replace(/,/g, ""));
-  return Number.isInteger(n) && n >= 0 ? n : null;
+  return Number.isInteger(n) && n >= 0 && n <= CHART_MAX_CELL ? n : null;
 }
 
-/** Throws when the table is missing or any row fails to parse: a half-read
- * chart must never replace the last good one. */
-export function parseAlaskaTracker(html: string): ParsedTracker {
+/** Throws when the table is missing, any row fails to parse, or the chart's
+ * date is in the future or over a year old: a half-read or impossible chart
+ * must never replace the last good one. A date line that can't be read at all
+ * leaves the chart undated, and an undated chart never reaches a headline. */
+export function parseAlaskaTracker(html: string, today = utcDay()): ParsedTracker {
   const tables = html.match(/<table[\s\S]*?<\/table>/gi) ?? [];
   const table =
     tables.find((t) => /aria-label="[^"]*starlink tracker/i.test(t)) ??
@@ -130,7 +147,10 @@ export function parseAlaskaTracker(html: string): ParsedTracker {
   if (rows.length === 0) throw new Error("tracker table has no rows");
 
   const dateLine = html.match(/last updated on\s*([^<]{0,40})/i)?.[1];
-  return { asOf: dateLine ? parseNewsroomDate(dateLine) : null, rows };
+  const asOf = dateLine ? parseNewsroomDate(dateLine) : null;
+  const dated = asOf ? chartDateProblem(asOf, today, CHART_MAX_STORE_AGE_DAYS) : null;
+  if (dated) throw new ChartRejected(dated);
+  return { asOf, rows };
 }
 
 /** Tracker rows → fleet_progress rows, plus one "Totals" rollup per segment. */
@@ -167,6 +187,9 @@ export interface AlaskaTrackerResult {
   outcome: "success" | "error";
   rows: number;
   settled: number;
+  /** Types the chart called complete that were not settled, because the chart
+   * failed its bounds. */
+  withheld: number;
 }
 
 async function fetchTrackerHtml(): Promise<string> {
@@ -180,7 +203,8 @@ async function fetchTrackerHtml(): Promise<string> {
 
 export async function runAlaskaTrackerSync(
   db: Database,
-  fetchHtml: () => Promise<string> = fetchTrackerHtml
+  fetchHtml: () => Promise<string> = fetchTrackerHtml,
+  today = utcDay()
 ): Promise<AlaskaTrackerResult> {
   return withSpan(
     "scraper.alaska_tracker",
@@ -189,8 +213,9 @@ export async function runAlaskaTrackerSync(
       const airlineTag = normalizeAirlineTag("AS");
       let parsed: ParsedTracker;
       try {
-        parsed = parseAlaskaTracker(await fetchHtml());
+        parsed = parseAlaskaTracker(await fetchHtml(), today);
       } catch (err) {
+        if (err instanceof ChartRejected) reportChartRejected("AS", "parse", err.problem);
         warn("alaska-tracker: fetch/parse failed; keeping the last stored chart", err);
         metrics.increment(COUNTERS.SCRAPER_SYNC, {
           source: "alaska_tracker",
@@ -198,7 +223,7 @@ export async function runAlaskaTrackerSync(
           status: "error",
         });
         span.setTag("result", "error");
-        return { outcome: "error", rows: 0, settled: 0 };
+        return { outcome: "error", rows: 0, settled: 0, withheld: 0 };
       }
 
       const unknown = parsed.rows.filter((r) => !FAMILY_CODE[r.family]);
@@ -213,24 +238,47 @@ export async function runAlaskaTrackerSync(
           airline: airlineTag,
           status: "error",
         });
-        return { outcome: "error", rows: 0, settled: 0 };
+        return { outcome: "error", rows: 0, settled: 0, withheld: 0 };
       }
       replaceFleetProgress(db, "AS", rows, { wholeAirline: true });
       emitFleetProgressCounts(
         "AS",
         rows.filter((r) => r.type_code === "Totals")
       );
+      // Stored either way, since /fleet shows it as Alaska's with its date;
+      // a chart far from our fleet list is kept out of the headline by the
+      // read and reported here once a day, where the job's log is read.
+      const offList = validateChartAgainstRoster(db, "AS", today);
+      if (offList) reportChartRejected("AS", "sync", offList);
 
+      const complete = parsed.rows.filter(
+        (r) => FAMILY_CODE[r.family] && r.pending === 0 && r.connected > 0
+      );
+      // A settle names every tail of a type as equipped, and nothing takes
+      // that back when a later chart reads otherwise. The bounds judge the
+      // chart as one reading: a garbled row elsewhere means the parse or the
+      // page slipped, and "Update complete" came through the same slip. So a
+      // refused chart settles nothing, the sound-looking rows included.
       let settled = 0;
-      for (const r of parsed.rows) {
-        const mapped = FAMILY_CODE[r.family];
-        if (!mapped || r.pending > 0 || r.connected === 0) continue;
-        const res = settleOfficiallyCompleteType(db, mapped.airline, r.family, r.connected);
-        settled += res.settled;
-        if (res.skipped === "roster_exceeds_official") {
-          warn(
-            `alaska-tracker: ${r.label} marked complete at ${r.connected}, but the roster has ${res.roster}; not settling`
-          );
+      let withheld = 0;
+      if (offList) {
+        withheld = complete.length;
+        if (withheld > 0) {
+          reportChartRejected("AS", "settle", {
+            reason: offList.reason,
+            detail: `${offList.detail}; not settling ${complete.map((r) => r.label).join(", ")}`,
+          });
+        }
+      } else {
+        for (const r of complete) {
+          const mapped = FAMILY_CODE[r.family];
+          const res = settleOfficiallyCompleteType(db, mapped.airline, r.family, r.connected);
+          settled += res.settled;
+          if (res.skipped === "roster_exceeds_official") {
+            warn(
+              `alaska-tracker: ${r.label} marked complete at ${r.connected}, but the roster has ${res.roster}; not settling`
+            );
+          }
         }
       }
 
@@ -259,9 +307,9 @@ export async function runAlaskaTrackerSync(
         .map((r) => `${FAMILY_CODE[r.family].code} ${r.connected}/${r.connected + r.pending}`)
         .join(", ");
       info(
-        `alaska-tracker sync: chart ${parsed.asOf ?? "undated"}; ${summary}; ${settled} tails settled`
+        `alaska-tracker sync: chart ${parsed.asOf ?? "undated"}; ${summary}; ${settled} tails settled${withheld > 0 ? `; ${withheld} complete types withheld, chart refused` : ""}`
       );
-      return { outcome: "success", rows: rows.length, settled };
+      return { outcome: "success", rows: rows.length, settled, withheld };
     },
     { "job.type": "background" }
   );
@@ -271,10 +319,12 @@ export function startAlaskaTrackerJob(db: Database): JobHandle | undefined {
   if (!AIRLINES.AS.enabled || !TRACKER_URL) return undefined;
   return startJob({
     name: "alaska_tracker",
+    stamps: metaJobStamps(db),
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 4 * 60 * 1000,
     run: async () => {
-      await runAlaskaTrackerSync(db);
+      // "error" covers the page that loads with no types on it, too.
+      recordSyncOutcome(db, "alaska_tracker", "AS", (await runAlaskaTrackerSync(db)).outcome);
     },
   });
 }

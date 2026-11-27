@@ -12,11 +12,21 @@ import type { Database } from "bun:sqlite";
 import { looksLikeValidTailNumber, operatorStoragePrefixes } from "../airlines/registry";
 import {
   type AdsbFlightSighting,
+  type AdsbGroundSighting,
   countAdsbFlightDraws,
+  countPlacedAdsbFlightDraws,
+  placeAdsbFlightDraws,
   pruneAdsbFlightDraws,
   upsertAdsbFlightDraws,
 } from "../database/adsb-flight-draws";
-import { getFleetTailsWithStatus, getMeta, recordAdsbSweep, setMeta } from "../database/database";
+import {
+  getFleetTailsWithStatus,
+  getMeta,
+  recordAdsbSweep,
+  recordAirborneSightings,
+  setMeta,
+} from "../database/database";
+import { DAY_SEC } from "../database/sql/windows";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -26,6 +36,7 @@ import {
   withSpan,
 } from "../observability";
 import type { AdsbObservationRecord } from "../types";
+import { nearestAirport } from "../utils/airport-geo";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { type JobHandle, createOutageBreaker, startJob } from "../utils/job-runner";
 import { debug, info, error as logError, warn } from "../utils/logger";
@@ -61,6 +72,7 @@ const PROVIDERS: AdsbProvider[] = [
   },
 ];
 
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const PROVIDER_RATE_GAP_MS = 1100;
 /** Per-request ceiling. Failover is serial across three providers and each may
  * page through the fleet, so an unbounded request is what let one slow upstream
@@ -72,6 +84,9 @@ export interface AdsbAircraft {
   hex: string | null;
   callsign: string | null;
   airborne: boolean;
+  /** The transponder's own ground state (alt_baro "ground"). Narrower than
+   * !airborne, which also covers a target that sent no altitude at all. */
+  onGround?: boolean;
   gs: number | null;
   lat: number | null;
   lon: number | null;
@@ -113,6 +128,7 @@ async function queryProvider(
         callsign: typeof ac.flight === "string" && ac.flight.trim() ? ac.flight.trim() : null,
         // alt_geom fallback: MLAT/degraded targets can be airborne without alt_baro.
         airborne: ac.alt_baro === "ground" ? false : ac.alt_baro != null || ac.alt_geom != null,
+        onGround: ac.alt_baro === "ground",
         gs: typeof ac.gs === "number" ? ac.gs : null,
         lat: typeof ac.lat === "number" ? ac.lat : null,
         lon: typeof ac.lon === "number" ? ac.lon : null,
@@ -345,6 +361,7 @@ export async function runAdsbSweepShadow(
             provider: stats.provider,
             shadow_result: result,
             assigned_flight: assignedFlight,
+            ground_airport: groundAirport(ac),
           });
         }
 
@@ -368,7 +385,20 @@ export async function runAdsbSweepShadow(
           },
           observations
         );
-        recordFlightDraws(db, observations, now);
+        recordFlightDraws(db, observations, now, airlineTag);
+
+        const returned = recordAirborneSightings(
+          db,
+          "UA",
+          observations.filter((o) => o.airborne === 1).map((o) => o.tail_number),
+          now,
+          SWEEP_INTERVAL_MS / 1000
+        );
+        if (returned.length > 0) {
+          info("adsb-shadow: airborne after a ground gap, discovery re-check pulled forward", {
+            tails: returned,
+          });
+        }
 
         for (const [result, value] of Object.entries(counts)) {
           metrics.gauge(GAUGES.ADSB_SHADOW_OBSERVATIONS, value, { result, airline: airlineTag });
@@ -460,7 +490,7 @@ export function startAdsbSweepJob(db: Database): JobHandle {
   const breaker = createOutageBreaker(ADSB_OUTAGE_FAILURES, ADSB_OUTAGE_SKIP_TICKS);
   return startJob({
     name: "adsb_sweep",
-    intervalMs: 5 * 60 * 1000,
+    intervalMs: SWEEP_INTERVAL_MS,
     initialDelayMs: 2 * 60 * 1000,
     // A sweep now has a bounded worst case: 3 providers x their paging, each
     // request capped at PROVIDER_REQUEST_TIMEOUT_MS. The default 15-minute
@@ -514,11 +544,57 @@ function toSightings(rows: readonly SightingSource[]): AdsbFlightSighting[] {
   return out;
 }
 
+/** An airport's reference point to its farthest runway end or gate is under
+ * four miles at the largest fields in the network (DEN, DFW). Where two
+ * fields sit closer than that (SAN and NZY, SEA and BFI) the nearer wins. */
+const GROUND_AIRPORT_RADIUS_MI = 4;
+/** Above a fast landing roll, a "ground" report is a transponder fault. */
+const GROUND_MAX_SPEED_KT = 150;
+
+/** The airport an aircraft is on the ground at, or null when it is not on the
+ * ground by its own report, has no position, or is at no airport we know. */
+export function groundAirport(
+  ac: Pick<AdsbAircraft, "onGround" | "gs" | "lat" | "lon">
+): string | null {
+  if (!ac.onGround || ac.lat == null || ac.lon == null) return null;
+  if (ac.gs != null && ac.gs > GROUND_MAX_SPEED_KT) return null;
+  return nearestAirport(ac.lat, ac.lon, GROUND_AIRPORT_RADIUS_MI);
+}
+
+/** Draws that began this long ago have landed, or never will be seen to. */
+const PLACED_GAUGE_SETTLE_SEC = 6 * 3600;
+
 /** Best-effort: the rollup is predictor input, never a reason to lose a sweep. */
-function recordFlightDraws(db: Database, observations: readonly SightingSource[], now: number) {
+function recordFlightDraws(
+  db: Database,
+  observations: ReadonlyArray<SightingSource & Pick<AdsbObservationRecord, "ground_airport">>,
+  now: number,
+  airlineTag: string
+) {
   try {
     upsertAdsbFlightDraws(db, toSightings(observations));
+    const ground: AdsbGroundSighting[] = [];
+    for (const o of observations) {
+      if (o.ground_airport) {
+        ground.push({
+          tail_number: o.tail_number,
+          airport: o.ground_airport,
+          observed_at: o.observed_at,
+        });
+      }
+    }
+    placeAdsbFlightDraws(db, now, ground);
     pruneAdsbFlightDraws(db, now);
+    // A day of settled draws by which ends were seen on the ground: the only
+    // view of the placement rate from outside the production database.
+    const placed = countPlacedAdsbFlightDraws(
+      db,
+      now - PLACED_GAUGE_SETTLE_SEC - DAY_SEC,
+      now - PLACED_GAUGE_SETTLE_SEC
+    );
+    for (const [ends, value] of Object.entries(placed)) {
+      metrics.gauge(GAUGES.ADSB_DRAWS_PLACED, value, { ends, airline: airlineTag });
+    }
   } catch (err) {
     logError("adsb-sweep: flight-draw rollup failed", err);
   }

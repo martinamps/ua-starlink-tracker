@@ -1,14 +1,14 @@
 /**
  * The homepage aircraft list (components/home/aircraft-list.tsx): search and
- * subfleet filters over the rendered rows, mirrored into ?q= and ?filter=;
- * "+N" pill expansion; and flight-number tooltips on hover devices.
+ * subfleet filters over the rendered rows, mirrored into ?q= and ?filter=,
+ * and "+N" pill expansion.
  */
 
 export const FILTER_BUTTON =
   "js-filter-btn font-mono text-xs px-3 py-2 rounded border transition-all";
 export const FILTER_ACTIVE = "bg-accent/20 border-accent text-accent";
 export const FILTER_INACTIVE =
-  "bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent";
+  "bg-transparent border-neutral text-secondary hover:border-accent hover:text-accent";
 
 /** A complete US registration (n37502): a miss can jump straight to its /fleet entry. */
 const US_TAIL = /^n\d{1,5}[a-z]{0,2}$/;
@@ -38,7 +38,10 @@ function wireSearch(): void {
 
   const paintButtons = () => {
     for (const b of buttons) {
-      b.className = `${FILTER_BUTTON} ${b.dataset.filter === filter ? FILTER_ACTIVE : FILTER_INACTIVE}`;
+      const on = b.dataset.filter === filter;
+      b.className = `${FILTER_BUTTON} ${on ? FILTER_ACTIVE : FILTER_INACTIVE}`;
+      // The chosen filter is otherwise told by colour alone.
+      b.setAttribute("aria-pressed", String(on));
     }
   };
 
@@ -122,45 +125,7 @@ function wireExpand(): void {
   });
 }
 
-/** Flight-number tooltips, only where there is hover (not touch). */
-function wireTooltips(): void {
-  if (!window.matchMedia("(hover: hover)").matches) return;
-  let tip: HTMLDivElement | null = null;
-  let current: Element | null = null;
-  const remove = () => {
-    tip?.remove();
-    tip = null;
-  };
-  document.addEventListener("mouseover", (e) => {
-    const pill = (e.target as Element | null)?.closest?.(
-      "[data-flight-tooltip]"
-    ) as HTMLElement | null;
-    if (!pill || pill === current) return;
-    remove();
-    current = pill;
-    const text = pill.dataset.flightTooltip;
-    if (!text) return;
-    tip = document.createElement("div");
-    tip.textContent = text;
-    tip.style.cssText =
-      "position:fixed;padding:4px 8px;background:var(--color-accent);color:var(--color-base);font-size:11px;font-weight:600;font-family:var(--font-mono);border-radius:4px;pointer-events:none;z-index:9999;white-space:nowrap;box-shadow:0 4px 6px rgba(0,0,0,0.3);";
-    document.body.appendChild(tip);
-    const rect = pill.getBoundingClientRect();
-    tip.style.left = `${rect.left + rect.width / 2 - tip.offsetWidth / 2}px`;
-    tip.style.top = `${rect.top - tip.offsetHeight - 6}px`;
-  });
-  document.addEventListener("mouseout", (e) => {
-    const pill = (e.target as Element | null)?.closest?.("[data-flight-tooltip]");
-    if (!pill) return;
-    const related = e.relatedTarget as Node | null;
-    if (related && pill.contains(related)) return;
-    remove();
-    current = null;
-  });
-}
-
 export function wireAircraftList(): void {
   wireSearch();
   wireExpand();
-  wireTooltips();
 }

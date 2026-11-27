@@ -15,6 +15,10 @@ export interface HomeHeadline {
  * The airline homepage's one headline. The <title>, the H1 and WebPage.name
  * all read from it: Google replaced a counted <title> with the number-free H1
  * while the two disagreed. Null when the ratio isn't publishable.
+ *
+ * Always this site's own count of named tails, never the airline's chart
+ * figure: none of the three has room for whose figure it is and its date, and
+ * a count that stands bare reads as ours.
  */
 export function homeHeadline(cfg: AirlineConfig, n: number, total: number): HomeHeadline | null {
   if (!denominatorIsPublishable(n, total, cfg.rollout.rosterIsProgramScope)) return null;
