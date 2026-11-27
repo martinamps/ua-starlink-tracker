@@ -1,11 +1,13 @@
 /**
- * "Which airports have the most Starlink flights?": the per-day count behind
- * the ranking on /routes and each airport page's dated figure.
+ * "How many Starlink flights leave my airport today, and which airports have
+ * the most?": the per-day counts behind the ranking on /routes and each
+ * airport page's dated figures.
  *
- * Seeded on a fresh database around each airport's own next local day, so the
- * rules are pinned on rows the test wrote: one flight is one departure however
- * it is spelled or listed, the day is the airport's, the count stands alone
- * with no figure credited to the airline, and no share is printed.
+ * Seeded on a fresh database around each airport's own local today and
+ * tomorrow, so the rules are pinned on rows the test wrote: today is what left
+ * plus what is still to leave, one flight is one departure however it is
+ * spelled or listed, the day is the airport's, the count stands alone with no
+ * figure credited to the airline, and no share is printed.
  */
 
 import type { Database } from "bun:sqlite";
@@ -13,8 +15,13 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES, SITES } from "../src/airlines/registry";
 import { buildAirportBoard } from "../src/api/airport-board";
 import { AIRPORT_RANK_MIN_DEPARTURES, buildAirportRanking } from "../src/api/airport-ranking";
-import { getAirportDayCounts, nextLocalDay } from "../src/database/airports";
-import { getRouteStarlinkSchedule } from "../src/database/database";
+import {
+  getAirportDayCounts,
+  getStarlinkDeparturesLeft,
+  nextLocalDay,
+} from "../src/database/airports";
+import { logFlightAssignments } from "../src/database/assignment-log";
+import { archivePastDepartures, getRouteStarlinkSchedule } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
 import { airportLocalDate, localDayEndSec } from "../src/utils/airport-tz";
@@ -35,6 +42,56 @@ function onNextDay(airport: string, hoursBeforeEnd: number): number {
   return localDayEndSec(airport, date) - hoursBeforeEnd * HOUR;
 }
 
+/** The first instant of the airport's local today. */
+function todayStart(airport: string): number {
+  const today = airportLocalDate(airport, now) as string;
+  const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86400_000)
+    .toISOString()
+    .slice(0, 10);
+  return localDayEndSec(airport, yesterday);
+}
+
+/** Still to leave today: the `k`th of a few instants between now and midnight. */
+function laterToday(airport: string, k: number): number {
+  const end = localDayEndSec(airport, airportLocalDate(airport, now) as string);
+  return now + Math.max(1, Math.floor(((end - now) * k) / 10));
+}
+
+/** Already gone today: the `k`th of a few instants between midnight and now. */
+function earlierToday(airport: string, k: number): number {
+  const start = todayStart(airport);
+  return now - Math.max(1, Math.floor(((now - start) * k) / 10));
+}
+
+/** A departure the updater saw assigned and archived once its time passed. */
+function left(
+  tail: string,
+  flight: string,
+  from: string,
+  to: string,
+  at: number,
+  airline = "UA"
+): void {
+  logFlightAssignments(
+    db,
+    airline,
+    tail,
+    [
+      {
+        flight_number: flight,
+        departure_airport: from,
+        arrival_airport: to,
+        departure_time: at,
+        arrival_time: at + 2 * HOUR,
+      },
+    ],
+    now
+  );
+  db.query(
+    "INSERT OR IGNORE INTO departure_log (tail_number, airport, departed_at, airline) VALUES (?, ?, ?, ?)"
+  ).run(tail, from, at, airline);
+}
+
 beforeAll(() => {
   db = makeFreshDb();
   addPlane(db, "N1VER", "Starlink");
@@ -50,13 +107,31 @@ beforeAll(() => {
   addFlight(db, "N2LIST", "UA5212", "DEN", onNextDay("DEN", 8), { arrivalAirport: "GJT" });
   addFlight(db, "N2LIST", "SKW5212", "DEN", onNextDay("DEN", 8), { arrivalAirport: "GJT" });
   addFlight(db, "N3TWICE", "UA300", "DEN", onNextDay("DEN", 6), { arrivalAirport: "IAH" });
-  // Still today at DEN, or already gone: either way not the next day's.
-  addFlight(db, "N1VER", "UA101", "DEN", now + 60, { arrivalAirport: "ORD" });
   // A tail with no listing is not a Starlink plane.
   addFlight(db, "N9NONE", "UA900", "DEN", onNextDay("DEN", 10), { arrivalAirport: "ORD" });
 
-  // GJT and SBA tie on two; BOI has one and is listed, not ranked.
+  // DEN today: two gone, one still to leave.
+  left("N1VER", "UA150", "DEN", "ORD", earlierToday("DEN", 3));
+  // One departure under its operating and its marketed spelling.
+  left("N2LIST", "SKW5150", "DEN", "ASE", earlierToday("DEN", 5));
+  left("N2LIST", "UA5150", "DEN", "ASE", earlierToday("DEN", 5));
+  // A positioning leg under an ATC callsign: nobody books it.
+  left("N1VER", "SKW312R", "DEN", "COS", earlierToday("DEN", 7));
+  // Gone, but not on a Starlink plane.
+  left("N9NONE", "UA950", "DEN", "ORD", earlierToday("DEN", 4));
+  // Gone yesterday, inside the look-back but not today's.
+  left("N1VER", "UA149", "DEN", "ORD", todayStart("DEN") - HOUR);
+  addFlight(db, "N1VER", "UA101", "DEN", laterToday("DEN", 5), { arrivalAirport: "ORD" });
+
+  // GJT and SBA tie on two today, and on two tomorrow; BOI has one today,
+  // gone already, and is listed, not ranked.
   for (const [i, airport] of ["GJT", "SBA"].entries()) {
+    addFlight(db, "N1VER", `UA${420 + i}`, airport, laterToday(airport, 3), {
+      arrivalAirport: "DEN",
+    });
+    addFlight(db, "N2LIST", `UA${430 + i}`, airport, laterToday(airport, 6), {
+      arrivalAirport: "DEN",
+    });
     addFlight(db, "N1VER", `UA${400 + i}`, airport, onNextDay(airport, 13), {
       arrivalAirport: "DEN",
     });
@@ -64,6 +139,7 @@ beforeAll(() => {
       arrivalAirport: "DEN",
     });
   }
+  left("N1VER", "UA501", "BOI", "DEN", earlierToday("BOI", 2));
   addFlight(db, "N1VER", "UA500", "BOI", onNextDay("BOI", 11), { arrivalAirport: "DEN" });
 
   // Alaska keeps the bars it had: the ranking is United's.
@@ -119,20 +195,29 @@ describe("nextLocalDay", () => {
 });
 
 describe("getAirportDayCounts", () => {
-  test("counts each departure on the airport's next local day once", () => {
+  test("counts each departure on the airport's local today and tomorrow once", () => {
     const rows = getAirportDayCounts(db, "UA", now);
     const den = rows.find((r) => r.airport === "DEN");
-    // UA100, UA200, UA5212 (two spellings) and UA300 (a tail listed twice).
+    // Today: UA150 and UA5150 (two spellings) gone, UA101 to come; not the
+    // callsign leg, the unlisted tail or yesterday's. Tomorrow: UA100, UA200,
+    // UA5212 (two spellings) and UA300 (a tail listed twice).
     expect(den).toEqual({
       airport: "DEN",
-      date: nextLocalDay("DEN", now) as string,
-      departures: 4,
+      today: { date: airportLocalDate("DEN", now) as string, left: 2, toGo: 1, departures: 3 },
+      tomorrow: { date: nextLocalDay("DEN", now) as string, departures: 4 },
     });
-    expect(rows.find((r) => r.airport === "BOI")?.departures).toBe(1);
-    expect(rows.every((r) => r.departures > 0)).toBe(true);
-    expect(rows.map((r) => r.departures)).toEqual(
-      [...rows.map((r) => r.departures)].sort((a, b) => b - a)
+    expect(rows.find((r) => r.airport === "BOI")?.today).toMatchObject({ left: 1, toGo: 0 });
+    expect(rows.every((r) => r.today.departures + r.tomorrow.departures > 0)).toBe(true);
+    expect(rows.map((r) => r.today.departures)).toEqual(
+      [...rows.map((r) => r.today.departures)].sort((a, b) => b - a)
     );
+  });
+
+  test("what left is read from the archive alone, never from the schedule", () => {
+    // UA101 is in the schedule and has not left; nothing archived is to come.
+    const gone = getStarlinkDeparturesLeft(db, "UA", now, "DEN");
+    expect(gone.every((d) => d.departure_time < now)).toBe(true);
+    expect(gone.length).toBe(3);
   });
 
   test("a tail with two listings does not double the route counts either", () => {
@@ -148,6 +233,55 @@ describe("getAirportDayCounts", () => {
   });
 });
 
+describe("a late swap", () => {
+  // UA1234 ORD-DEN at 13:00 at O'Hare, swapped late: the old tail's row is
+  // still in the schedule when the time passes, so both rows are archived.
+  const t0 = Date.parse("2026-11-27T18:00:00Z") / 1000;
+  const dep = t0 + HOUR;
+  const seed = (to: string, toListed: boolean) => {
+    const swapDb = makeFreshDb();
+    addPlane(swapDb, "N37501", "Starlink");
+    if (toListed) addPlane(swapDb, to, "Starlink");
+    for (const [tail, seen] of [
+      ["N37501", t0 - 3 * HOUR],
+      [to, t0 - HOUR],
+    ] as const) {
+      addFlight(swapDb, tail, "UA1234", "ORD", dep, { arrivalAirport: "DEN", lastUpdated: seen });
+      logFlightAssignments(
+        swapDb,
+        "UA",
+        tail,
+        [
+          {
+            flight_number: "UA1234",
+            departure_airport: "ORD",
+            arrival_airport: "DEN",
+            departure_time: dep,
+            arrival_time: dep + 2 * HOUR,
+          },
+        ],
+        seen
+      );
+    }
+    return swapDb;
+  };
+  const today = (swapDb: Database, at: number) =>
+    getAirportDayCounts(swapDb, "UA", at).find((c) => c.airport === "ORD")?.today;
+
+  test("between two Starlink planes is one departure before and after it leaves", () => {
+    const swapDb = seed("N37502", true);
+    expect(today(swapDb, t0)).toMatchObject({ left: 0, toGo: 1, departures: 1 });
+    expect(archivePastDepartures(swapDb, dep + 60)).toBe(2);
+    expect(today(swapDb, dep + 120)).toMatchObject({ left: 1, toGo: 0, departures: 1 });
+  });
+
+  test("onto a plane without Starlink is no Starlink departure once it is seen", () => {
+    const swapDb = seed("N99NOT", false);
+    archivePastDepartures(swapDb, dep + 60);
+    expect(today(swapDb, dep + 120)?.left ?? 0).toBe(0);
+  });
+});
+
 describe("buildAirportRanking", () => {
   test("ranks from the minimum up, equal counts sharing a rank", () => {
     const ranking = buildAirportRanking(AIRLINES.UA, reader());
@@ -158,14 +292,22 @@ describe("buildAirportRanking", () => {
     ]);
     expect(ranking.rows.every((r) => r.departures >= AIRPORT_RANK_MIN_DEPARTURES)).toBe(true);
     expect(ranking.unranked).toEqual(["BOI"]);
-    expect(ranking.date).toBe(nextLocalDay("DEN", now));
+    expect(ranking.date).toBe(airportLocalDate("DEN", now));
+    expect(ranking.rows[0]).toMatchObject({ departures: 3, tomorrow: 4 });
   });
 
   test("carries our count alone: no reported figure, no share", () => {
     const ranking = buildAirportRanking(AIRLINES.UA, reader());
     expect(Object.keys(ranking).sort()).toEqual(["airline", "date", "rows", "unranked"]);
     for (const r of ranking.rows) {
-      expect(Object.keys(r).sort(), r.airport).toEqual(["airport", "date", "departures", "rank"]);
+      expect(Object.keys(r).sort(), r.airport).toEqual([
+        "airport",
+        "date",
+        "departures",
+        "rank",
+        "tomorrow",
+        "tomorrowDate",
+      ]);
     }
   });
 });
@@ -179,7 +321,9 @@ describe("/routes", () => {
     }
     expect(body).toContain('id="airports"');
     // The day is named, weekday and date.
-    expect(text(block)).toMatch(/scheduled on Starlink planes for \w+day, \w{3} \d{1,2}/);
+    expect(text(block)).toMatch(/on Starlink planes today, \w+day, \w{3} \d{1,2}/);
+    expect(block).toMatch(/<th[^>]*>Today<\/th>/);
+    expect(block).toMatch(/<th[^>]*>Tomorrow<\/th>/);
     expect(text(block)).toContain("we list as having Starlink");
     expect(text(block)).toContain("swapped before departure");
   });
@@ -187,7 +331,8 @@ describe("/routes", () => {
   test("says the count can rise, credits no figure to the airline, and prints no share", async () => {
     const block = sectionOf(await page("/routes"), "Airports with the most Starlink departures");
     const said = text(block);
-    expect(said).toContain("a day's count can rise as the day nears");
+    expect(said).toContain("those that already left to those still scheduled");
+    expect(said).toContain("it can rise as the day nears");
     expect(said).not.toMatch(/own estimate|as reported by|Travel And Tour World|recounts/i);
     expect(block).not.toMatch(/<th[^>]*>United<\/th>/);
     expect(said).not.toMatch(/\d\s*%|percent/i);
@@ -201,36 +346,54 @@ describe("/routes", () => {
 });
 
 describe("/routes/{airport}", () => {
-  test("gives the day's count with its date and its place in the ranking", async () => {
+  test("gives today's and tomorrow's counts with their dates and today's rank", async () => {
     const board = buildAirportBoard(AIRLINES.UA, reader(), "DEN");
-    expect(board.day).toEqual({
-      date: nextLocalDay("DEN") as string,
-      departures: 4,
+    expect(board.today).toEqual({
+      date: airportLocalDate("DEN", now) as string,
+      left: 2,
+      toGo: 1,
+      departures: 3,
       rank: 1,
       ranked: 3,
     });
+    expect(board.tomorrow).toEqual({ date: nextLocalDay("DEN") as string, departures: 4 });
     const said = text(await page("/routes/DEN"));
-    expect(said).toMatch(/4 Starlink departures scheduled for \w+day, \w{3} \d{1,2}/);
+    expect(said).toMatch(
+      /3 Starlink departures today, \w+day, \w{3} \d{1,2}: 2 gone, 1 still to leave/
+    );
+    expect(said).toMatch(/4 Starlink departures scheduled for tomorrow, \w+day, \w{3} \d{1,2}/);
     expect(said).toContain("No. 1 of 3 airports");
     expect(said).toContain("DEN's own calendar day");
   });
 
-  test("the day's count is a count of the rows the page lists", () => {
+  test("the page's counts still to come are counts of the rows it lists", () => {
     for (const airport of ["DEN", "GJT", "BOI"]) {
       const board = buildAirportBoard(AIRLINES.UA, reader(), airport);
-      const date = board.day?.date as string;
-      expect(board.day?.departures, airport).toBe(
-        board.departures.filter((d) => airportLocalDate(airport, d.departure_time) === date).length
-      );
+      const on = (date: string | undefined) =>
+        board.departures.filter((d) => airportLocalDate(airport, d.departure_time) === date).length;
+      expect(board.today?.toGo, airport).toBe(on(board.today?.date));
+      expect(board.tomorrow?.departures, airport).toBe(on(board.tomorrow?.date));
+    }
+  });
+
+  test("the page and the ranking give an airport the same count", () => {
+    const counts = getAirportDayCounts(db, "UA", now);
+    for (const airport of ["DEN", "GJT", "SBA", "BOI"]) {
+      const board = buildAirportBoard(AIRLINES.UA, reader(), airport);
+      const row = counts.find((c) => c.airport === airport);
+      expect(board.today?.departures, airport).toBe(row?.today.departures);
+      expect(board.tomorrow?.departures, airport).toBe(row?.tomorrow.departures);
     }
   });
 
   test("an airport under the ranking's minimum has a count and no rank", async () => {
     const board = buildAirportBoard(AIRLINES.UA, reader(), "BOI");
-    expect(board.day?.departures).toBe(1);
-    expect(board.day?.rank).toBeNull();
+    expect(board.today?.departures).toBe(1);
+    expect(board.today?.rank).toBeNull();
     const said = text(await page("/routes/BOI"));
-    expect(said).toMatch(/1 Starlink departure scheduled for/);
+    expect(said).toMatch(
+      /1 Starlink departure today, \w+day, \w{3} \d{1,2}: 1 gone, 0 still to leave/
+    );
     expect(said).not.toContain("No. ");
   });
 
@@ -238,7 +401,7 @@ describe("/routes/{airport}", () => {
     const board = buildAirportBoard(AIRLINES.UA, reader(), "DEN");
     expect(Object.keys(board).filter((k) => /figure|share|ratio/i.test(k))).toEqual([]);
     const said = text(await page("/routes/DEN"));
-    expect(said).toContain("a day's count can rise as the day nears");
+    expect(said).toContain("it can rise as the day nears");
     expect(said).not.toMatch(/United's figure|own estimate|as reported by|Travel And Tour World/i);
   });
 });

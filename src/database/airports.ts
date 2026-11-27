@@ -9,7 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { canonicalPermalinkFor } from "../airlines/flight-number";
+import { canonicalPermalinkFor, slotFlightKey } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
 import { airportLocalDate } from "../utils/airport-tz";
 import { getDepartureSlots, getObservationAnchor, slotScope } from "./database";
@@ -88,12 +88,9 @@ export function getAirportStarlinkDepartures(
 }
 
 /**
- * The day a "departures a day" count is for: the calendar day after today at
- * the airport, as YYYY-MM-DD. Today is partly flown and the schedule holds
- * only what is still to leave, and the day after tomorrow runs past the 48
- * hours the schedule reaches; tomorrow is the one local day that is always
- * whole inside the window. Null for an airport with no mapped timezone, which
- * has no local day to count.
+ * Tomorrow at the airport, as YYYY-MM-DD: the calendar day after its local
+ * today. Null for an airport with no mapped timezone, which has no local day
+ * to count.
  */
 export function nextLocalDay(airport: string, nowSec = unixNow()): string | null {
   const today = airportLocalDate(airport, nowSec);
@@ -101,7 +98,7 @@ export function nextLocalDay(airport: string, nowSec = unixNow()): string | null
   return new Date(Date.parse(`${today}T00:00:00Z`) + DAY_SEC * 1000).toISOString().slice(0, 10);
 }
 
-/** How many of an airport's window departures leave on its `date` (local). */
+/** How many of an airport's departures leave on its `date` (local). */
 export function countOnLocalDay(
   airport: string,
   date: string,
@@ -110,38 +107,152 @@ export function countOnLocalDay(
   return departures.filter((d) => airportLocalDate(airport, d.departure_time) === date).length;
 }
 
+/**
+ * Far enough back to hold all of any airport's local today: 24 hours, one
+ * more for the 25-hour day a clock change makes, and one of slack.
+ */
+const LEFT_LOOKBACK_SEC = 26 * 3600;
+
+/**
+ * Departures that left in [from, to) on a tail that is equipped now, one row
+ * per spelling the updater logged. Driven from departure_log, which archives
+ * every schedule row whose time has passed, and probing the assignment log on
+ * its (tail, time) index for the flight and the pair. The CROSS JOIN keeps
+ * that order: left to itself the planner walks the airline's whole log.
+ *
+ * A late swap leaves the old tail's row in the schedule until that tail is
+ * refreshed, so both tails can be archived for one flight. `newer` lists the
+ * numbers other tails were seen on, for the same leg and time, after this
+ * tail last was (the route index finds them): the newest sighting is the
+ * plane that flew it.
+ */
+const LEFT_SQL = `SELECT dl.airport AS origin, dl.tail_number AS tail, dl.departed_at AS departure_time,
+       fal.flight_number AS flight_number, fal.arrival_airport AS destination,
+       (SELECT group_concat(fal2.flight_number, ' ') FROM flight_assignment_log fal2
+         WHERE fal2.departure_airport = fal.departure_airport
+           AND fal2.arrival_airport = fal.arrival_airport
+           AND fal2.departure_time = fal.departure_time AND fal2.airline = fal.airline
+           AND fal2.tail_number <> fal.tail_number AND fal2.last_seen > fal.last_seen) AS newer
+  FROM departure_log dl
+  CROSS JOIN flight_assignment_log fal
+    ON fal.tail_number = dl.tail_number AND fal.departure_time = dl.departed_at
+   AND fal.departure_airport = dl.airport AND fal.airline = dl.airline
+  WHERE dl.airline = ? AND dl.departed_at >= ? AND dl.departed_at < ?
+    AND ${tailEquippedSql("dl.tail_number", "dl.airline")}`;
+
+/**
+ * Starlink departures that have already left, over the last day, from one
+ * airport or from all, under the rule the scheduled count keeps: one flight
+ * leaves one airport at one time once, whichever tail flew it and however it
+ * is spelled, and counts only under a number the airline sells with a clean
+ * destination (a positioning leg is left out here as it is there). A flight
+ * seen later on another tail belongs to that tail: counted there if it has
+ * Starlink, not at all if not.
+ */
+export function getStarlinkDeparturesLeft(
+  db: Database,
+  airline: string,
+  nowSec = unixNow(),
+  origin?: string
+): Array<{ origin: string; departure_time: number }> {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return [];
+  const permalink = canonicalPermalinkFor(cfg);
+  const rows = db
+    .query(origin ? `${LEFT_SQL} AND dl.airport = ?` : LEFT_SQL)
+    .all(
+      ...(origin
+        ? [airline, nowSec - LEFT_LOOKBACK_SEC, nowSec, origin]
+        : [airline, nowSec - LEFT_LOOKBACK_SEC, nowSec])
+    ) as Array<{
+    origin: string;
+    tail: string;
+    departure_time: number;
+    flight_number: string;
+    destination: string | null;
+    newer: string | null;
+  }>;
+  const tails = new Set<string>();
+  const left = new Map<string, { origin: string; departure_time: number }>();
+  for (const r of rows) {
+    const flight = slotFlightKey(r.flight_number, airline);
+    if (!flight || !permalink.test(flight)) continue;
+    if (!r.destination || !isCleanAirportPair(r.origin, r.destination)) continue;
+    if (r.newer?.split(" ").some((n) => slotFlightKey(n, airline) === flight)) continue;
+    const tailKey = `${r.origin}|${r.tail}|${r.departure_time}`;
+    const flightKey = `${r.origin}|${flight}|${r.departure_time}`;
+    if (tails.has(tailKey) || left.has(flightKey)) continue;
+    tails.add(tailKey);
+    left.set(flightKey, { origin: r.origin, departure_time: r.departure_time });
+  }
+  return [...left.values()];
+}
+
 export interface AirportDayCount {
   airport: string;
-  /** The airport's next local day, YYYY-MM-DD. */
-  date: string;
-  /** Equipped departures scheduled to leave on it. */
-  departures: number;
+  /** The airport's local today, YYYY-MM-DD, and its Starlink departures:
+   * those already gone and those still scheduled. */
+  today: { date: string; left: number; toGo: number; departures: number };
+  /** The airport's local tomorrow: scheduled departures only. */
+  tomorrow: { date: string; departures: number };
 }
 
 /**
- * Starlink departures on each airport's next local day, for every airport
- * with at least one, most first. One pass over the same slots the airport
- * pages list, so a page's own count and its row here are the same rows.
+ * Starlink departures on each airport's local today and tomorrow, for every
+ * airport with any, most today first. Today is whole: what left is read from
+ * the departure archive, what is still to come from the schedule, and the
+ * rest of a local day is always inside the 48 hours the schedule holds.
+ * One pass over the same slots the airport pages list, so a page's own count
+ * and its row here are the same rows.
  */
 export function getAirportDayCounts(
   db: Database,
   airline: string,
   nowSec = unixNow()
 ): AirportDayCount[] {
-  const byAirport = new Map<string, AirportDayCount>();
-  for (const d of bookableStarlinkDepartures(db, airline, nowSec)) {
-    let entry = byAirport.get(d.origin);
+  const byAirport = new Map<string, AirportDayCount | null>();
+  const entryFor = (airport: string) => {
+    let entry = byAirport.get(airport);
     if (entry === undefined) {
-      const date = nextLocalDay(d.origin, nowSec);
-      if (!date) continue;
-      entry = { airport: d.origin, date, departures: 0 };
-      byAirport.set(d.origin, entry);
+      const today = airportLocalDate(airport, nowSec);
+      const tomorrow = nextLocalDay(airport, nowSec);
+      entry =
+        today && tomorrow
+          ? {
+              airport,
+              today: { date: today, left: 0, toGo: 0, departures: 0 },
+              tomorrow: { date: tomorrow, departures: 0 },
+            }
+          : null;
+      byAirport.set(airport, entry);
     }
-    if (airportLocalDate(d.origin, d.departure_time) === entry.date) entry.departures++;
+    return entry;
+  };
+  for (const d of getStarlinkDeparturesLeft(db, airline, nowSec)) {
+    const entry = entryFor(d.origin);
+    if (entry && airportLocalDate(d.origin, d.departure_time) === entry.today.date) {
+      entry.today.left++;
+    }
   }
-  return [...byAirport.values()]
-    .filter((e) => e.departures > 0)
-    .sort((a, b) => b.departures - a.departures || a.airport.localeCompare(b.airport));
+  for (const d of bookableStarlinkDepartures(db, airline, nowSec)) {
+    const entry = entryFor(d.origin);
+    if (!entry) continue;
+    const date = airportLocalDate(d.origin, d.departure_time);
+    if (date === entry.today.date) entry.today.toGo++;
+    else if (date === entry.tomorrow.date) entry.tomorrow.departures++;
+  }
+  const counts: AirportDayCount[] = [];
+  for (const entry of byAirport.values()) {
+    if (!entry) continue;
+    entry.today.departures = entry.today.left + entry.today.toGo;
+    if (entry.today.departures > 0 || entry.tomorrow.departures > 0) counts.push(entry);
+  }
+  return counts.sort(
+    (a, b) =>
+      b.today.departures - a.today.departures ||
+      b.tomorrow.departures - a.tomorrow.departures ||
+      a.airport.localeCompare(b.airport)
+  );
 }
 
 /**
@@ -183,8 +294,9 @@ export interface AirportHistory {
 }
 
 /**
- * The assignment log names the pair; departure_log says the tail really left
- * (a leg swapped away before departure is never archived). Driven from the
+ * The assignment log names the pair; departure_log says the time passed with
+ * the tail's row still in the schedule (a late swap can leave the old tail's
+ * row there too, so a swap between two Starlink planes counts twice here). Driven from the
  * log, probing departure_log on its (tail, time) index. One tail leaves one
  * airport at one time once, however many spellings logged it.
  */

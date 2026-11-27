@@ -44,7 +44,8 @@ function RankTable({
             <span className="sr-only">Rank</span>
           </Th>
           <Th>Airport</Th>
-          <Th>Starlink departures</Th>
+          <Th>Today</Th>
+          <Th numeric>Tomorrow</Th>
         </tr>
       </thead>
       <tbody>
@@ -67,10 +68,13 @@ function RankTable({
                 </span>
                 <Meter
                   share={max > 0 ? Math.max(0.03, r.departures / max) : 0}
-                  label={`${r.airport}: ${fmt(r.departures)} Starlink departures`}
+                  label={`${r.airport}: ${fmt(r.departures)} Starlink departures today`}
                   className="w-full min-w-8"
                 />
               </div>
+            </Td>
+            <Td numeric className="pl-3 text-secondary tabular-nums">
+              {fmt(r.tomorrow)}
             </Td>
           </tr>
         ))}
@@ -80,8 +84,8 @@ function RankTable({
 }
 
 /**
- * /routes: every airport ranked by the Starlink departures scheduled for its
- * next local day.
+ * /routes: every airport ranked by its Starlink departures today, its own
+ * local day, with tomorrow's scheduled count beside it.
  */
 export function AirportRankingPanel({
   ranking,
@@ -97,8 +101,9 @@ export function AirportRankingPanel({
     <div id="airports" className="min-w-0 scroll-mt-4">
       <SectionTitle>Airports with the most Starlink departures</SectionTitle>
       <p className="mt-1 text-sm text-secondary text-pretty">
-        {ranking.airline} departures scheduled on Starlink planes for {weekdayDate(date)}, each
-        airport's own local day.
+        {ranking.airline} departures on Starlink planes today, {weekdayDate(date)}, each airport's
+        own local day: those already gone and those still to leave. Tomorrow's scheduled count is
+        beside it.
         {mixed && " An airport already past midnight shows its date."}
       </p>
       <Panel pad="sm" className="mt-4">
@@ -132,11 +137,12 @@ export function AirportRankingPanel({
           </details>
         )}
         <p className="mt-4 text-xs text-muted text-pretty">
-          A count of departures scheduled on planes we list as having Starlink
-          {updatedAt ? `, as we held the schedule at ${utcDateTime(updatedAt)}` : ""}. That schedule
-          reaches about two days ahead and is still being added to, so a day's count can rise as the
-          day nears. Planes are swapped before departure, so the day itself will differ. It is a
-          count only: we hold no total of an airport's departures to set it against.
+          A count of departures on planes we list as having Starlink
+          {updatedAt ? `, as we held the schedule at ${utcDateTime(updatedAt)}` : ""}. Today's adds
+          those that already left to those still scheduled. Tomorrow's is the schedule alone: it
+          reaches about two days ahead and is still being added to, so it can rise as the day nears,
+          and planes are swapped before departure. It is a count only: we hold no total of an
+          airport's departures to set it against.
         </p>
       </Panel>
     </div>
