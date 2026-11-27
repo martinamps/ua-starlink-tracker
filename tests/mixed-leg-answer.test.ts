@@ -75,6 +75,23 @@ function addLogged(tail: string, fn: string, origin: string, destination: string
   );
 }
 
+/** Legs the number was held on, on one earlier date: what makes one "the other leg". */
+function heldTogether(fn: string, legs: [string, string][], daysAgo: number, airline = "UA") {
+  logFlightAssignments(
+    db,
+    airline,
+    "N9PAST",
+    legs.map(([departure_airport, arrival_airport], i) => ({
+      flight_number: fn,
+      departure_airport,
+      arrival_airport,
+      departure_time: at(15 + 3 * i) - (daysAgo + 1) * DAY,
+      arrival_time: at(17 + 3 * i) - (daysAgo + 1) * DAY,
+    })),
+    now - daysAgo * DAY
+  );
+}
+
 beforeAll(() => {
   setAssignmentFetcher(async () => []);
   db = makeFreshDb();
@@ -92,6 +109,14 @@ beforeAll(() => {
   addFlight(db, "N1YES", "UA403", "FLL", at(21), { arrivalAirport: "ORD" });
   addRoute("UA403", "FLL", "ORD", 1051, now - HOUR);
   addRoute("UA403", "DEN", "FLL", 77, now - DAY);
+  heldTogether(
+    "UA403",
+    [
+      ["DEN", "FLL"],
+      ["FLL", "ORD"],
+    ],
+    3
+  );
   // Old routings of the number, one of which would connect (ORD → TUL).
   addRoute("UA403", "ORD", "TUL", 176, now - 150 * DAY);
   addRoute("UA403", "MCI", "ORD", 14, now - 60 * DAY);
@@ -123,6 +148,24 @@ beforeAll(() => {
   addRoute("UA1740", "FLL", "ORD", 90, now - HOUR);
   addRoute("UA1740", "DEN", "FLL", 60, now - DAY);
   addRoute("UA1740", "IAD", "FLL", 20, now - 2 * DAY);
+  for (const daysAgo of [2, 5]) {
+    heldTogether(
+      "UA1740",
+      [
+        ["DEN", "FLL"],
+        ["FLL", "ORD"],
+      ],
+      daysAgo
+    );
+  }
+  heldTogether(
+    "UA1740",
+    [
+      ["IAD", "FLL"],
+      ["FLL", "ORD"],
+    ],
+    1
+  );
 
   // UA2000: one leg held twice that date, on two planes.
   addFlight(db, "N8YES", "UA2000", "ORD", at(15), { arrivalAirport: "FLL" });
@@ -140,6 +183,15 @@ beforeAll(() => {
   addFlight(db, "N1ASYES", "AS1900", "SEA", at(17), { arrivalAirport: "PDX", airline: "AS" });
   addRoute("AS1900", "SEA", "PDX", 60, now - HOUR);
   addRoute("AS1900", "PDX", "SFO", 55, now - DAY);
+  heldTogether(
+    "AS1900",
+    [
+      ["SEA", "PDX"],
+      ["PDX", "SFO"],
+    ],
+    2,
+    "AS"
+  );
   db.query("INSERT INTO meta (key, value) VALUES ('AS:lastUpdated', ?)").run(
     new Date((now - HOUR) * 1000).toISOString()
   );

@@ -39,7 +39,7 @@ import type {
 import { firstReadNote } from "../database/first-read";
 import type { Scope, ScopedReader } from "../database/reader";
 import { rowEvidence } from "../database/sql/equipped";
-import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
+import { TRAILING_WINDOW_DAYS, TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -977,6 +977,78 @@ export function flightDayLegs(
     );
   }
   return [...legs.values()];
+}
+
+/** How far past the asked date a held leg still says what the number flies. */
+const HELD_AHEAD_DAYS = 2;
+const DAY_MS = 86_400_000;
+
+export const legPairKey = (l: { origin: string; destination: string }) =>
+  `${l.origin}>${l.destination}`;
+
+export interface CompanionLeg {
+  origin: string;
+  destination: string;
+  /** legPairKey of every leg held on a date this one was held on too. */
+  heldWith: string[];
+}
+
+/**
+ * The legs a number was held on beside another of its legs on one local date,
+ * within the trailing window and the days still to fly: the only legs that
+ * may stand as "the other leg" of a date we hold part of.
+ *
+ * A route the number was merely seen on recently is not enough. Replayed on
+ * three months of United's own flights (BTS, Jul to Sep 2026) at today's
+ * Starlink share, a leg named because the route cache saw it within 30 days
+ * was flown that day 38% of the time, and how often it had been seen told
+ * nothing: an old city pair has the most sightings. Having been held on one
+ * date with a leg of the answer raised that to 59% and took 9% of dated yes
+ * pages out of a partial answer they had not earned, for 1% more that read a
+ * plain yes with another leg flying.
+ */
+export function legsHeldTogether(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  date: string,
+  now = unixNow()
+): CompanionLeg[] {
+  const day = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(day) || cfg.code === "QR" || cfg.statementRule) return [];
+  const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const variants = buildAirlineFlightNumberVariants(cfg, ensureAirlinePrefix(cfg, flightNumber));
+  const byDate = new Map<string, Map<string, { origin: string; destination: string }>>();
+  for (const r of reader.getHeldLegDays(
+    variants,
+    iso(Math.min(day, now * 1000) - TRAILING_WINDOW_DAYS * DAY_MS),
+    iso(Math.max(day, now * 1000) + HELD_AHEAD_DAYS * DAY_MS)
+  )) {
+    const origin = normalizeAirportCode(r.departure_airport);
+    const destination = normalizeAirportCode(r.arrival_airport);
+    if (!origin || !destination || origin === destination) continue;
+    const legs = byDate.get(r.dep_date) ?? new Map();
+    legs.set(legPairKey({ origin, destination }), { origin, destination });
+    byDate.set(r.dep_date, legs);
+  }
+  const out = new Map<string, CompanionLeg & { days: number; last: string }>();
+  for (const [depDate, legs] of byDate) {
+    if (legs.size < 2) continue;
+    for (const [key, leg] of legs) {
+      const entry = out.get(key) ?? { ...leg, heldWith: [], days: 0, last: "" };
+      entry.days++;
+      if (depDate > entry.last) entry.last = depDate;
+      for (const other of legs.keys()) {
+        if (other !== key && !entry.heldWith.includes(other)) entry.heldWith.push(other);
+      }
+      out.set(key, entry);
+    }
+  }
+  // Two routings into one airport stand for one leg, and the reader takes the
+  // first: the one held beside others on more dates, then the later.
+  return [...out.values()]
+    .sort((a, b) => b.days - a.days || b.last.localeCompare(a.last))
+    .map(({ origin, destination, heldWith }) => ({ origin, destination, heldWith }));
 }
 
 /**

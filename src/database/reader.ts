@@ -54,6 +54,7 @@ import {
 import {
   type AssignmentLogRow,
   type DepartureReading,
+  type HeldLegDay,
   type LoggedAircraft,
   type ResolvedLeg,
   type ReturnedDeparture,
@@ -61,6 +62,7 @@ import {
   type SameDayAlternativesQuery,
   getAssignmentHistory,
   getFlownAssignmentHistory,
+  getHeldLegDays,
   getListedSightings,
   getLoggedAircraft,
   getSameDayStarlinkAlternatives,
@@ -447,6 +449,8 @@ export interface ScopedReader {
   getTailStarlinkFlag(tail: string, airline: string): number | null;
   /** The same rows for a past date, read from the year-long flown record too. */
   getFlownAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
+  /** The flight's held legs by local date, in [fromDate, toDate]. */
+  getHeldLegDays(variants: readonly string[], fromDate: string, toDate: string): HeldLegDay[];
   /** A route, a scheduled leg or a logged assignment exists under one of the spellings. */
   isKnownFlightNumber(variants: readonly string[]): boolean;
   getSameDayStarlinkAlternatives(q: SameDayAlternativesQuery): SameDayAlternative[];
@@ -720,6 +724,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getNamedOfType: (family) => (scope === "ALL" ? 0 : namedOfType(db, scope, family)),
     getTailStarlinkFlag: (tail, airline) => tailStarlinkFlag(db, tail, airline),
     getFlownAssignmentHistory: (v, d) => getFlownAssignmentHistory(db, airlines, v, d),
+    getHeldLegDays: (v, from, to) =>
+      getHeldLegDays(db, withOperatingPartners(airlines), v, from, to),
     isKnownFlightNumber: (v) => isKnownFlightNumber(db, airlines, v),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
     logResolvedAssignments: (fn, legs, now) => logResolvedAssignments(db, airlines, fn, legs, now),

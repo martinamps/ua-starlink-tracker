@@ -126,8 +126,10 @@ import {
   legField,
   legNote,
   legOffRoute,
+  legPairKey,
   legPrefix,
   legSubject,
+  legsHeldTogether,
   normalizeAirportCode,
   parseLegQuery,
   recordFlightLookup,
@@ -262,7 +264,7 @@ import {
   ROUTE_AIRPORT_RE,
 } from "../database/database";
 import { contradictingWifi } from "../database/sql/equipped";
-import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
+import { unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   classifyLookupCaller,
@@ -4083,17 +4085,24 @@ function datedDayLegs(
   legParse: LegParse
 ): DayLeg[] {
   if (legParse.leg || body.error || body.hasStarlink === false || cfg.statementRule) return [];
-  const now = unixNow();
-  const legs = flightDayLegs(cfg, reader, flightNumber, date, now);
-  // The number's recent routes say a leg exists and nothing of its aircraft:
-  // the only trace of a leg flown by a plane we hold no schedule for.
-  for (const r of reader.getFlightRoutePairs(buildFlightLookupVariants(cfg, flightNumber))) {
-    const seen = r.last_seen_at ?? 0;
-    if (r.scheduled !== 1 && (seen > now || seen < now - TRAILING_WINDOW_SEC)) continue;
-    const origin = toIata(r.departure_airport);
-    const destination = toIata(r.arrival_airport);
+  const legs = flightDayLegs(cfg, reader, flightNumber, date, unixNow());
+  // A leg we hold no row for on this date is named only where the number was
+  // held on it beside a leg of this date (legsHeldTogether): the one trace of
+  // a leg flown by a plane we hold no schedule for. With no leg held yet, the
+  // browser's re-check picks among the legs the number flies together.
+  const heldToday = new Set(legs.map(legPairKey));
+  for (const f of body.flights ?? []) {
+    if (!f.departure_airport || !f.arrival_airport) continue;
+    heldToday.add(
+      legPairKey({ origin: toIata(f.departure_airport), destination: toIata(f.arrival_airport) })
+    );
+  }
+  for (const c of legsHeldTogether(cfg, reader, flightNumber, date)) {
+    const origin = toIata(c.origin);
+    const destination = toIata(c.destination);
     if (!/^[A-Z]{3}$/.test(origin) || !/^[A-Z]{3}$/.test(destination)) continue;
-    if (legs.some((l) => l.origin === origin && l.destination === destination)) continue;
+    if (heldToday.has(legPairKey({ origin, destination }))) continue;
+    if (heldToday.size > 0 && !c.heldWith.some((k) => heldToday.has(k))) continue;
     legs.push({
       origin,
       destination,

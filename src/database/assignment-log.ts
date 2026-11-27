@@ -605,6 +605,38 @@ export function getFlownAssignmentHistory(
   ).filter(printable);
 }
 
+export interface HeldLegDay {
+  dep_date: string;
+  departure_airport: string;
+  arrival_airport: string;
+}
+
+/**
+ * Every leg held under the flight, once per local date it was held on, for
+ * dates in [fromDate, toDate]: the log for the last week and what is still to
+ * fly, the flown record before that. Which legs share a date is the only
+ * evidence we keep that a number is sold on two city pairs on one day; the
+ * route cache counts sightings and has no dates.
+ */
+export function getHeldLegDays(
+  db: Database,
+  airlines: readonly string[],
+  variants: readonly string[],
+  fromDate: string,
+  toDate: string
+): HeldLegDay[] {
+  if (variants.length === 0) return [];
+  const a = airlineIn(airlines);
+  const from = (table: string) =>
+    `SELECT dep_date, departure_airport, arrival_airport FROM ${table}
+     WHERE ${a.sql} AND flight_number IN (${placeholders(variants)})
+       AND dep_date >= ? AND dep_date <= ? AND arrival_airport IS NOT NULL`;
+  const params = [...a.params, ...variants, fromDate, toDate];
+  return db
+    .query(`${from("flight_assignment_log")} UNION ${from("flown_assignments")}`)
+    .all(...params, ...params) as HeldLegDay[];
+}
+
 /**
  * Has this airline's flight number ever reached our store: a cached route, a
  * scheduled leg, or a logged assignment on any date. Gates the answers we give
