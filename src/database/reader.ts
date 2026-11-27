@@ -152,6 +152,7 @@ import {
   getRouteSummary,
   getRoutesForFlightVariants,
   getServedRoutePairs,
+  getSheetListedTails,
   getSitemapFlights,
   getSitemapRoutes,
   getStarlinkPlaneByTail,
@@ -297,6 +298,8 @@ export interface ScopedReader {
   getFleetDiscoveryStats(): FleetDiscoveryStats;
   getConfirmedFleetTails(): ReturnType<typeof getConfirmedFleetTails>;
   getPendingFleetTails(): ReturnType<typeof getPendingFleetTails>;
+  /** United's community sheet, whatever this reader's scope. */
+  getSheetListedTails(): ReturnType<typeof getSheetListedTails>;
   getVerificationSummary(): ReturnType<typeof getVerificationSummary>;
   getWifiMismatches(): WifiMismatch[];
 
@@ -628,6 +631,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, airlines),
     getConfirmedFleetTails: () => getConfirmedFleetTails(db, airlines),
     getPendingFleetTails: () => getPendingFleetTails(db, airlines),
+    getSheetListedTails: () => getSheetListedTails(db),
     getVerificationSummary: () => getVerificationSummary(db, airlines),
     getWifiMismatches: () => getWifiMismatches(db, airlines),
 

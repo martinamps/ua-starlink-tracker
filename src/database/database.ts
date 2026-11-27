@@ -1065,6 +1065,24 @@ function rosterReplaceRefusal(newCount: number, existingCount: number): string |
  * floor COUNT and the destructive DELETE so they can never drift apart. */
 export const SHEET_ROSTER_WHERE = "sheet_gid != 'discovery' AND airline = ?";
 
+/** The tails United's community sheet lists, as the last accepted scrape
+ * stored them, and when that scrape landed. Read from the table rather than
+ * held in memory: jobs skip a boot run that isn't due, so a process can serve
+ * for an hour before its first scrape, and a memory-only list made every
+ * verified tail look missing from the sheet in that hour. */
+export function getSheetListedTails(db: Database): {
+  tails: Set<string>;
+  updatedAt: number | null;
+} {
+  const rows = db
+    .query(`SELECT TailNumber FROM starlink_planes WHERE ${SHEET_ROSTER_WHERE}`)
+    .all("UA") as { TailNumber: string }[];
+  return {
+    tails: new Set(rows.map((r) => r.TailNumber)),
+    updatedAt: readSourceState(db, "sheet_scrape", "UA")?.lastSuccessAt ?? null,
+  };
+}
+
 /** Returns the refusal reason when the parsed roster fails the sanity floor
  * (nothing written), or null when the replace proceeded. */
 export function updateDatabase(

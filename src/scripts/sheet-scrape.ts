@@ -21,7 +21,7 @@ import { failureKindOf, recordSourceFailure, recordSourceSuccess } from "../data
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { JobRunContext } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
-import { fetchAllSheets, updateSpreadsheetCache } from "../utils/utils";
+import { fetchAllSheets } from "../utils/utils";
 import { pingIndexNow } from "./indexnow";
 import { computePrecision, emitPrecisionGauges } from "./precision-backtest";
 import { computeSurfaceContradictions, emitSweepGauges } from "./surface-sweep";
@@ -83,11 +83,6 @@ export async function runSheetScrape(
             status: "aborted",
           });
         } else {
-          updateSpreadsheetCache(
-            starlinkAircraft
-              .map((a) => a.TailNumber)
-              .filter((t): t is string => typeof t === "string" && t.length > 0)
-          );
           metrics.increment(COUNTERS.SCRAPER_SYNC, {
             source: "sheet",
             airline: normalizeAirlineTag("UA"),
