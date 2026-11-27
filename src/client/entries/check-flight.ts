@@ -4,9 +4,15 @@
  * answers from the database alone; /api/check-flight may also find the tail
  * from a live schedule lookup close to departure, which can firm the answer up.
  */
-import { type AnswerContext, type CheckFlightBody, renderFlightAnswer } from "../flight-answer";
+import {
+  type AnswerContext,
+  type CheckFlightBody,
+  answerTails,
+  renderFlightAnswer,
+} from "../flight-answer";
 import { wireFlightSearchForms } from "../flight-search";
 import { onReady } from "../ready";
+import { type Seen, browserStore, rememberCheck } from "../recent-checks";
 import { wireShareControls } from "../share";
 
 interface CheckFlightConfig extends Omit<AnswerContext, "zoneFor" | "nowSec"> {
@@ -15,6 +21,29 @@ interface CheckFlightConfig extends Omit<AnswerContext, "zoneFor" | "nowSec"> {
   zones: Record<string, string>;
   /** The leg the page answers; absent asks for every leg, as the page did. */
   leg?: { origin?: string; destination?: string };
+  /** What the served answer said, for the homepage's "Your flights"; absent
+   * for an answer not worth coming back to (an error, a date already over). */
+  seen?: Seen;
+}
+
+/** Keep this flight, and what its answer just said, in this browser. */
+function remember(config: CheckFlightConfig, seen: Seen): void {
+  const keep = () =>
+    rememberCheck(
+      browserStore(),
+      {
+        f: config.flightNumber,
+        d: config.date,
+        o: config.leg?.origin,
+        a: config.leg?.destination,
+        seen,
+      },
+      Math.floor(Date.now() / 1000)
+    );
+  // A page the browser drew ahead of a tap that may never come was not looked at.
+  const doc = document as Document & { prerendering?: boolean };
+  if (doc.prerendering) document.addEventListener("prerenderingchange", keep, { once: true });
+  else keep();
 }
 
 function zoneLookup(zones: Record<string, string>): (airport: string) => string | undefined {
@@ -41,7 +70,12 @@ function refreshAnswer(config: CheckFlightConfig): void {
     .then((res) => res.json() as Promise<CheckFlightBody>)
     .then((body) => {
       // A failed live check keeps the server's answer rather than replacing it with an error.
-      if (!body.error) target.innerHTML = renderFlightAnswer(body, ctx).html;
+      if (body.error) return;
+      const answer = renderFlightAnswer(body, ctx);
+      target.innerHTML = answer.html;
+      if (config.seen) {
+        remember(config, { tone: answer.tone, firm: answer.firm, tails: answerTails(body) });
+      }
     })
     .catch(() => {})
     .finally(() => target.removeAttribute("aria-busy"));
@@ -63,6 +97,7 @@ function init(): void {
   if (!raw) return;
   try {
     const config = JSON.parse(raw) as CheckFlightConfig;
+    if (config.seen) remember(config, config.seen);
     if (config.refresh) refreshAnswer(config);
   } catch {
     // Server-rendered answer stands.
