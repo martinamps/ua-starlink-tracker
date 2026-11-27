@@ -21,7 +21,7 @@ import { buildRouteNetwork } from "../src/components/routes-map/network";
 import { getRouteNetworkRows } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { MAP_HEIGHT, MAP_WIDTH, onMap, projectToMap } from "../src/utils/map-projection";
-import { addFlight, addPlane, bodyOf, makeFreshDb, sectionOf } from "./helpers";
+import { addFlight, addIndexingHistory, addPlane, bodyOf, makeFreshDb, sectionOf } from "./helpers";
 
 const UA = SITES.united.canonicalHost;
 const HOUR = 3600;
@@ -40,6 +40,8 @@ beforeAll(() => {
   addFlight(db, "N2VER", "UA4", "SFO", now + 6 * HOUR, { arrivalAirport: "EWR" });
   // Not a Starlink plane: never on the map.
   addFlight(db, "N9NONE", "UA9", "IAH", now + HOUR, { arrivalAirport: "MCO" });
+  // Flown history, so each departing airport's page indexes and is linked.
+  for (const code of ["DEN", "ORD", "SFO"]) addIndexingHistory(db, "N1VER", code, "IAH", now);
   app = createApp(db);
 });
 
@@ -314,6 +316,7 @@ describe("/routes map clicks", () => {
         addFlight(d, "N3VER", `UA${n++}`, code, now + HOUR + n * 60, {
           arrivalAirport: code === "DEN" ? "ORD" : "DEN",
         });
+    for (const [code] of DENSE) addIndexingHistory(d, "N3VER", code, "IAH", now);
     // Arrivals only: drawn, but no page to open.
     addFlight(d, "N3VER", `UA${n++}`, "DEN", now + 2 * HOUR, { arrivalAirport: "HPN" });
     dense = createApp(d);

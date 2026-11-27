@@ -366,9 +366,13 @@ describe("the home page's airport bars", () => {
     const bars = body.match(/id="airports"[\s\S]*?<\/ol>/)?.[0] ?? "";
     expect(bars).not.toBe("");
     for (const code of ["ORD", "IAH", "MDW"]) {
-      expect(bars).toContain(`href="/routes/${code}"`);
       expect(count(bars, `>${airportPlaceName(code)}<`), code).toBe(1);
     }
+    // Linked only where the airport's page indexes: ORD has the flown history,
+    // IAH and MDW are thin and stay plain text.
+    expect(bars).toContain('href="/routes/ORD"');
+    expect(bars).toContain(">IAH</span>");
+    expect(bars).not.toContain('href="/routes/IAH"');
     // O'Hare and Midway are told apart by name as well as by code.
     expect(airportPlaceName("ORD")).not.toBe(airportPlaceName("MDW"));
     expect(bars).not.toMatch(/\bnull\b|\bundefined\b/);
@@ -386,7 +390,8 @@ describe("the home page's airport bars", () => {
       ).text()
     );
     const bars = doc.match(/id="airports"[\s\S]*?<\/ol>/)?.[0] ?? "";
-    expect(bars).toContain(`>${UNKNOWN}</a>`);
+    // Thin here, so plain text rather than a link.
+    expect(bars).toContain(`>${UNKNOWN}</span>`);
     expect(bars).not.toMatch(/<span[^>]*text-xs[^>]*><\/span>|\bnull\b|\bundefined\b/);
   });
 });

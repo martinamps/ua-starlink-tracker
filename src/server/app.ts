@@ -3577,6 +3577,18 @@ function buildFlightFacts(
   };
 }
 
+/**
+ * `/routes/{airport}` where that page indexes (the sitemap's rule), else null:
+ * a thin airport's page serves but is noindex, so a link to it spends crawl
+ * and passes nothing. Undefined where this site has no airport pages.
+ */
+function indexedAirportHref(
+  ctx: Pick<RequestContext, "reader" | "site">
+): ((airport: string) => string | null) | undefined {
+  if (!ctx.site.features.airportPages) return undefined;
+  return (airport) => (airportIndexes(ctx.reader, airport) ? `/routes/${airport}` : null);
+}
+
 /** The flight's departure airports whose page indexes, current legs first, at most three. */
 function flightAirportLinks(ctx: RequestContext, routes: FlightFacts["routes"]): string[] {
   if (!ctx.site.features.airportPages) return [];
@@ -4751,8 +4763,7 @@ function tailPage(ctx: RequestContext): Promise<Response> | Response | null {
     },
     flightLinks: features.checkFlightPage,
     routeLinks: features.routePlannerPage,
-    airportHref: (airport) =>
-      features.airportPages && airportIndexes(ctx.reader, airport) ? `/routes/${airport}` : null,
+    airportHref: indexedAirportHref(ctx),
   });
   if (!model) return null;
   const wayOn: PageLink[] = [
@@ -4974,6 +4985,7 @@ const routesPage: Handler = (ctx) => {
         : undefined,
       popularFlights,
       updatedAt: ctx.reader.getLastUpdatedRaw(),
+      airportHref: indexedAirportHref(ctx),
       network: routeNetwork(ctx.reader),
       basemapHref: ROUTES_BASEMAP_HREF,
     }
@@ -5819,6 +5831,7 @@ const homePage: Handler = async (ctx) => {
       weeklyInstalls: weekly,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
+      airportHref: indexedAirportHref(ctx),
       showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
       shareCard: resolveShareCard(site.scope),
       pageLinks: pageNavLinks(ctx, "/"),

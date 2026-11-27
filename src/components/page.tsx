@@ -47,6 +47,8 @@ interface PageProps {
   recentInstalls?: RecentInstall[];
   flightsByTail?: Record<string, Flight[]>;
   airportDepartures?: AirportDepartures;
+  /** An airport's page where it indexes, else null (plain text). */
+  airportHref?: (airport: string) => string | null;
   showPassengerBanner?: boolean;
   installs30d?: number;
   installsPerMonth?: number | null;
@@ -187,6 +189,7 @@ export default function Page({
   recentInstalls,
   flightsByTail = {},
   airportDepartures,
+  airportHref,
   showPassengerBanner = false,
   installs30d,
   installsPerMonth,
@@ -318,7 +321,7 @@ export default function Page({
           }
           wide
         >
-          <AirportBars rows={airportDepartures.rows} linked={features.airportPages} />
+          <AirportBars rows={airportDepartures.rows} airportHref={airportHref} />
         </Section>
       )}
 

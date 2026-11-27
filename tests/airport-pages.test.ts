@@ -27,7 +27,7 @@ import { logFlightAssignments } from "../src/database/assignment-log";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp, parseAirportPath } from "../src/server/app";
 import { airportLocalDate, secondsToFirstLocalMidnight } from "../src/utils/airport-tz";
-import { addFlight, addPlane, makeFreshDb, req } from "./helpers";
+import { addFlight, addPlane, makeFreshDb, req, sectionOf } from "./helpers";
 
 const UA = SITES.united.canonicalHost;
 const HOUR = 3600;
@@ -386,6 +386,36 @@ describe("links into the family", () => {
     for (const m of body.matchAll(/href="\/routes\/([A-Z]{3})"/g)) {
       expect(listed, m[1]).toContain(m[1]);
     }
+  });
+
+  // The same rule on the lists that rank airports: GJT has departures in the
+  // window, so it shows, but as plain text, never a link to its noindex page.
+  const linksOnlyIndexed = async (section: string) => {
+    expect(section).toContain("GJT");
+    expect(section).not.toContain('href="/routes/GJT"');
+    expect(section).toContain('href="/routes/DEN"');
+    const listed = await sitemapAirports();
+    for (const m of section.matchAll(/href="\/routes\/([A-Z]{3})"/g)) {
+      expect(listed, m[1]).toContain(m[1]);
+    }
+  };
+
+  test("home's airport list links only airports whose page indexes", async () => {
+    await linksOnlyIndexed(sectionOf(await page("/"), "Starlink departures by airport"));
+  });
+
+  test("the /routes ranking links only airports whose page indexes", async () => {
+    await linksOnlyIndexed(
+      sectionOf(await page("/routes"), "Airports with the most Starlink departures")
+    );
+  });
+
+  test("the /routes map links only airports whose page indexes", async () => {
+    const map = sectionOf(await page("/routes"), "The Starlink network");
+    await linksOnlyIndexed(map);
+    // GJT is still drawn, as a dot that takes no clicks.
+    expect(map).toMatch(/<circle [^>]*><title>GJT: /);
+    expect(map).toContain("airports on the map with a page");
   });
 
   test("a flight page links the airport its legs leave from", async () => {
