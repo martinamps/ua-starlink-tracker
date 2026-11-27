@@ -14,6 +14,7 @@ import {
   HUB_SHARE,
   airportsUnderTap,
   clearHub,
+  fingerRadius,
   tapIsOurs,
 } from "../src/client/routes-map-pick";
 import { buildRouteNetwork } from "../src/components/routes-map/network";
@@ -219,6 +220,27 @@ describe("airportsUnderTap", () => {
   });
 });
 
+describe("fingerRadius", () => {
+  test("pinched in, the fingertip covers less of the map", () => {
+    expect(fingerRadius(1)).toBe(FINGER_RADIUS_PX);
+    expect(fingerRadius(3)).toBe(FINGER_RADIUS_PX / 3);
+    // A layout narrower than the screen reports a scale under 1: the
+    // fingertip never grows past its own size.
+    expect(fingerRadius(0.5)).toBe(FINGER_RADIUS_PX);
+  });
+
+  test("zoomed far enough, a tap on Dulles opens Dulles alone", () => {
+    // Dulles, Reagan and Baltimore as an upright phone draws them, in page px.
+    const dc = [
+      { code: "IAD", x: 100, y: 100 },
+      { code: "DCA", x: 104, y: 101 },
+      { code: "BWI", x: 106, y: 96 },
+    ];
+    expect(airportsUnderTap(dc, 100, 100).map((d) => d.code)).toEqual(["IAD", "DCA", "BWI"]);
+    expect(airportsUnderTap(dc, 100, 100, fingerRadius(5)).map((d) => d.code)).toEqual(["IAD"]);
+  });
+});
+
 /**
  * Hit-tests the rendered SVG the way a browser does: of the circles that take
  * input at that width, the last one painted under the point wins. Dense hubs
@@ -252,6 +274,8 @@ describe("clearHub", () => {
     expect(clearHub(airportsUnderTap([ord], 100, 100), 100, 100)).toBeNull();
     const sjc = { code: "SJC", x: 104, y: 101, departures: 2, radius: 2 };
     expect(hub([ord, sjc], 100, 100)).toBeNull();
+    // Pinched in, the clearance shrinks with the fingertip.
+    expect(clearHub([ord, { ...mke, y: 96 }], 100, 100, HUB_CLEAR_PX / 3)?.code).toBe("ORD");
     expect(HUB_SHARE).toBeGreaterThanOrEqual(5);
     expect(HUB_CLEAR_PX).toBeGreaterThanOrEqual(6);
   });
