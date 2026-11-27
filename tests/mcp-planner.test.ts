@@ -458,3 +458,112 @@ describe("MCP text edge cases (snapshot)", () => {
     expect(text).toContain("not a valid flight number");
   });
 });
+
+// The planner once kept one flight number per pair, the best odds with no
+// time, so three connections in four showed a second flight that had left
+// before the first one landed. Later legs now leave after the previous one
+// usually lands (plus a minimum connection), or the connection isn't shown.
+describe("synthetic connections at usual times", () => {
+  const DATE = "2027-06-11";
+  const H = 3600;
+  let sdb: Database;
+  let factory: ReturnType<typeof createReaderFactory>;
+  let reader: Reader;
+  let n = 0;
+
+  const leg = (fn: string, dep: string, arr: string, depIso: string, hours: number) => {
+    const tail = `N7${String(++n).padStart(3, "0")}`;
+    addPlane(sdb, tail, "Starlink");
+    const t = utc(depIso);
+    sdb
+      .query(
+        `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'UA')`
+      )
+      .run(tail, fn, dep, arr, t, t + Math.round(hours * H), t);
+  };
+
+  beforeAll(() => {
+    sdb = makeSyntheticDb();
+    // SFO 8:00 AM → DEN lands 11:30 AM. 6002 leaves DEN before that; 6003 at 1:00 PM.
+    leg("UA6001", "SFO", "DEN", `${DATE}T15:00:00Z`, 2.5);
+    leg("UA6002", "DEN", "BOS", `${DATE}T16:30:00Z`, 4);
+    leg("UA6003", "DEN", "BOS", `${DATE}T19:00:00Z`, 4);
+    // SFO → IAH lands 2:00 PM; the only IAH→BOS left at 1:00 PM.
+    leg("UA6011", "SFO", "IAH", `${DATE}T15:00:00Z`, 4);
+    leg("UA6012", "IAH", "BOS", `${DATE}T18:00:00Z`, 3.5);
+    // A red-eye: LAX 11:00 PM → IAH 4:30 AM, on to MIA at 6:30 AM the next day.
+    leg("UA6021", "LAX", "IAH", "2027-06-12T06:00:00Z", 3.5);
+    leg("UA6022", "IAH", "MIA", "2027-06-12T11:30:00Z", 2.5);
+    factory = createReaderFactory(sdb);
+    reader = factory("UA");
+  });
+  afterAll(() => sdb.close());
+
+  const mid = () => utc(`${DATE}T12:00:00Z`);
+  const plan = (o: string, d: string) =>
+    planItinerary(reader, o, d, { maxItineraries: 12, targetDateUnix: mid() });
+
+  test("a later leg is the one that leaves after the first lands", () => {
+    const viaDen = plan("SFO", "BOS").find((it) => it.via.join(">") === "DEN");
+    expect(viaDen).toBeDefined();
+    if (!viaDen) return;
+    expect(viaDen.legs.map((l) => l.flight_number)).toEqual(["UA6001", "UA6003"]);
+    expect(viaDen.schedule).toBe("same_day");
+    expect(viaDen.connection_minutes).toEqual([90]);
+    expect(viaDen.elapsed_hours).toBeCloseTo(8, 6);
+    expect(viaDen.legs[0].typical_departure).toBe("8:00 AM");
+    expect(viaDen.legs[0].typical_arrival).toBe("11:30 AM");
+    expect(viaDen.legs[1].typical_departure).toBe("1:00 PM");
+    expect(viaDen.legs.map((l) => l.date)).toEqual([DATE, DATE]);
+  });
+
+  test("a hub whose only onward flight has left is not offered", () => {
+    for (const it of plan("SFO", "BOS")) {
+      expect(it.via.includes("IAH") && it.coverage === "full").toBe(false);
+    }
+  });
+
+  test("every timed connection leaves at least an hour after the previous leg lands", () => {
+    for (const [o, d] of [
+      ["SFO", "BOS"],
+      ["LAX", "MIA"],
+    ]) {
+      for (const it of plan(o, d).filter((i) => i.schedule === "same_day")) {
+        for (const wait of it.connection_minutes ?? []) {
+          expect(wait).not.toBeNull();
+          expect(wait as number).toBeGreaterThanOrEqual(60);
+          expect(wait as number).toBeLessThanOrEqual(6 * 60);
+        }
+      }
+    }
+  });
+
+  test("a leg that flies the next day carries that day's date", () => {
+    const viaIah = plan("LAX", "MIA").find((it) => it.via.join(">") === "IAH");
+    expect(viaIah).toBeDefined();
+    if (!viaIah) return;
+    expect(viaIah.schedule).toBe("same_day");
+    expect(viaIah.legs.map((l) => l.date)).toEqual([DATE, "2027-06-12"]);
+    expect(viaIah.connection_minutes).toEqual([120]);
+  });
+
+  test("an undated plan keeps the times but names no date", () => {
+    const viaDen = planItinerary(reader, "SFO", "BOS", { maxItineraries: 12 }).find(
+      (it) => it.via.join(">") === "DEN"
+    );
+    expect(viaDen?.legs.map((l) => l.flight_number)).toEqual(["UA6001", "UA6003"]);
+    expect(viaDen?.legs.every((l) => l.date === undefined)).toBe(true);
+  });
+
+  test("the MCP planner prints each leg's usual time and the connection", async () => {
+    const json = await mcpDirect("UA", factory, "tools/call", {
+      name: "plan_starlink_itinerary",
+      arguments: { origin: "SFO", destination: "BOS", date: DATE },
+    });
+    const text: string = json.result.content[0].text;
+    expect(text).toContain("usually 8:00 AM–11:30 AM");
+    expect(text).toContain("to connect in DEN");
+    expect(text).not.toContain("UA6002");
+  });
+});
