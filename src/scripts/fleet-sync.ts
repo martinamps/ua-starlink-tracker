@@ -16,8 +16,8 @@ import {
 } from "../database/database";
 import { recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
-import { type JobHandle, startJob } from "../utils/job-runner";
-import { info, error as logError } from "../utils/logger";
+import { type JobHandle, bootDelayMs, startJob, usableStampMs } from "../utils/job-runner";
+import { info, error as logError, warn } from "../utils/logger";
 import { sleep } from "../utils/sleep";
 import { launchFR24Browser, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 
@@ -392,18 +392,28 @@ const FLEET_SYNC_META_KEY = "fleetSyncStartedAt";
 
 /** Delay the boot run until 24h after the last one. Every deploy (the daily OG
  * refresh included) re-ran the full FR24 scrape 5 min after boot: 14 runs in
- * 9.5 days, 3 on 2026-09-20. A missing or unparseable stamp runs promptly. */
+ * 9.5 days, 3 on 2026-09-20. A missing, unparseable or future stamp runs promptly. */
 export function fleetSyncInitialDelayMs(lastStartedAt: string | null, nowMs = Date.now()): number {
-  const last = lastStartedAt ? Date.parse(lastStartedAt) : Number.NaN;
-  if (!Number.isFinite(last)) return FLEET_SYNC_MIN_DELAY_MS;
-  return Math.max(FLEET_SYNC_MIN_DELAY_MS, last + FLEET_SYNC_INTERVAL_MS - nowMs);
+  const last = lastStartedAt ? Date.parse(lastStartedAt) : null;
+  return bootDelayMs(FLEET_SYNC_MIN_DELAY_MS, last, FLEET_SYNC_INTERVAL_MS, nowMs);
 }
 
 /** Daily FR24 roster sync keeping united_fleet populated. */
 export function startFleetSync(db: Database): JobHandle {
   let initialDelayMs = FLEET_SYNC_MIN_DELAY_MS;
   try {
-    initialDelayMs = fleetSyncInitialDelayMs(getMeta(db, FLEET_SYNC_META_KEY, "ALL"));
+    const stamp = getMeta(db, FLEET_SYNC_META_KEY, "ALL");
+    const stampMs = stamp ? Date.parse(stamp) : null;
+    if (
+      stampMs !== null &&
+      Number.isFinite(stampMs) &&
+      usableStampMs(stampMs, Date.now()) === null
+    ) {
+      warn(
+        `Fleet sync: run stamp ${stamp} is ahead of now; ignoring it and running on the boot schedule`
+      );
+    }
+    initialDelayMs = fleetSyncInitialDelayMs(stamp);
   } catch (err) {
     logError("Fleet sync: could not read last-run stamp; running on the boot schedule", err);
   }

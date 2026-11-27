@@ -57,18 +57,31 @@ export interface JobStampStore {
   write(name: string, ms: number): void;
 }
 
+/** A stamp up to this far ahead of now is clock skew between writer and
+ * reader, and counts as a run that just started. */
+export const STAMP_SKEW_TOLERANCE_MS = 60_000;
+
+/** The stamp to schedule from, or null to run on the usual boot delay. A stamp
+ * further ahead than the skew tolerance was written while the clock ran ahead,
+ * or by a bad write; trusting it would hold the job back past its due time on
+ * every restart until real time caught up. */
+export function usableStampMs(lastStartMs: number | null, nowMs: number): number | null {
+  if (lastStartMs === null || !Number.isFinite(lastStartMs)) return null;
+  if (lastStartMs > nowMs + STAMP_SKEW_TOLERANCE_MS) return null;
+  return Math.min(lastStartMs, nowMs);
+}
+
 /** First tick after boot: the usual delay, or later if the last run started
- * less than an interval ago. A future stamp (clock skew) waits one interval
- * at most, never longer. */
+ * less than an interval ago. */
 export function bootDelayMs(
   baseDelayMs: number,
   lastStartMs: number | null,
   intervalMs: number,
   nowMs: number
 ): number {
-  if (lastStartMs === null || !Number.isFinite(lastStartMs)) return baseDelayMs;
-  const untilDue = Math.min(intervalMs, lastStartMs + intervalMs - nowMs);
-  return Math.max(baseDelayMs, untilDue);
+  const last = usableStampMs(lastStartMs, nowMs);
+  if (last === null) return baseDelayMs;
+  return Math.max(baseDelayMs, last + intervalMs - nowMs);
 }
 
 export interface JobHandle {
@@ -127,10 +140,17 @@ export function startJob(opts: JobOptions): JobHandle {
     } catch (err) {
       error(`[job:${name}] could not read run stamp; running on the boot schedule`, err);
     }
-    const delay = bootDelayMs(initialDelayMs ?? intervalMs, last, intervalMs, clock.now());
+    const bootNow = clock.now();
+    if (last !== null && Number.isFinite(last) && usableStampMs(last, bootNow) === null) {
+      warn(
+        `[job:${name}] run stamp ${new Date(last).toISOString()} is ahead of now; ignoring it and running on the boot schedule`
+      );
+      last = null;
+    }
+    const delay = bootDelayMs(initialDelayMs ?? intervalMs, last, intervalMs, bootNow);
     if (last !== null && delay > (initialDelayMs ?? intervalMs)) {
       info(
-        `[job:${name}] last run ${Math.round((clock.now() - last) / 60000)}min ago; next in ${Math.round(delay / 60000)}min`
+        `[job:${name}] last run ${Math.round((bootNow - last) / 60000)}min ago; next in ${Math.round(delay / 60000)}min`
       );
     }
     let interval: ReturnType<typeof setInterval> | null = null;
