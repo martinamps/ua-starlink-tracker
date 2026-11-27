@@ -128,7 +128,7 @@ export function departureLocalDate(departureAirport: string, departureTime: numb
  * be listed under two airlines; the logging airline's listing wins, and a
  * partner leg (AS832 on a Hawaiian tail) falls back to the tail's own.
  */
-function tailStarlinkFlag(db: Database, tailNumber: string, airline: string): number | null {
+export function tailStarlinkFlag(db: Database, tailNumber: string, airline: string): number | null {
   const listed = db
     .query(
       `SELECT verified_wifi, ${modHoldSql("starlink_planes.TailNumber", "starlink_planes.airline")} AS in_mod

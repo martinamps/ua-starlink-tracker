@@ -16,6 +16,7 @@ import { watchFeedEnabled } from "../utils/ics";
 import { PopularFlightsLinks } from "./atoms";
 import { FlightFactBlocks } from "./check-flight/fact-blocks";
 import { SWAP_CAVEAT, firmLead } from "./check-flight/firm-lead";
+import { PlaneSwapNote } from "./check-flight/plane-swap";
 import type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
 import { usualSummary } from "./check-flight/usual";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, scriptSafeJson } from "./faq";
@@ -309,6 +310,8 @@ export default function CheckFlightPage({
 
       {answer && (
         <Section bare>
+          {/* Above the card: a changed plane is what a traveller who checked before needs first. */}
+          {answer.firm && dated?.swap && <PlaneSwapNote swap={dated.swap} />}
           <div
             id="flight-answer"
             aria-live="polite"
