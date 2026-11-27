@@ -287,7 +287,17 @@ Background job spans:
 - `fleet_discovery.verify_plane` - Single plane discovery check
 
 HTTP spans:
-- `http.request` - All incoming HTTP requests (API routes and home page)
+- `web.request` - Every incoming HTTP request (`http.request` is dd-trace's outbound fetch span)
+
+### No visitor addresses
+
+No span, log line or metric carries a visitor's IP address or raw user agent.
+`web.request` spans carry `client_class` (and `ext_version` for the extension)
+from `requestClientTags`, the same words the request metric uses. The tracer is
+initialised with `clientIpEnabled: false` and `headerTags: []`, so neither
+`DD_TRACE_CLIENT_IP_ENABLED` nor `DD_TRACE_HEADER_TAGS` can turn collection back
+on. `tests/no-visitor-ips.test.ts` fails if a request's span or log line holds
+the caller's address or user agent again.
 
 ### Common Tags
 

@@ -6377,13 +6377,12 @@ export function createApp(
         span.setTag("http.route", route);
         span.setTag("resource.name", `${req.method} ${route}`);
         span.setTag("tenant", tenantScope(tenant));
-        // A report's trace would otherwise put the address and browser next to
-        // the moment a flight number was stored, which the banner says we don't keep.
-        const anonymous = route === "/api/passenger-probe";
-        if (!anonymous) span.setTag("http.client_ip", ip);
+        // No visitor address or raw user agent on any span: the counts and the
+        // visitor class are all the dashboards read, and a community tracker has
+        // no business shipping who-asked to a third party. The class words are
+        // the same bounded ones the request metric carries.
+        span.addTags(requestClientTags(req, url));
         if (onStarlinkIp) span.setTag("starlink_ip", true);
-        const ua = req.headers.get("user-agent");
-        if (ua && !anonymous) span.setTag("http.useragent", ua);
         // The requested path, not just the matched route. Without it "which
         // URLs are 404ing" is unanswerable — the span only carried the matched
         // prefix, and an unmatched path carried "/*". Pathname only: query

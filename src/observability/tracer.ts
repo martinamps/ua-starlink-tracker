@@ -50,6 +50,28 @@ const noopTracer: TracerLike = {
   },
 };
 
+/** Exported so a test can pin the privacy settings without starting dd-trace. */
+export const TRACER_OPTIONS = {
+  service: process.env.DD_SERVICE || "ua-starlink-tracker",
+  env: process.env.DD_ENV || "development",
+  version: process.env.DD_VERSION || "unknown",
+  // No global `airline` tag: DogStatsD concatenates global + per-call tags
+  // (airline:hawaiian,united). The default is injected per-call in metrics.ts.
+  logInjection: true,
+  profiling: false,
+  runtimeMetrics: false,
+  startupLogs: false,
+  // Visitor addresses and request headers stay out of traces, whatever the
+  // environment sets: no client-IP collection (http.client_ip) and no
+  // header-to-tag mapping (http.useragent and friends). Spans carry the
+  // bounded client_class instead (src/server/app.ts).
+  clientIpEnabled: false,
+  headerTags: [],
+  // Disable auto-instrumentation by default — `net`/`dns` plugins trace
+  // Playwright pipe FDs (tcp.connect localhost:0 noise). Re-enable only fetch.
+  plugins: false,
+} satisfies import("dd-trace").TracerOptions;
+
 let tracer: TracerLike = noopTracer;
 let logFormat: unknown = null;
 
@@ -59,20 +81,7 @@ if (isEnabled) {
     import("dd-trace/ext/formats"),
   ]);
 
-  ddTracer.init({
-    service: process.env.DD_SERVICE || "ua-starlink-tracker",
-    env: process.env.DD_ENV || "development",
-    version: process.env.DD_VERSION || "unknown",
-    // No global `airline` tag: DogStatsD concatenates global + per-call tags
-    // (airline:hawaiian,united). The default is injected per-call in metrics.ts.
-    logInjection: true,
-    profiling: false,
-    runtimeMetrics: false,
-    startupLogs: false,
-    // Disable auto-instrumentation by default — `net`/`dns` plugins trace
-    // Playwright pipe FDs (tcp.connect localhost:0 noise). Re-enable only fetch.
-    plugins: false,
-  });
+  ddTracer.init(TRACER_OPTIONS);
 
   tracer = ddTracer as unknown as TracerLike;
   // The Qatar schedule ingester hits one endpoint ~6.7k times/day; blocklist it
