@@ -28,6 +28,7 @@ import { startFleetProgressTailsJob } from "./src/scripts/fleet-progress-tails";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { activateIndexNow, ensureIndexNowKey, indexNowOn } from "./src/scripts/indexnow";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
+import { startRouteBacktestJob } from "./src/scripts/route-backtest";
 import { startSecAnchorsJob } from "./src/scripts/sec-anchors";
 import { runSheetScrape } from "./src/scripts/sheet-scrape";
 import { startGeofeedJob } from "./src/scripts/starlink-geofeed";
@@ -216,6 +217,10 @@ if (JOBS_ENABLED) {
   // ADS-B shadow sweep: compares live callsigns against FR24-derived
   // assignments, metrics-only — FR24 stays the serving source.
   track(startAdsbSweepJob(db));
+
+  // Daily replay of the outlook's route months on a sample of routes: logs and
+  // gauges only, so its error is readable without database access.
+  track(startRouteBacktestJob(db, jobStamps));
 
   // BTS FGK monthly shadow ingest (daily check; ingests when a new month posts).
   track(startBtsSyncJob(db));

@@ -34,7 +34,7 @@ Bun + SQLite + server-rendered React, multi-tenant by Host (`src/airlines/regist
 | Qatar schedule ingester | 1 hr | Per-flight QR equipment → `qatar_schedule` |
 | Archive departures / first-flight watch | 5 min | `departure_log`, `first_flights` |
 | Fleet sync | 24 hr | Full FR24 fleet pull, every enabled airline |
-| Daily jobs | 24 hr | Ship numbers, fleet progress (+ tails), FAA registry, SEC anchors, BTS, geofeed, crash-row prune |
+| Daily jobs | 24 hr | Ship numbers, fleet progress (+ tails), FAA registry, SEC anchors, BTS, geofeed, crash-row prune, route-outlook backtest (logs + gauges only) |
 | ADS-B sweep, data-freshness gauges | 5 min | Metrics only (FR24 stays the serving source) |
 
 Community tail lists are no longer imported: QR rides its type rule + schedule ingester, AS its verifier, and AF serves its last stored guide, dated.

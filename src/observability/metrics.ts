@@ -978,6 +978,13 @@ export const GAUGES = {
   // not_starlink_current|not_starlink_expired|not_in_guide)
   COMMUNITY_GUIDE_TAILS: "community_guide.tails",
 
+  // Rollout outlook, route months replayed daily on a fixed sample of routes
+  // (src/scripts/route-backtest.ts): mean |projected − actual| Starlink share
+  // in points, pooled over every checked month, and how many months were
+  // checked. tags: airline, source (numbers|placed: how departures were found)
+  OUTLOOK_ROUTE_BACKTEST_ERROR_POINTS: "outlook.route_backtest.error_points",
+  OUTLOOK_ROUTE_BACKTEST_CHECKS: "outlook.route_backtest.checks",
+
   // Exited children of the server not yet reaped (state Z, parent = server).
   // 0 under the image's tini init; a climb means the server is PID 1 again and
   // every United check's orphaned Chromium helpers pile up. tags: airline:all

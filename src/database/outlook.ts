@@ -9,10 +9,27 @@
 
 import type { Database } from "bun:sqlite";
 import { slotFlightKey } from "../airlines/flight-number";
-import { FLEET, OUTLOOK_BACKTEST, type TypeOutlook, typeOutlook } from "../outlook/pace";
+import { type DatedInstall, backtestRouteMonths } from "../outlook/backtest";
+import {
+  FLEET,
+  OUTLOOK_BACKTEST,
+  PROJECTION_WINDOW_DAYS,
+  type TypeOutlook,
+  typeOutlook,
+} from "../outlook/pace";
 import { publishedTargets } from "../outlook/published";
-import { type RouteDeparture, type RouteOutlook, monthKeys, routeOutlook } from "../outlook/route";
-import { ADSB_FLIGHT_DRAW_RETENTION_DAYS } from "./adsb-flight-draws";
+import {
+  MIN_MONTH_DEPARTURES,
+  type RouteDeparture,
+  type RouteMonth,
+  type RouteOutlook,
+  isStarlinkDeparture,
+  monthKeys,
+  routeMonths,
+  routeOutlook,
+  routeTypes,
+} from "../outlook/route";
+import { ADSB_FLIGHT_DRAW_RETENTION_DAYS, getAdsbFlightDrawsOnPair } from "./adsb-flight-draws";
 import { fleetRoster, programmeRoster } from "./roster";
 import { placeholders } from "./sql/fragments";
 import { DAY_SEC } from "./sql/windows";
@@ -123,6 +140,51 @@ export function routeOutlookFor(
   if (!hasBacktestedOutlook(airline)) return null;
   const windowStart = Date.parse(`${monthKeys(now, ROUTE_MONTHS)[0]}-01T00:00:00Z`) / 1000;
 
+  const { flightNumbers, excludedFlightNumbers } = singlePairNumbers(
+    db,
+    airline,
+    origin,
+    destination,
+    windowStart
+  );
+  const departures = drawsAsDepartures(
+    db,
+    airline,
+    numberDraws(db, flightNumbers, windowStart, now)
+  );
+
+  const outlooks = new Map(outlook.families.map((f) => [f.family, f]));
+  return {
+    ...routeOutlook({
+      origin,
+      destination,
+      departures,
+      outlooks,
+      now,
+      monthsBack: ROUTE_MONTHS,
+      // The draws are pruned past the retention, so the oldest month read is
+      // usually a few days of departures, not a month.
+      historyFrom: now - ADSB_FLIGHT_DRAW_RETENTION_DAYS * DAY_SEC,
+    }),
+    flightNumbers,
+    excludedFlightNumbers,
+  };
+}
+
+interface DrawRow {
+  tail_number: string;
+  first_seen: number;
+}
+
+/** Marketing numbers flight_routes shows on this pair since `since`: those
+ * seen on no other pair, and the through numbers that also fly elsewhere. */
+function singlePairNumbers(
+  db: Database,
+  airline: string,
+  origin: string,
+  destination: string,
+  since: number
+): { flightNumbers: string[]; excludedFlightNumbers: string[] } {
   const pairsByKey = new Map<string, Set<string>>();
   const rows = db
     .query(
@@ -130,7 +192,7 @@ export function routeOutlookFor(
        WHERE last_seen_at >= ? AND flight_number IN (
          SELECT flight_number FROM flight_routes WHERE origin = ? AND destination = ?)`
     )
-    .all(windowStart, origin, destination) as Array<{
+    .all(since, origin, destination) as Array<{
     flight_number: string;
     origin: string;
     destination: string;
@@ -149,50 +211,133 @@ export function routeOutlookFor(
     if (!pairs.has(pair)) continue;
     (pairs.size === 1 ? flightNumbers : excludedFlightNumbers).push(key);
   }
-  flightNumbers.sort();
-  excludedFlightNumbers.sort();
+  return {
+    flightNumbers: flightNumbers.sort(),
+    excludedFlightNumbers: excludedFlightNumbers.sort(),
+  };
+}
 
-  const departures: RouteDeparture[] = [];
-  if (flightNumbers.length > 0) {
-    const tails = new Map(fleetRoster(db, airline).map((t) => [t.tail_number, t]));
-    const listed = listingTimes(db, airline);
-    const draws = db
-      .query(
-        `SELECT tail_number, first_seen FROM adsb_flight_draws
-         WHERE first_seen >= ? AND first_seen <= ?
-           AND flight_number IN (${placeholders(flightNumbers)})`
-      )
-      .all(windowStart, now, ...flightNumbers) as Array<{
-      tail_number: string;
-      first_seen: number;
-    }>;
-    for (const d of draws) {
-      const t = tails.get(d.tail_number);
-      departures.push({
-        departedAt: d.first_seen,
-        tail: d.tail_number,
-        family: t?.family ?? "unknown",
-        // Equipped with no listing date: nothing to place it by, so it counts
-        // as equipped across the whole window.
-        equippedSince: t?.equipped ? (listed.get(d.tail_number) ?? 0) : null,
-      });
-    }
+function numberDraws(db: Database, flightNumbers: string[], from: number, to: number): DrawRow[] {
+  if (flightNumbers.length === 0) return [];
+  return db
+    .query(
+      `SELECT tail_number, first_seen FROM adsb_flight_draws
+       WHERE first_seen >= ? AND first_seen <= ?
+         AND flight_number IN (${placeholders(flightNumbers)})`
+    )
+    .all(from, to, ...flightNumbers) as DrawRow[];
+}
+
+function drawsAsDepartures(db: Database, airline: string, draws: DrawRow[]): RouteDeparture[] {
+  if (draws.length === 0) return [];
+  const tails = new Map(fleetRoster(db, airline).map((t) => [t.tail_number, t]));
+  const listed = listingTimes(db, airline);
+  return draws.map((d) => {
+    const t = tails.get(d.tail_number);
+    return {
+      departedAt: d.first_seen,
+      tail: d.tail_number,
+      family: t?.family ?? "unknown",
+      // Equipped with no listing date: nothing to place it by, so it counts
+      // as equipped across the whole window.
+      equippedSince: t?.equipped ? (listed.get(d.tail_number) ?? 0) : null,
+    };
+  });
+}
+
+/**
+ * Routes whose outlook is replayed against their own departures every day
+ * (src/scripts/route-backtest.ts), so the error a route page would carry is
+ * read from production without database access. A fixed sample: one route
+ * each for the 787, the transcon mix, a Guam 737 MAX 8 and a 737/A321 trunk.
+ */
+export const ROUTE_BACKTEST_SAMPLE: ReadonlyArray<readonly [string, string]> = [
+  ["SFO", "SIN"],
+  ["SFO", "EWR"],
+  ["EWR", "SFO"],
+  ["GUM", "NRT"],
+  ["NRT", "GUM"],
+  ["ORD", "LAX"],
+  ["LAX", "ORD"],
+  ["DEN", "ORD"],
+];
+
+/**
+ * How a route's departures are found. `numbers`: draws of the numbers
+ * flight_routes shows on this pair alone, which routeOutlookFor reads (and
+ * which can count another pair's flights; ROUTE_DEPARTURES_PLACED_BY_PAIR).
+ * `placed`: draws seen on the ground at both of the route's airports, which
+ * only the draws written since the sweep placed them have.
+ */
+export type RouteDrawSource = "numbers" | "placed";
+
+export interface RouteBacktest {
+  origin: string;
+  destination: string;
+  source: RouteDrawSource;
+  months: RouteMonth[];
+  types: Array<{ family: string; share: number }>;
+  /** Each month whose share was projected from the month before it. */
+  checks: Array<{ month: string; departures: number; projected: number; actual: number }>;
+  /** Mean |projected − actual| over the checks, in points (0–100). */
+  meanAbsErrorPoints: number | null;
+}
+
+/** The outlook's route-month replay for one pair, by both ways of finding its
+ * departures. Installs are the listing dates of the tails equipped today, as
+ * the type outlook reads them. */
+export function routeBacktests(
+  db: Database,
+  airline: string,
+  origin: string,
+  destination: string,
+  now: number
+): RouteBacktest[] {
+  if (!hasBacktestedOutlook(airline)) return [];
+  const months = monthKeys(now, ROUTE_MONTHS);
+  const windowStart = Date.parse(`${months[0]}-01T00:00:00Z`) / 1000;
+  const roster = programmeRoster(db, airline);
+  const listed = listingTimes(db, airline);
+  const totals = new Map<string, number>();
+  const installs: DatedInstall[] = [];
+  for (const t of roster) {
+    totals.set(t.family, (totals.get(t.family) ?? 0) + 1);
+    const at = t.equipped ? listed.get(t.tail_number) : null;
+    if (at != null && at <= now) installs.push({ family: t.family, installedAt: at });
   }
 
-  const outlooks = new Map(outlook.families.map((f) => [f.family, f]));
-  return {
-    ...routeOutlook({
+  const { flightNumbers } = singlePairNumbers(db, airline, origin, destination, windowStart);
+  const byNumbers = numberDraws(db, flightNumbers, windowStart, now);
+  const placed = getAdsbFlightDrawsOnPair(db, origin, destination, windowStart).filter(
+    (d) => d.first_seen <= now && slotFlightKey(d.flight_number, airline)?.startsWith(airline)
+  );
+
+  const historyFrom = now - ADSB_FLIGHT_DRAW_RETENTION_DAYS * DAY_SEC;
+  const build = (source: RouteDrawSource, draws: DrawRow[]): RouteBacktest => {
+    const departures = drawsAsDepartures(db, airline, draws);
+    const checks = backtestRouteMonths({
+      departures: departures.map((d) => ({
+        departedAt: d.departedAt,
+        family: d.family,
+        starlink: isStarlinkDeparture(d),
+      })),
+      installs,
+      totals,
+      months,
+      windowDays: PROJECTION_WINDOW_DAYS,
+      minDepartures: MIN_MONTH_DEPARTURES,
+    });
+    return {
       origin,
       destination,
-      departures,
-      outlooks,
-      now,
-      monthsBack: ROUTE_MONTHS,
-      // The draws are pruned past the retention, so the oldest month read is
-      // usually a few days of departures, not a month.
-      historyFrom: now - ADSB_FLIGHT_DRAW_RETENTION_DAYS * DAY_SEC,
-    }),
-    flightNumbers,
-    excludedFlightNumbers,
+      source,
+      months: routeMonths(departures, now, ROUTE_MONTHS, historyFrom),
+      types: routeTypes(departures, new Map()).map((t) => ({ family: t.family, share: t.share })),
+      checks,
+      meanAbsErrorPoints: checks.length
+        ? (checks.reduce((s, c) => s + Math.abs(c.projected - c.actual), 0) / checks.length) * 100
+        : null,
+    };
   };
+  return [build("numbers", byNumbers), build("placed", placed)];
 }
