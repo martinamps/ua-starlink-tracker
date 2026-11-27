@@ -5,7 +5,7 @@
  */
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
-import { ensureAirlinePrefix } from "../../airlines/flight-number";
+import { ensureAirlinePrefix, isFlightZero } from "../../airlines/flight-number";
 import {
   BY_TYPE_METHOD,
   BY_TYPE_TAB_NOTE,
@@ -64,7 +64,7 @@ function permalinker(airline: AirlineConfig | null, airlineByTail: Record<string
     if (!airline || !pattern) return null;
     if ((airlineByTail[tailNumber] || airline.code) !== airline.code) return null;
     const fn = ensureAirlinePrefix(airline, flightNumber);
-    return pattern.test(fn) ? `/check-flight/${fn}` : null;
+    return pattern.test(fn) && !isFlightZero(fn) ? `/check-flight/${fn}` : null;
   };
 }
 

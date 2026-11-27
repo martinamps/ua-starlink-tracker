@@ -216,17 +216,21 @@ describe("names told to assistive technology", () => {
 
   test("the registry's plain text keeps every tail apart from its neighbours", async () => {
     const { text } = await bodyOf(app, "/fleet", UNITED);
-    const start = text.indexOf('class="tail-registry');
-    const end = text.indexOf("</div>", start);
+    // From the heading, so the legend's last word is the first tail's neighbour.
+    const start = text.indexOf(">Tail registry</h2>");
+    const end = text.indexOf("</div>", text.indexOf('class="tail-registry', start));
     expect(start).toBeGreaterThan(-1);
     const block = text.slice(start, end);
     const tails = [...block.matchAll(/<a id="t-([^"]+)"/g)].map((m) => m[1]);
     expect(tails.length).toBeGreaterThan(0);
     // What a crawler that doesn't render gets: the markup with its tags dropped.
-    const flat = block.slice(block.indexOf(">") + 1).replace(/<[^>]*>/g, "");
+    const flat = block.replace(/<[^>]*>/g, "");
     for (const tail of tails) {
-      expect(flat, tail).toMatch(new RegExp(`(^|[^A-Za-z0-9])${tail}(?![A-Za-z0-9])`));
+      expect(flat, tail).toMatch(new RegExp(`[^A-Za-z0-9]${tail}(?![A-Za-z0-9])`));
     }
+    // Nor does one legend entry's label run into the next one's count ("Starlink8 Viasat").
+    const legend = block.slice(block.indexOf("<ul"), block.indexOf("</ul>"));
+    expect(legend.replace(/<[^>]*>/g, "")).not.toMatch(/[A-Za-z)]\d/);
   });
 
   test("a hidden spec card takes no room, so it can't widen the page", () => {

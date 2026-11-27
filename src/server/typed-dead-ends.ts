@@ -12,6 +12,7 @@ import {
   detectMarketingCarrier,
   flightInputRules,
   icaoCallsignToIata,
+  isFlightZero,
   spelledOutFlight,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
@@ -33,8 +34,10 @@ interface TypedFlight {
 }
 
 /** The coded flight of an airline the lookup surfaces answer, from its code,
- * its own callsign or its name. Null for every other airline's flight. */
+ * its own callsign or its name. Null for every other airline's flight, and
+ * for flight 0. */
 export function typedFlight(raw: string): TypedFlight | null {
+  if (isFlightZero(raw)) return null;
   const spelled = spelledOutFlight(raw);
   if (spelled) return { ...spelled, spelled: true };
   const fn = stripFlightNumberZeros(icaoCallsignToIata(canonicalFlightInput(raw)));

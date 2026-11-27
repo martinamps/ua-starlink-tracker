@@ -302,6 +302,18 @@ const permalinkPattern = (code: string) => `^${code}${PERMALINK_DIGITS}$`;
 export const CANONICAL_FLIGHT_PERMALINK = new RegExp(permalinkPattern(IATA_CODE));
 
 /**
+ * Flight 0 however it is typed: UA0, UA000, UAL0 by callsign, "United 0" by
+ * name. No airline flies it, so it is no flight's page and no flight's hop,
+ * though it fits the permalink shape. The pages 404 it; the API answers it as
+ * it always has, so its contract stays as pinned.
+ */
+const FLIGHT_ZERO = new RegExp(String.raw`^(?:${IATA_CODE}|[A-Z]{3,})0+$`);
+
+export function isFlightZero(raw: string): boolean {
+  return FLIGHT_ZERO.test(canonicalFlightInput(raw));
+}
+
+/**
  * What may be persisted into the flight_routes cache. Looser than the permalink
  * shape because the cache legitimately holds operating-carrier callsigns that
  * have no permalink of their own: the bare ICAO form (SKW4726 for a United

@@ -255,7 +255,7 @@ export function HangarFloor({
                 />
                 Being installed
               </li>
-            )}
+            )}{" "}
             {verifying > 0 && (
               <li className="inline-flex items-center gap-1.5">
                 <span

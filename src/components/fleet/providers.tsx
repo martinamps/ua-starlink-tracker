@@ -1,4 +1,5 @@
 import type React from "react";
+import { Fragment } from "react";
 import type { WifiProvider } from "../../types";
 
 import { fmt } from "../ui/format";
@@ -89,23 +90,31 @@ export function ProviderLegend({
   className?: string;
 }) {
   const shown = counts ? providers.filter((p) => counts[p] > 0) : providers;
+  // The spaces after each entry and after the list draw nothing (between flex
+  // items, and between two blocks), but keep words apart in the page's plain
+  // text, as a crawler that doesn't render reads it: "27 Starlink8 Viasat",
+  // and the last entry run into what follows ("Not checked yetN103SY").
   return (
-    <ul
-      className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-secondary ${className}`}
-    >
-      {shown.map((p) => (
-        <li key={p} className="inline-flex items-center gap-1.5">
-          <Swatch provider={p} />
-          {counts ? (
-            <span>
-              <span className="tabular-nums text-primary">{fmt(counts[p])}</span> {labels[p]}
-            </span>
-          ) : (
-            labels[p]
-          )}
-        </li>
-      ))}
-      {after}
-    </ul>
+    <>
+      <ul
+        className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-secondary ${className}`}
+      >
+        {shown.map((p) => (
+          <Fragment key={p}>
+            <li className="inline-flex items-center gap-1.5">
+              <Swatch provider={p} />
+              {counts ? (
+                <span>
+                  <span className="tabular-nums text-primary">{fmt(counts[p])}</span> {labels[p]}
+                </span>
+              ) : (
+                labels[p]
+              )}
+            </li>{" "}
+          </Fragment>
+        ))}
+        {after}
+      </ul>{" "}
+    </>
   );
 }
