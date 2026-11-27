@@ -243,6 +243,12 @@ for (const site of Object.values(SITES)) {
         expect(r.status, `${site.key} llms.txt advertises ${r.href} → ${r.status}`).toBeLessThan(
           400
         );
+        // A pair with no route page answers with a hop to the planner's
+        // search, so < 400 alone would let llms.txt advertise a page that
+        // doesn't exist. A pair it names must be the page itself.
+        if (/^\/route-planner\/[^/]+\/[^/]+$/.test(new URL(r.href).pathname)) {
+          expect(r.status, `${site.key} llms.txt route pair ${r.href} → ${r.status}`).toBe(200);
+        }
       }
     });
   });

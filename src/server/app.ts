@@ -2527,7 +2527,7 @@ The homepage element with HTML id \`starlink-stat\` gives the count: how many ${
   });
   // A pair this airline's route pages serve, so the example never 404s.
   const boardPair = features.routePlannerPage
-    ? (plannerPopularRoutes(ctx)[0] ?? { origin: "SFO", destination: "ORD" })
+    ? (plannerPopularRoutes(ctx)[0] ?? reader.getSitemapRoutes()[0] ?? null)
     : null;
   // An airport whose page indexes, so the example is one the sitemap lists.
   const boardAirport = features.airportPages ? busiestIndexableAirport(reader) : undefined;
@@ -3841,8 +3841,10 @@ function typedOnCheckFlight(
   }
   const pair = ctx.site.features.routePlannerPage ? typedAirportPair(raw) : null;
   if (pair && ctx.reader.routeHasData(pair.origin, pair.destination)) {
+    // The route page reads the day from ?date=, so a typed date survives the hop.
+    const day = date ? `?${new URLSearchParams({ date })}` : "";
     return redirect(
-      `https://${ctx.site.canonicalHost}/route-planner/${pair.origin}/${pair.destination}`,
+      `https://${ctx.site.canonicalHost}/route-planner/${pair.origin}/${pair.destination}${day}`,
       301
     );
   }
@@ -4212,8 +4214,14 @@ function plannerSearchFor(
   origin: string,
   destination: string
 ): Response | null {
-  const known = (code: string) => !!airportTimezone(code) || !!placeCodeAirports(code);
-  if (!known(origin) || !known(destination)) return null;
+  // Both ends must be somewhere this airline departs from (any airport of a
+  // city code), so the search has a network to look through: LHR/CDG on
+  // Alaska's site is no one's trip there, and stays a 404.
+  const served = (code: string) =>
+    (airportTimezone(code) ? [code] : (placeCodeAirports(code) ?? [])).some((a) =>
+      ctx.reader.airportHasData(a)
+    );
+  if (!served(origin) || !served(destination)) return null;
   const query = new URLSearchParams({ origin, destination });
   return redirect(`https://${ctx.site.canonicalHost}/route-planner?${query}`);
 }
