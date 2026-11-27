@@ -85,7 +85,7 @@ export function answerContext(
   flight?: FlightFacts
 ): AnswerContext {
   const cfg = siteAirline(site);
-  const origin = flight?.routes[0]?.departure_airport ?? null;
+  const origin = dated.leg?.origin ?? flight?.routes[0]?.departure_airport ?? null;
   return {
     flightNumber: dated.flightNumber,
     date: dated.date,
@@ -407,6 +407,7 @@ export default function CheckFlightPage({
               nowSec: undefined,
               refresh,
               zones: refresh ? AIRPORT_ZONES : {},
+              ...(dated.leg ? { leg: dated.leg } : {}),
             }),
           }}
         />

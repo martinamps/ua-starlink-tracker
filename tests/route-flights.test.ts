@@ -417,7 +417,7 @@ describe("board behavior (synthetic)", () => {
   });
 
   test("a planner leg links its own answer page, the first leg dated as searched", async () => {
-    type PlanLeg = { flight_number: string; page?: string };
+    type PlanLeg = { flight_number: string; route: string; page?: string };
     const itinerariesOf = async (query: string) =>
       (
         (await jsonOf(sapp, `/api/plan-route?${query}`, UA)) as {
@@ -425,14 +425,22 @@ describe("board behavior (synthetic)", () => {
         }
       ).itineraries;
     const date = isoDateDaysAgo(-20, now);
+    // Every link names its leg, so a number that flies two legs opens on this one.
+    const onLeg = (route: string) => {
+      const [origin, destination] = route.split("-");
+      return `?origin=${origin}&destination=${destination}`;
+    };
     const undatedPage = (leg: PlanLeg) =>
-      leg.flight_number === "(any)" ? undefined : `/check-flight/${leg.flight_number}`;
+      leg.flight_number === "(any)"
+        ? undefined
+        : `/check-flight/${leg.flight_number}${onLeg(leg.route)}`;
     // Only the first leg is known to fly that day: a later one often flies the
     // next, so it links the flight's undated page.
     const expectDatedFirstLeg = (legs: PlanLeg[]) =>
       legs.forEach((leg, i) => {
         if (leg.flight_number === "(any)") expect(leg.page).toBeUndefined();
-        else if (i === 0) expect(leg.page).toBe(`/check-flight/${leg.flight_number}/${date}`);
+        else if (i === 0)
+          expect(leg.page).toBe(`/check-flight/${leg.flight_number}/${date}${onLeg(leg.route)}`);
         else expect(leg.page).toBe(undatedPage(leg));
       });
 
@@ -444,24 +452,27 @@ describe("board behavior (synthetic)", () => {
       (it) => it.legs.length === 2 && it.legs.every((l) => l.flight_number !== "(any)")
     );
     expect(twoLeg?.legs.map((l) => l.page)).toEqual([
-      `/check-flight/UA510/${date}`,
-      "/check-flight/UA520",
+      `/check-flight/UA510/${date}${onLeg("BOS-PHL")}`,
+      `/check-flight/UA520${onLeg("PHL-CLT")}`,
     ]);
 
     const threeLeg = (await itinerariesOf(`origin=BOS&destination=MIA&date=${date}`)).find(
       (it) => it.legs.length === 3
     );
     expect(threeLeg?.legs.map((l) => l.page)).toEqual([
-      `/check-flight/UA510/${date}`,
-      "/check-flight/UA520",
-      "/check-flight/UA530",
+      `/check-flight/UA510/${date}${onLeg("BOS-PHL")}`,
+      `/check-flight/UA520${onLeg("PHL-CLT")}`,
+      `/check-flight/UA530${onLeg("CLT-MIA")}`,
     ]);
 
     // Behind a positioning leg, the first real flight is a later leg too.
     const behindPositioning = (await itinerariesOf(`origin=SFO&destination=IAD&date=${date}`)).find(
       (it) => it.legs[0].flight_number === "(any)"
     );
-    expect(behindPositioning?.legs.map((l) => l.page)).toEqual([undefined, "/check-flight/UA100"]);
+    expect(behindPositioning?.legs.map((l) => l.page)).toEqual([
+      undefined,
+      `/check-flight/UA100${onLeg("ORD-IAD")}`,
+    ]);
 
     for (const query of [
       "origin=SFO&destination=IAD",

@@ -34,24 +34,47 @@ export interface SharePictureRequest {
    * caller's text; the handler accepts it only as an identifier it resolves. */
   id: string;
   date: string | null;
+  /** A flight page opened on one leg (?origin=&destination=) answers for that
+   * leg, so its picture must too: /UA2305/2026-11-28/SFO-IAH.png, one side
+   * may be empty (SFO-, -IAH). Three capitals each; still caller text until
+   * the handler parses it the way the page parses its query. */
+  leg?: ShareLeg;
+}
+
+export interface ShareLeg {
+  origin?: string;
+  destination?: string;
 }
 
 const SHARE_PATH =
-  /^\/share\/(flight|tail|airport)\/([A-Za-z0-9-]{2,10})(?:\/(\d{4}-\d{2}-\d{2}))?\.png$/;
+  /^\/share\/(flight|tail|airport)\/([A-Za-z0-9-]{2,10})(?:\/(\d{4}-\d{2}-\d{2}))?(\/([A-Z]{3})?-([A-Z]{3})?)?\.png$/;
 
 /** One spelling per picture: anything else (a suffix, an escape, a query-only
- * variant of the path, a date on a tail) is not a picture address. */
+ * variant of the path, a date or a leg on a tail) is not a picture address. */
 export function parseSharePicturePath(pathname: string): SharePictureRequest | null {
   const m = SHARE_PATH.exec(pathname);
   if (!m) return null;
   const kind = m[1] as SharePictureKind;
   const date = m[3] ?? null;
   if (date && (kind !== "flight" || !isRealIsoDate(date))) return null;
-  return { kind, id: m[2] as string, date };
+  const [legPart, origin, destination] = [m[4], m[5], m[6]];
+  const request: SharePictureRequest = { kind, id: m[2] as string, date };
+  if (legPart) {
+    if (kind !== "flight" || (!origin && !destination)) return null;
+    request.leg = { ...(origin ? { origin } : {}), ...(destination ? { destination } : {}) };
+  }
+  return request;
 }
 
-export function sharePicturePath(kind: SharePictureKind, id: string, date?: string | null): string {
-  return `/share/${kind}/${id}${date ? `/${date}` : ""}.png`;
+export function sharePicturePath(
+  kind: SharePictureKind,
+  id: string,
+  date?: string | null,
+  leg?: ShareLeg
+): string {
+  const legPart =
+    leg && (leg.origin || leg.destination) ? `/${leg.origin ?? ""}-${leg.destination ?? ""}` : "";
+  return `/share/${kind}/${id}${date ? `/${date}` : ""}${legPart}.png`;
 }
 
 const FLIGHT_QUESTION = "Does this flight have Starlink?";
@@ -114,16 +137,19 @@ function flightShareAnswer(flight: FlightFacts): ShareAnswer {
 }
 
 /** Which picture a flight page shares: the dated answer's where the dated
- * URL has one, else the flight's undated one. */
+ * URL has one, else the flight's undated one. A page scoped to one leg shares
+ * that leg's picture: `flight` and `dated` must be built for the same leg. */
 export function flightSharePicture(
   site: SiteConfig,
   flight: FlightFacts,
-  dated: DatedAnswer | undefined
+  dated: DatedAnswer | undefined,
+  leg?: ShareLeg
 ): { path: string; answer: ShareAnswer } {
   const datedShare = datedFlightShareAnswer(site, dated, flight);
+  const fn = flight.flightNumber;
   return datedShare && dated
-    ? { path: sharePicturePath("flight", flight.flightNumber, dated.date), answer: datedShare }
-    : { path: sharePicturePath("flight", flight.flightNumber), answer: flightShareAnswer(flight) };
+    ? { path: sharePicturePath("flight", fn, dated.date, leg), answer: datedShare }
+    : { path: sharePicturePath("flight", fn, null, leg), answer: flightShareAnswer(flight) };
 }
 
 /** The verdict the page leads with. A tail in the install pipeline carries

@@ -133,6 +133,9 @@ export interface DatedAnswer {
   flightNumber: string;
   date: string;
   daysOut: number;
+  /** The leg the page was asked about (?origin=&destination=), when it parsed;
+   * the browser re-check asks the API for the same leg. */
+  leg?: { origin?: string; destination?: string };
   body: CheckFlightBody;
   /** A change of aircraft on the answered departure, from our own log. */
   swap?: PlaneSwap | null;
