@@ -125,6 +125,15 @@ function InvalidQueryNotice({
           <p className="text-primary">
             {`${quoted} isn't ${article(shortName)} ${shortName} flight number. This site checks ${shortName} flights only.`}
           </p>
+          {invalid.didYouMean && (
+            <p className="mt-2 text-secondary">
+              {`${shortName} flight numbers start with ${invalid.didYouMean.replace(/\d+$/, "")}. `}
+              <a href={`/check-flight/${invalid.didYouMean}`} className={LINK}>
+                {`Check ${invalid.didYouMean}`}
+              </a>
+              ?
+            </p>
+          )}
           {elsewhere && (
             // A deliberate cross-site mention, marked like the footer's.
             <p data-cross-site-links className="mt-2 text-secondary">
@@ -155,13 +164,21 @@ function InvalidQueryNotice({
         </p>
       ) : (
         <p className="text-secondary">
+          {invalid.tooManyDigits && `${shortName} flight numbers have at most four digits. `}
           Try something like <span className="font-mono">{example}</span>.
         </p>
       )}
       {invalid.airportHint && showRoutePlanner && (
         <p className="mt-2 text-secondary">
           Looking for an airport or a route? Try the{" "}
-          <a href="/route-planner" className={LINK}>
+          <a
+            href={
+              invalid.airportCode
+                ? `/route-planner?origin=${invalid.airportCode}`
+                : "/route-planner"
+            }
+            className={LINK}
+          >
             route planner
           </a>
           .

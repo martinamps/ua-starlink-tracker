@@ -246,6 +246,23 @@ export function resolveAircraftSlug(
   return aliased ? { def: aliased, redirect: true } : null;
 }
 
+/** Names that the aliases leave out because they mean two types (see the
+ * note above MAX8_ALIASES): a typed one is offered both pages, not one. */
+const AMBIGUOUS_TYPE_NAMES: Readonly<Record<string, readonly string[]>> = {
+  "737-8": ["B737-MAX8", "B737-800"],
+  "737-9": ["B737-MAX9", "B737-900"],
+  "b737-8": ["B737-MAX8", "B737-800"],
+  "b737-9": ["B737-MAX9", "B737-900"],
+};
+
+/** The type pages a two-way name could mean, MAX first. Empty for any other segment. */
+export function ambiguousAircraftPages(code: string, segment: string): AircraftPageDef[] {
+  const families = Object.hasOwn(AMBIGUOUS_TYPE_NAMES, segment.toLowerCase())
+    ? AMBIGUOUS_TYPE_NAMES[segment.toLowerCase()]
+    : [];
+  return families.flatMap((f) => aircraftPagesFor(code).filter((d) => d.family === f));
+}
+
 export function aircraftPageForFamily(code: string, family: string): AircraftPageDef | null {
   return aircraftPagesFor(code).find((d) => d.family === family) ?? null;
 }

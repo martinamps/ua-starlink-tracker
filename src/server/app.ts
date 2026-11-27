@@ -22,6 +22,7 @@ import {
   aircraftPagesFor,
   aircraftTypeFaq,
   aircraftTypeTitle,
+  ambiguousAircraftPages,
   answerFor,
   answerSummary,
   newestOfficial,
@@ -338,10 +339,14 @@ import {
   passengerVerifyEnabled,
 } from "./passenger-detect";
 import {
+  bareDigitsFlight,
   checkPageFor,
   flightElsewhere,
+  longNumberDigits,
+  lookalikeFlight,
   looksLikeAFlight,
   trackedAirlinesLink,
+  typedAirportPair,
   typedFlight,
   typedTail,
 } from "./typed-dead-ends";
@@ -505,10 +510,17 @@ function notFoundTemplate(template: string): string {
 }
 
 /** The site's own shell around a "not found" header. Built only from the
- * tenant's static config — no reader, no client IP — because the response is
+ * tenant's static config — no client IP, and no reader beyond the `choices`
+ * a caller picked from the pages this host serves — because the response is
  * cached at the edge (SECURITY_HEADERS.notFound). */
-async function notFound(site: SiteConfig, kind: NotFoundKind = "page"): Promise<Response> {
-  const markup = ReactDOMServer.renderToString(React.createElement(NotFoundPage, { site, kind }));
+async function notFound(
+  site: SiteConfig,
+  kind: NotFoundKind = "page",
+  choices: PageLink[] = []
+): Promise<Response> {
+  const markup = ReactDOMServer.renderToString(
+    React.createElement(NotFoundPage, { site, kind, choices })
+  );
   const body = renderHtml(notFoundTemplate(await getHtmlTemplate()), {
     ...brandMetadata(site.brand),
     siteTitle: `${notFoundCopy(site, kind).title} | ${site.brand.title}`,
@@ -3810,11 +3822,36 @@ function typedOnCheckFlight(
   pinned: AirlineConfig,
   raw: string,
   date: string | null
-): Response | Pick<InvalidFlightQuery, "reason" | "elsewhere"> | null {
+):
+  | Response
+  | Pick<InvalidFlightQuery, "reason" | "elsewhere" | "didYouMean" | "tooManyDigits">
+  | null {
+  const datePath = date ? `/${date}` : "";
+  const digits = bareDigitsFlight(pinned, raw);
+  if (digits) {
+    return redirect(
+      `https://${ctx.site.canonicalHost}/check-flight/${digits}${datePath}${ctx.url.search}`,
+      301
+    );
+  }
+  const long = longNumberDigits(pinned, raw);
+  if (long) {
+    const url = tailAnswerUrl(ctx, long);
+    return url ? redirect(url) : { reason: "not-a-flight-number", tooManyDigits: true };
+  }
+  const pair = ctx.site.features.routePlannerPage ? typedAirportPair(raw) : null;
+  if (pair && ctx.reader.routeHasData(pair.origin, pair.destination)) {
+    return redirect(
+      `https://${ctx.site.canonicalHost}/route-planner/${pair.origin}/${pair.destination}`,
+      301
+    );
+  }
+  const meant = lookalikeFlight(pinned, raw);
+  if (meant) return { reason: "other-carrier", didYouMean: meant };
   const flight = typedFlight(raw);
   if (flight?.cfg.code === pinned.code) {
     if (!flight.spelled) return null;
-    const path = `/check-flight/${flight.flightNumber}${date ? `/${date}` : ""}`;
+    const path = `/check-flight/${flight.flightNumber}${datePath}`;
     return redirect(`https://${ctx.site.canonicalHost}${path}${ctx.url.search}`, 301);
   }
   if (flight) return { reason: "other-carrier", elsewhere: flightElsewhere(flight, date) };
@@ -3876,6 +3913,12 @@ const checkFlightPage: Handler = async (ctx) => {
       query,
       reason: "not-a-flight-number",
       airportHint: !typed && query !== null && AIRPORT_CODE_RE.test(query.toUpperCase()),
+      ...(!typed &&
+      query !== null &&
+      /^[A-Z]{3}$/.test(query.toUpperCase()) &&
+      airportTimezone(query)
+        ? { airportCode: query.toUpperCase() }
+        : {}),
       ...typed,
       ...(typed?.reason === "other-carrier" && !typed.elsewhere
         ? { elsewhere: trackedAirlinesLink() }
@@ -4161,10 +4204,26 @@ function routeOutlookView(
     : null;
 }
 
+/** A pair with no route page, both ends on record (or a city code like NYC):
+ * the planner searches it, connections included, so the address answers
+ * instead of 404ing. 302, since the pair gains a page once it is flown. */
+function plannerSearchFor(
+  ctx: RequestContext,
+  origin: string,
+  destination: string
+): Response | null {
+  const known = (code: string) => !!airportTimezone(code) || !!placeCodeAirports(code);
+  if (!known(origin) || !known(destination)) return null;
+  const query = new URLSearchParams({ origin, destination });
+  return redirect(`https://${ctx.site.canonicalHost}/route-planner?${query}`);
+}
+
 const routePlannerPage: Handler = (ctx) => {
-  // Per-route permalinks: /route-planner/{origin}/{destination}. Unknown pairs
-  // 404 so the ~10k links off the flight permalinks can't collapse into one
-  // duplicate planner page that crawlers log as soft 404s.
+  // Per-route permalinks: /route-planner/{origin}/{destination}. A pair with
+  // no data never renders a page of its own, so the ~10k links off the flight
+  // permalinks can't collapse into one duplicate planner page that crawlers
+  // log as soft 404s: two airports on record hop to the planner's search, and
+  // anything else 404s.
   const trimmed = ctx.url.pathname.replace(/\/+$/, "");
   if (trimmed !== "/route-planner") {
     const parsed = parseRoutePath(ctx.url.pathname);
@@ -4176,7 +4235,9 @@ const routePlannerPage: Handler = (ctx) => {
       return Response.redirect(`https://${ctx.site.canonicalHost}${canonicalPath}`, 301);
     }
     const cfg = siteAirline(ctx.site);
-    if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
+    if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) {
+      return plannerSearchFor(ctx, parsed.origin, parsed.destination) ?? notFound(ctx.site);
+    }
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
     // The origin always has an airport page (its gate mirrors this one); the
     // destination has one only when the airline departs from it too.
@@ -4410,6 +4471,38 @@ function recordAircraftPageView(
   });
 }
 
+/** "/fleet/type/777", "/fleet/tail/N37516": a guessed folder in front of a
+ * type or a tail this host serves, sent to its one address. */
+function nestedFleetAddress(
+  ctx: RequestContext,
+  cfg: AirlineConfig,
+  segment: string
+): Response | null {
+  const m = segment.match(/^(?:type|types|tail|tails|aircraft)\/([A-Za-z0-9-]{1,40})$/i);
+  if (!m) return null;
+  const resolved = resolveAircraftSlug(cfg.code, m[1]);
+  const def = resolved && servedAircraftPages(ctx).find((d) => d.slug === resolved.def.slug);
+  if (def && ctx.reader.getAircraftTypePage(def.slug)) {
+    return redirect(`https://${ctx.site.canonicalHost}/fleet/${def.slug}`, 301);
+  }
+  const tail = !resolved && ctx.site.features.tailPages ? ctx.reader.resolveTail(m[1]) : null;
+  return tail ? redirect(`https://${ctx.site.canonicalHost}/fleet/${tail}`, 301) : null;
+}
+
+/** A name that means two types ("737-8": the MAX 8 or the 737-800): a 404
+ * that offers each page this host serves, rather than a guess. */
+function ambiguousTypeNotFound(
+  ctx: RequestContext,
+  cfg: AirlineConfig,
+  segment: string
+): Promise<Response> | null {
+  const served = new Set(servedAircraftPages(ctx).map((d) => d.slug));
+  const choices = ambiguousAircraftPages(cfg.code, segment)
+    .filter((d) => served.has(d.slug) && ctx.reader.getAircraftTypePage(d.slug))
+    .map((d) => ({ href: `/fleet/${d.slug}`, label: `${cfg.shortName} ${d.short}` }));
+  return choices.length ? notFound(ctx.site, "aircraft-type", choices) : null;
+}
+
 const aircraftTypePage: Handler = (ctx) => {
   const cfg = tenantConfig(ctx.tenant);
   if (!ctx.site.features.aircraftPages || !cfg) {
@@ -4430,8 +4523,9 @@ const aircraftTypePage: Handler = (ctx) => {
     : undefined;
   const data = def ? ctx.reader.getAircraftTypePage(def.slug) : null;
   if (!resolved || !def || !data) {
-    recordAircraftPageView(ctx, "not_found", resolved?.def);
-    return notFound(ctx.site);
+    const nested = nestedFleetAddress(ctx, cfg, segment);
+    recordAircraftPageView(ctx, nested ? "redirect" : "not_found", resolved?.def);
+    return nested ?? ambiguousTypeNotFound(ctx, cfg, segment) ?? notFound(ctx.site);
   }
   if (resolved.redirect || segment !== rest) {
     recordAircraftPageView(ctx, "redirect", def);

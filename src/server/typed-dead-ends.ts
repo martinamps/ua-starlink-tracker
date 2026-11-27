@@ -7,8 +7,10 @@
 
 import {
   CANONICAL_FLIGHT_PERMALINK,
+  canonicalFlightFor,
   canonicalFlightInput,
   detectMarketingCarrier,
+  flightInputRules,
   icaoCallsignToIata,
   spelledOutFlight,
   stripFlightNumberZeros,
@@ -21,6 +23,7 @@ import {
   siteForAirline,
 } from "../airlines/registry";
 import type { FlightElsewhere } from "../components/check-flight/types";
+import { airportTimezone } from "../utils/airport-tz";
 
 interface TypedFlight {
   cfg: AirlineConfig;
@@ -80,4 +83,50 @@ export function typedTail(raw: string): string | null {
 /** A word and a short number: some airline's flight, by callsign or by name. */
 export function looksLikeAFlight(raw: string): boolean {
   return /^[A-Z]{3,}\d{1,4}$/.test(canonicalFlightInput(raw));
+}
+
+/** Digits alone where a flight goes, completed with the site's own code the
+ * way the search form completes them. Null unless that is a real permalink. */
+export function bareDigitsFlight(pinned: AirlineConfig, raw: string): string | null {
+  return /^\d+$/.test(canonicalFlightInput(raw))
+    ? canonicalFlightFor(flightInputRules(pinned), raw)
+    : null;
+}
+
+/** Five digits, bare or behind the site's code: too long for a flight number,
+ * and the shape of a tail number read without its N (UA39450 for N39450).
+ * Returns the digits for the tail lookup, null for any other shape. */
+export function longNumberDigits(pinned: AirlineConfig, raw: string): string | null {
+  const fn = canonicalFlightInput(raw);
+  const digits = fn.startsWith(pinned.iata) ? fn.slice(pinned.iata.length) : fn;
+  return /^\d{5}$/.test(digits) ? digits : null;
+}
+
+/** Codes travellers type for an airline's own: United read as "US". A code
+ * that is some airline's own (U2 is easyJet's, so U268 is a real flight) never
+ * goes here. Only the site's own airline is ever suggested. */
+const LOOKALIKE_CODES: Readonly<Record<string, readonly string[]>> = { UA: ["US"] };
+
+/** The site's own flight a look-alike code most likely meant (US852 → UA852),
+ * offered as a link, never a redirect: the typed code could be meant as typed. */
+export function lookalikeFlight(pinned: AirlineConfig, raw: string): string | null {
+  const fn = canonicalFlightInput(raw);
+  for (const code of LOOKALIKE_CODES[pinned.iata] ?? []) {
+    const m = fn.match(/^([A-Z]+)(\d{1,4})$/);
+    if (m && m[1] === code) return canonicalFlightFor(flightInputRules(pinned), m[2]);
+  }
+  return null;
+}
+
+/** Two airport codes run together (IADLAX, IAD-LAX, "IAD to LAX"), each one
+ * an airport on record. The caller still checks the pair is flown. */
+export function typedAirportPair(raw: string): { origin: string; destination: string } | null {
+  const m = raw
+    .trim()
+    .toUpperCase()
+    .match(/^([A-Z]{3})(?:\s*(?:-|–|>|→|\s|\bTO\b)\s*)?([A-Z]{3})$/);
+  if (!m || m[1] === m[2]) return null;
+  return airportTimezone(m[1]) && airportTimezone(m[2])
+    ? { origin: m[1], destination: m[2] }
+    : null;
 }
