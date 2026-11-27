@@ -78,13 +78,25 @@ describe("hub /timeline", () => {
   test("a superseded fact sits below a current fact of its airline (the page says 'listed above')", () => {
     for (const { entry, facts } of hubTimelineAirlines(AIRLINE_FACTS)) {
       facts.forEach((f, i) => {
-        if (f.superseded) {
+        if (f.superseded && !f.withdrawnBecause) {
           expect(
             facts.slice(0, i).some((g) => !g.superseded),
             `${entry.slug} ${f.asOf}`
           ).toBe(true);
         }
       });
+    }
+  });
+
+  // A fact withdrawn for its source, with only older facts left to answer,
+  // says so in its own words: "listed above" would point at nothing.
+  test("a withdrawn fact prints its reason, never 'listed above'", async () => {
+    const { text } = await bodyOf(app, "/timeline", HUB);
+    for (const { facts } of hubTimelineAirlines(AIRLINE_FACTS)) {
+      for (const f of facts.filter((g) => g.withdrawnBecause)) {
+        expect(f.superseded, f.fact).toBe(true);
+        expect(text).toContain(f.withdrawnBecause?.replace(/'/g, "&#x27;") ?? "");
+      }
     }
   });
 

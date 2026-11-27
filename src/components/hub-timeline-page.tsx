@@ -93,7 +93,7 @@ function FactEntry({ fact }: { fact: DatedRolloutFact }) {
         {fact.superseded && (
           <p className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted">
             <Pill tone="neutral">Replaced</Pill>
-            <span>A later fact, listed above, replaced it.</span>
+            <span>{fact.withdrawnBecause ?? "A later fact, listed above, replaced it."}</span>
           </p>
         )}
         <p className={`text-sm ${fact.superseded ? "text-muted" : "text-secondary"}`}>

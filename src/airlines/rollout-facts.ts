@@ -89,6 +89,11 @@ interface RolloutFactBase {
    * overtaken by events). Airline and type pages drop it so two answers never
    * sit side by side; /timeline keeps the dated record. */
   superseded?: true;
+  /** Why a superseded fact was withdrawn, where what answers in its place is
+   * older than it: a source that did not hold up, not a later fact. /timeline
+   * prints this in place of "a later fact, listed above, replaced it", which
+   * would be untrue there. */
+  withdrawnBecause?: string;
 }
 
 /** A claim the source itself dates. Only these move the page's lastmod. */
@@ -553,19 +558,20 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // Brand-led naming: the searchable query is "does British Airways have
     // Starlink", and the constituent brands 301 here — a page titled for the
     // holding company answers a question nobody types. Aer Lingus and Iberia
-    // have their own entries: both are flying Starlink, so the BA "paused"
-    // answer is wrong for anyone who searched for them.
+    // have their own entries: both are flying Starlink, so a BA-only answer
+    // is wrong for anyone who searched for them.
     name: "British Airways, Vueling & LEVEL (IAG)",
     shortName: "British Airways",
     iata: "BA",
     status: "installing",
-    statusLabel: "5 aircraft, installs paused",
-    // Five aircraft out of a fleet of 300-plus, with installs stopped: the
-    // derived "Yes — Rollout Under Way" is the wrong answer for all but a
-    // rounding error of BA passengers. Same call as Southwest and Lufthansa.
-    headline: "Does British Airways Have Starlink? On 5 Aircraft — Installs Paused",
+    statusLabel: "Installing; no count from BA since March",
+    // British Airways' own words only, from its March 19, 2026 media centre
+    // release: it has published no count of equipped aircraft since,
+    // so neither a count nor a "Yes" can be printed. No year of ours either:
+    // "within the next two years" names no finish date.
+    headline: "Does British Airways Have Starlink? Installing Fleet-Wide",
     summary:
-      "British Airways equipped five aircraft before pausing installs in June 2026; they are expected to resume in October 2026, and Starlink is free in every cabin on equipped aircraft. The IAG deal (announced November 2025) covers 500+ aircraft, including Aer Lingus and Iberia.",
+      "British Airways said on March 19, 2026 that it was fitting Starlink to its 787-8 fleet and that its whole fleet of more than 300 aircraft, not BA Cityflyer, would have it within two years, free in every cabin. It has published no count since. The IAG deal (announced November 2025) covers 500+ aircraft, including Aer Lingus and Iberia.",
     aliases: ["british-airways", "vueling", "level"],
     facts: [
       {
@@ -588,7 +594,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "British Airways says Starlink is available to all customers, in every cabin, free of charge, and that its entire fleet of more than 300 aircraft will have it within two years, covering its long-haul and short-haul fleets but excluding BA Cityflyer.",
+        // Must stay ahead of the Head for Points fact of the same date: the
+        // flight answer prints the first current fact of the newest date, and
+        // this is the airline's own word.
+        fact: "British Airways says Starlink is available to all customers, in every cabin, free of charge, and that its entire fleet of more than 300 aircraft will have it within two years, covering its long-haul and short-haul fleets but excluding BA Cityflyer. It said it was then fitting Starlink to its 787-8 fleet.",
         asOf: "2026-03-19",
         source: {
           label: "British Airways media centre",
@@ -604,6 +613,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
+        // Kept only as the dated record. The five tails and the "paused" were
+        // the article's report of a rival tracker's list, not British Airways'
+        // words, and its October 2026 resume date came from another outlet and
+        // has passed; every report since says installs resumed. British
+        // Airways' own March 19 release (above) answers instead.
+        superseded: true,
+        withdrawnBecause:
+          "Withdrawn: its tails and its pause came from another tracker's list, not from British Airways, and its October 2026 date has passed. British Airways' own March 19, 2026 words, listed below, answer instead.",
         fact: "British Airways paused Starlink installations after equipping just five aircraft (G-ZBJA, G-ZBJI, G-ZBJJ, G-ZBJK and G-ZBJM) since the rollout began in March 2026. The airline says installations are expected to resume in October 2026 after the busy summer season, because the programme is aligned with scheduled maintenance, and that the technology will reach its whole fleet of more than 300 aircraft over roughly two years.",
         asOf: "2026-06-07",
         source: {
@@ -822,8 +839,29 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "100 of its 737s had Starlink by October 2025, the world's largest Starlink 737 fleet. WestJet's 2024 plan was to upgrade its wide-bodies by the end of 2026; its 787-9 page still listed Wi-Fi for a fee in November 2026. Free for WestJet Rewards members via TELUS.",
+      "Over 100 of its 737s have free WestJet Wi-Fi by TELUS, which WestJet's 2024 release says is delivered by Starlink. Its 737-8 MAX and 737-800 come in layouts with and without it; its 737-700 and 787-9 pages list only Wi-Fi for a fee, and the Dash 8-400 has none. Free for WestJet Rewards members.",
     facts: [
+      {
+        // WestJet's own type pages, read one by one. A type with two layouts
+        // gives no yes for a flight, and these say "presented by TELUS", not
+        // Starlink, so they stay a dated fact and build no statement rule.
+        fact: "WestJet's pages for the 737-8 MAX and the 737-800 each show two cabin layouts, one with free high-speed Wi-Fi presented by TELUS for WestJet Rewards members and one with Wi-Fi for a fee. Its 737-700 and 787-9 pages list only Wi-Fi for a fee, and its Dash 8-400 page says that aircraft has no in-flight Wi-Fi.",
+        accessed: "2026-11-27",
+        source: {
+          label: "WestJet (aircraft pages)",
+          url: "https://www.westjet.com/en-ca/aircraft",
+        },
+      },
+      {
+        // Names a group of aircraft (ex-Swoop, ex-Sunwing, the 180-seat 737s)
+        // that a booking cannot identify, so it answers no flight.
+        fact: "WestJet said it had finished refitting all aircraft formerly flown by Swoop or Sunwing, with fast and free WestJet Wi-Fi presented by TELUS among the upgrades, and that the 737s that briefly had 180 seats now fly with it too.",
+        asOf: "2026-08-18",
+        source: {
+          label: "WestJet news release",
+          url: "https://westjet.mediaroom.com/2026-08-18-WestJet-celebrates-major-milestone-in-inflight-experience-transformation",
+        },
+      },
       {
         fact: "WestJet equipped its 100th aircraft with Wi-Fi presented by TELUS and powered by Starlink, the world's largest fleet of Starlink-equipped 737s, free for WestJet Rewards members.",
         asOf: "2025-10-09",
