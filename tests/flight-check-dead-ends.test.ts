@@ -147,10 +147,11 @@ describe("a tail number typed where a flight goes", () => {
   });
 
   test("bare digits stay a flight number, and a type page still wins its address", async () => {
-    // "1" would be tail N1… to resolveTail; where a flight goes it is no tail.
+    // "1" would be tail N1… to resolveTail; where a flight goes it is a flight,
+    // completed with the site's code the way the search form completes it.
     const res = await get("/check-flight/1", UA);
-    expect(res.status).toBe(404);
-    expect(res.headers.get("location")).toBeNull();
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe(`https://${UA}/check-flight/UA1`);
     expect(typedTail("12345")).toBeNull();
     expect(typedTail(" n37318 ")).toBe("N37318");
     expect((await get("/fleet/737-max-9", AS)).status).not.toBe(302);

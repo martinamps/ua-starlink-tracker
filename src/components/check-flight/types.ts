@@ -107,6 +107,13 @@ export interface InvalidFlightQuery {
   airportHint: boolean;
   /** Another airline's flight: the page of ours that answers it or lists who we track. */
   elsewhere?: FlightElsewhere;
+  /** This site's own flight that a look-alike code most likely meant (US852 → UA852):
+   * a canonical permalink the server built, offered as a link. */
+  didYouMean?: string;
+  /** Five digits behind the site's code: longer than any flight number. */
+  tooManyDigits?: boolean;
+  /** The airport the segment names, on record, for the planner link's origin. */
+  airportCode?: string;
 }
 
 /** A link off a single-airline site, built by the server from the registry
