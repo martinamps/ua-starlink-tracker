@@ -110,6 +110,8 @@ import {
 import { rolloutTargets } from "../airlines/targets";
 import { retiredCodeNote, untrackedAirlineInfo } from "../airlines/untracked-airline";
 import {
+  type LegParse,
+  type LegQuery,
   type LegResolution,
   SWAP_DEGRADED_NOTE,
   airlineCountField,
@@ -288,6 +290,7 @@ import type {
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
 import { orList, placeCodeAirports } from "../utils/airport-aliases";
+import { toIata } from "../utils/airport-code";
 import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-names";
 import {
   airportLocalDate,
@@ -1594,11 +1597,29 @@ const apiPredictFlight: Handler = ({ url, reader, getReader, tenant }) => {
  * day (58 of 78 live connections on 27 Nov), so a later leg links the undated
  * page, which points on to its next departure, rather than a wrong day's answer.
  */
-function legPagePath(cfg: AirlineConfig, flightNumber: string, date: string | null): string | null {
+function legPagePath(
+  cfg: AirlineConfig,
+  flightNumber: string,
+  date: string | null,
+  route: string
+): string | null {
   if (!CANONICAL_FLIGHT_PERMALINK.test(flightNumber) || isFlightZero(flightNumber)) return null;
   if (permalinkCarrier(cfg, flightNumber) !== cfg) return null;
   if (permalinkFlightNumber(cfg, flightNumber) !== flightNumber) return null;
-  return `/check-flight/${flightNumber}${date && isRealIsoDate(date) ? `/${date}` : ""}`;
+  return `/check-flight/${flightNumber}${date && isRealIsoDate(date) ? `/${date}` : ""}${legPageQuery(route)}`;
+}
+
+/**
+ * The leg's airports as the page's leg scope, so a number that flies two legs
+ * a day opens on the leg the itinerary uses rather than the day's first. Only
+ * a pair parseLegQuery would scope; anything else links the whole flight.
+ */
+function legPageQuery(route: string): string {
+  const [origin, destination] = route.split("-");
+  if (!origin || !destination) return "";
+  const { leg } = parseLegQuery(origin, destination);
+  if (!leg?.origin || !leg.destination) return "";
+  return `?${new URLSearchParams({ origin: leg.origin, destination: leg.destination })}`;
 }
 
 const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
@@ -1673,7 +1694,7 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   }).map((it) => ({
     ...it,
     legs: it.legs.map((leg, i) => {
-      const page = legPagePath(cfg, leg.flight_number, i === 0 ? day : null);
+      const page = legPagePath(cfg, leg.flight_number, i === 0 ? day : null, leg.route);
       return page ? { ...leg, page } : leg;
     }),
   }));
@@ -3481,7 +3502,8 @@ function buildFlightFacts(
   reader: ScopedReader,
   cfg: AirlineConfig,
   flightNumber: string,
-  variants: string[]
+  variants: string[],
+  leg?: LegQuery
 ): FlightFacts {
   const history = reader.getFlightHistorySummary(variants);
   // Airport codes feed markup and JSON-LD; only use rows that look like real
@@ -3499,7 +3521,9 @@ function buildFlightFacts(
     )
     // The route page has its own gate (routeHasData); a pair it would 404
     // renders as text rather than a link to a dead page.
-    .map((r) => ({ ...r, linkable: reader.routeHasData(r.departure_airport, r.arrival_airport) }));
+    .map((r) => ({ ...r, linkable: reader.routeHasData(r.departure_airport, r.arrival_airport) }))
+    // The traveller's leg leads: it names the page and sets the clock its date is read on.
+    .sort((a, b) => Number(onLeg(b, leg)) - Number(onLeg(a, leg)));
   const now = unixNow();
   // One row per physical departure, newest assignment first, then the same
   // equipped test the date lookup answers with: a swap onto a non-Starlink
@@ -3531,6 +3555,8 @@ function buildFlightFacts(
   // lead with currently-scheduled legs). Draws on the same populations as the
   // permalink existence gate, so every link resolves. The reader is always
   // single-airline here — the hub 404s /check-flight/*.
+  // A leg asked for answers from its own next departure, or opens with none.
+  const nextOnLeg = leg ? slots.find((s) => onLeg(s, leg)) : slots[0];
   const primary = routes[0] ?? null;
   const siblings = primary
     ? reader
@@ -3553,10 +3579,22 @@ function buildFlightFacts(
       : null,
     routes,
     upcoming,
-    nextAssigned: slots[0] ? assignedDeparture(cfg, reader, flightNumber, slots[0], now) : null,
+    nextAssigned: nextOnLeg ? assignedDeparture(cfg, reader, flightNumber, nextOnLeg, now) : null,
     siblings,
     notObservedSince: notObservedSince(reader, routes, upcoming.length > 0, now),
   };
+}
+
+/** A route or departure flown on the leg asked for; any, with none asked. */
+function onLeg(
+  r: { departure_airport: string; arrival_airport: string | null },
+  leg: LegQuery | undefined
+): boolean {
+  if (!leg) return true;
+  return (
+    (!leg.origin || toIata(r.departure_airport) === leg.origin) &&
+    (!leg.destination || (!!r.arrival_airport && toIata(r.arrival_airport) === leg.destination))
+  );
 }
 
 /** The flight's departure airports whose page indexes, current legs first, at most three. */
@@ -3806,12 +3844,17 @@ async function datedAnswer(
   cfg: AirlineConfig,
   reader: ScopedReader,
   flightNumber: string,
-  date: string
+  date: string,
+  legParse: LegParse = { leg: undefined }
 ): Promise<DatedAnswer | undefined> {
   try {
-    const verdict = await resolveFlightVerdict(cfg, reader, flightNumber, date, {
-      lookupTail: null,
-    });
+    const verdict = await resolveFlightVerdict(
+      cfg,
+      reader,
+      flightNumber,
+      date,
+      withLeg({ lookupTail: null }, legParse)
+    );
     if (
       verdict.kind === "invalid_date" ||
       verdict.kind === "invalid_flight_number" ||
@@ -3830,6 +3873,7 @@ async function datedAnswer(
       flightNumber,
       date,
       daysOut: verdict.window.daysOut,
+      ...(legParse.leg ? { leg: legParse.leg } : {}),
       body,
       swap: planeSwapFor(
         reader,
@@ -4024,7 +4068,13 @@ const checkFlightPage: Handler = async (ctx) => {
     // noindex keeps it out of the index (the sitemap never advertises ungated
     // flights), and the canonical stays on this URL so the noindex lands here
     // rather than on the conversion page.
-    const dated = date ? await datedAnswer(cfg, reader, fn, date) : undefined;
+    // ?origin=&destination= scope the page to one leg the way they scope the
+    // API, and the page canonicalizes to the bare flight like a dated view.
+    const legParse = parseLegQuery(
+      ctx.url.searchParams.get("origin"),
+      ctx.url.searchParams.get("destination")
+    );
+    const dated = date ? await datedAnswer(cfg, reader, fn, date, legParse) : undefined;
     if (!reader.flightNumberHasData(variants)) {
       return renderSubPage(
         ctx,
@@ -4035,7 +4085,7 @@ const checkFlightPage: Handler = async (ctx) => {
         { popular: reader.getPopularFlights(), noindex: true, dated, unknownFlight: fn }
       );
     }
-    const facts = buildFlightFacts(reader, cfg, fn, variants);
+    const facts = buildFlightFacts(reader, cfg, fn, variants, legParse.leg);
     return renderSubPage(
       ctx,
       CheckFlightPage,

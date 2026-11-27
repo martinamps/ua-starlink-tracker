@@ -12,6 +12,8 @@ interface CheckFlightConfig extends Omit<AnswerContext, "zoneFor" | "nowSec"> {
   refresh: boolean;
   /** Zone → concatenated 3-letter IATA codes. */
   zones: Record<string, string>;
+  /** The leg the page answers; absent asks for every leg, as the page did. */
+  leg?: { origin?: string; destination?: string };
 }
 
 function zoneLookup(zones: Record<string, string>): (airport: string) => string | undefined {
@@ -31,9 +33,10 @@ function refreshAnswer(config: CheckFlightConfig): void {
     nowSec: Math.floor(Date.now() / 1000),
   };
   target.setAttribute("aria-busy", "true");
-  fetch(
-    `/api/check-flight?flight_number=${encodeURIComponent(config.flightNumber)}&date=${encodeURIComponent(config.date)}`
-  )
+  const query = new URLSearchParams({ flight_number: config.flightNumber, date: config.date });
+  if (config.leg?.origin) query.set("origin", config.leg.origin);
+  if (config.leg?.destination) query.set("destination", config.leg.destination);
+  fetch(`/api/check-flight?${query}`)
     .then((res) => res.json() as Promise<CheckFlightBody>)
     .then((body) => {
       // A failed live check keeps the server's answer rather than replacing it with an error.
