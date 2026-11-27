@@ -12,7 +12,12 @@
 
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
-import { bodyClassOf, getBtsIngestedMonths, replaceBtsMonth } from "../database/database";
+import {
+  bodyClassOf,
+  getBtsIngestedMonths,
+  metaJobStamps,
+  replaceBtsMonth,
+} from "../database/database";
 import { recordSyncOutcome } from "../database/source-health";
 import {
   COUNTERS,
@@ -274,6 +279,7 @@ export async function runBtsSync(db: Database, deps: BtsSyncDeps = {}): Promise<
 export function startBtsSyncJob(db: Database): JobHandle {
   return startJob({
     name: "bts_sync",
+    stamps: metaJobStamps(db),
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 45 * 60 * 1000,
     run: async () => {

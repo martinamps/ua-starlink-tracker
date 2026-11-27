@@ -10,7 +10,7 @@
  * is logged and never kills the interval.
  */
 
-import { error, warn } from "./logger";
+import { error, info, warn } from "./logger";
 
 export interface JobClock {
   now(): number;
@@ -45,6 +45,30 @@ export interface JobOptions {
   stuckTimeoutMs?: number;
   run: (ctx: JobRunContext) => unknown | Promise<unknown>;
   clock?: JobClock;
+  /** Remembers when each run started, across restarts. With it, a boot inside
+   * the interval waits until last start + intervalMs instead of re-running at
+   * initialDelayMs, and the interval counts from that first run. */
+  stamps?: JobStampStore;
+}
+
+/** Last run start per job name, in epoch ms; null when never run or unreadable. */
+export interface JobStampStore {
+  read(name: string): number | null;
+  write(name: string, ms: number): void;
+}
+
+/** First tick after boot: the usual delay, or later if the last run started
+ * less than an interval ago. A future stamp (clock skew) waits one interval
+ * at most, never longer. */
+export function bootDelayMs(
+  baseDelayMs: number,
+  lastStartMs: number | null,
+  intervalMs: number,
+  nowMs: number
+): number {
+  if (lastStartMs === null || !Number.isFinite(lastStartMs)) return baseDelayMs;
+  const untilDue = Math.min(intervalMs, lastStartMs + intervalMs - nowMs);
+  return Math.max(baseDelayMs, untilDue);
 }
 
 export interface JobHandle {
@@ -57,6 +81,7 @@ export function startJob(opts: JobOptions): JobHandle {
   const { name, intervalMs, initialDelayMs, run } = opts;
   const stuckTimeoutMs = opts.stuckTimeoutMs ?? DEFAULT_STUCK_TIMEOUT_MS;
   const clock = opts.clock ?? REAL_CLOCK;
+  const stamps = opts.stamps;
 
   let runSeq = 0;
   let active: { id: number; startedAt: number } | null = null;
@@ -74,6 +99,14 @@ export function startJob(opts: JobOptions): JobHandle {
     }
     const id = ++runSeq;
     active = { id, startedAt: clock.now() };
+    // Stamped on start, not success, so a crash-looping deploy can't re-run it.
+    if (stamps) {
+      try {
+        stamps.write(name, active.startedAt);
+      } catch (err) {
+        error(`[job:${name}] could not store run stamp`, err);
+      }
+    }
     try {
       await run({ isCurrent: () => active?.id === id });
     } catch (err) {
@@ -86,6 +119,36 @@ export function startJob(opts: JobOptions): JobHandle {
   const safeTick = () => {
     tick().catch((err) => error(`[job:${name}] scheduler error`, err));
   };
+
+  if (stamps) {
+    let last: number | null = null;
+    try {
+      last = stamps.read(name);
+    } catch (err) {
+      error(`[job:${name}] could not read run stamp; running on the boot schedule`, err);
+    }
+    const delay = bootDelayMs(initialDelayMs ?? intervalMs, last, intervalMs, clock.now());
+    if (last !== null && delay > (initialDelayMs ?? intervalMs)) {
+      info(
+        `[job:${name}] last run ${Math.round((clock.now() - last) / 60000)}min ago; next in ${Math.round(delay / 60000)}min`
+      );
+    }
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let stopped = false;
+    const initial = clock.setTimeout(() => {
+      if (stopped) return;
+      safeTick();
+      interval = clock.setInterval(safeTick, intervalMs);
+    }, delay);
+    return {
+      tick,
+      stop: () => {
+        stopped = true;
+        clock.clearTimeout(initial);
+        if (interval !== null) clock.clearInterval(interval);
+      },
+    };
+  }
 
   const interval = clock.setInterval(safeTick, intervalMs);
   const initial = initialDelayMs !== undefined ? clock.setTimeout(safeTick, initialDelayMs) : null;

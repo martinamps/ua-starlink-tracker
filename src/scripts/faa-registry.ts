@@ -7,7 +7,7 @@
 
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
-import { replaceFaaRegistry } from "../database/database";
+import { metaJobStamps, replaceFaaRegistry } from "../database/database";
 import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { FaaRegistryRow } from "../types";
@@ -339,6 +339,7 @@ export async function runFaaRegistrySync(
 export function startFaaRegistryJob(db: Database): JobHandle {
   return startJob({
     name: "faa_registry",
+    stamps: metaJobStamps(db),
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 20 * 60 * 1000,
     run: async () => {

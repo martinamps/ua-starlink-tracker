@@ -6,7 +6,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { replaceStarlinkPrefixes } from "../database/database";
+import { metaJobStamps, replaceStarlinkPrefixes } from "../database/database";
 import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, GAUGES, metrics, withSpan } from "../observability";
 import { type ParsedPrefix, parseCidr } from "../utils/ip-prefix";
@@ -70,6 +70,7 @@ export async function runGeofeedSync(
 export function startGeofeedJob(db: Database): JobHandle {
   return startJob({
     name: "starlink_geofeed",
+    stamps: metaJobStamps(db),
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 30 * 1000,
     run: async () => {

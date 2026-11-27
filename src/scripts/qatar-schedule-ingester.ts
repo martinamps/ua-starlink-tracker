@@ -43,6 +43,7 @@ import {
   getMeta,
   initializeDatabase,
   markQatarHistoryStale,
+  metaJobStamps,
   pruneQatarEquipmentHistory,
   pruneQatarFetchCoverage,
   pruneQatarScheduleBefore,
@@ -499,6 +500,7 @@ export function startQatarScheduleIngester(db: Database): JobHandle | undefined 
     );
   return startJob({
     name: "qatar_schedule_ingester",
+    stamps: metaJobStamps(db),
     intervalMs: INTERVAL_MS,
     initialDelayMs: STARTUP_DELAY_MS,
     // A degraded run (the breaker still allows ~half of 384 fetches to time

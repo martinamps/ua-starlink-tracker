@@ -19,6 +19,7 @@ import type { QatarFlight, fetchByRoute } from "../src/api/qatar-status";
 import {
   type getNextAlaskaVerifyTarget,
   getStarlinkTailsByCheckAge,
+  metaJobStamps,
   needsFlightCheck,
   setMeta,
 } from "../src/database/database";
@@ -36,7 +37,13 @@ import { buildRoster, fleetSyncInitialDelayMs, rosterSources } from "../src/scri
 import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
 import { type SheetScrapeResult, runSheetScrape } from "../src/scripts/sheet-scrape";
 import type { FleetStats } from "../src/types";
-import { type JobClock, createOutageBreaker, startJob } from "../src/utils/job-runner";
+import {
+  type JobClock,
+  type JobStampStore,
+  bootDelayMs,
+  createOutageBreaker,
+  startJob,
+} from "../src/utils/job-runner";
 import type { fetchAllSheets } from "../src/utils/utils";
 import { addFleet, addQatarRow, makeSyntheticDb } from "./helpers";
 
@@ -930,5 +937,170 @@ describe("fleet-sync boot delay", () => {
     for (const stamp of [new Date(NOW - 30 * HOUR).toISOString(), null, "not-a-date"]) {
       expect(fleetSyncInitialDelayMs(stamp, NOW)).toBe(5 * 60_000);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Restarts inside a job's interval — 26 Nov 2026: fourteen deploys in five
+// hours ran the hourly Qatar ingester 14 times instead of 5.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A clock whose timers fire in due order as time advances, so several boots
+ * of the same job can be replayed against one stamp store. */
+function timelineClock(startMs: number) {
+  let now = startMs;
+  let seq = 0;
+  const timers = new Map<number, { due: number; fn: () => void; every?: number }>();
+  const clock: JobClock = {
+    now: () => now,
+    setInterval: (fn, ms) => {
+      timers.set(++seq, { due: now + ms, fn, every: ms });
+      return seq as unknown as ReturnType<typeof setInterval>;
+    },
+    setTimeout: (fn, ms) => {
+      timers.set(++seq, { due: now + ms, fn });
+      return seq as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearInterval: (t) => {
+      timers.delete(t as unknown as number);
+    },
+    clearTimeout: (t) => {
+      timers.delete(t as unknown as number);
+    },
+  };
+  const runUntil = async (endMs: number) => {
+    for (;;) {
+      let next: [number, { due: number; fn: () => void; every?: number }] | null = null;
+      for (const entry of timers) if (!next || entry[1].due < next[1].due) next = entry;
+      if (!next || next[1].due > endMs) break;
+      const [id, t] = next;
+      now = t.due;
+      if (t.every) t.due += t.every;
+      else timers.delete(id);
+      t.fn();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    now = endMs;
+  };
+  return { clock, runUntil };
+}
+
+function memoryStamps(): JobStampStore & { map: Map<string, number> } {
+  const map = new Map<string, number>();
+  return { map, read: (n) => map.get(n) ?? null, write: (n, ms) => void map.set(n, ms) };
+}
+
+/** Boots the job at each restart time (stopping the previous process) and
+ * counts runs through the end of the window. */
+async function runsAcrossRestarts(opts: {
+  intervalMs: number;
+  initialDelayMs: number;
+  restartsMin: number[];
+  endMin: number;
+  stamps?: JobStampStore;
+}): Promise<number[]> {
+  const T0 = Date.parse("2026-11-26T18:53:00Z");
+  const tl = timelineClock(T0);
+  const runsAt: number[] = [];
+  let handle: { stop(): void } | null = null;
+  for (const min of opts.restartsMin) {
+    await tl.runUntil(T0 + min * 60_000);
+    handle?.stop();
+    handle = startJob({
+      name: "t_restarts",
+      intervalMs: opts.intervalMs,
+      initialDelayMs: opts.initialDelayMs,
+      stamps: opts.stamps,
+      clock: tl.clock,
+      run: () => {
+        runsAt.push(Math.round((tl.clock.now() - T0) / 60_000));
+      },
+    });
+  }
+  await tl.runUntil(T0 + opts.endMin * 60_000);
+  handle?.stop();
+  return runsAt;
+}
+
+describe("restarts don't re-run jobs that aren't due", () => {
+  const HOUR = 3600_000;
+  // Fourteen boots across five hours, as on 26 Nov (minutes after the first).
+  const RESTARTS = [0, 12, 31, 44, 70, 95, 118, 140, 166, 190, 214, 240, 268, 290];
+
+  test("hourly job: 14 runs without stamps, 5 with them", async () => {
+    const shape = { intervalMs: HOUR, initialDelayMs: 45_000, restartsMin: RESTARTS, endMin: 300 };
+    const before = await runsAcrossRestarts(shape);
+    const after = await runsAcrossRestarts({ ...shape, stamps: memoryStamps() });
+    expect(before).toHaveLength(14);
+    expect(after).toEqual([1, 61, 121, 181, 241]);
+  });
+
+  test("daily job: one run per day however often it restarts", async () => {
+    const shape = { intervalMs: 24 * HOUR, initialDelayMs: 20 * 60_000, endMin: 26 * 60 };
+    const restartsMin = Array.from({ length: 30 }, (_, i) => i * 50);
+    const after = await runsAcrossRestarts({ ...shape, restartsMin, stamps: memoryStamps() });
+    // The second run may slip past 24h by up to the boot delay, never earlier.
+    expect(after).toHaveLength(2);
+    expect(after[0]).toBe(20);
+    expect(after[1] - after[0]).toBeGreaterThanOrEqual(24 * 60);
+    expect(after[1] - after[0]).toBeLessThanOrEqual(24 * 60 + 20);
+  });
+
+  test("a first boot with no stamp runs on the usual delay, then on the interval", async () => {
+    const runs = await runsAcrossRestarts({
+      intervalMs: HOUR,
+      initialDelayMs: 45_000,
+      restartsMin: [0],
+      endMin: 150,
+      stamps: memoryStamps(),
+    });
+    expect(runs).toEqual([1, 61, 121]);
+  });
+
+  test("an overdue stamp runs on the usual boot delay", async () => {
+    const stamps = memoryStamps();
+    stamps.write("t_restarts", Date.parse("2026-11-26T10:00:00Z"));
+    const runs = await runsAcrossRestarts({
+      intervalMs: HOUR,
+      initialDelayMs: 45_000,
+      restartsMin: [0],
+      endMin: 2,
+      stamps,
+    });
+    expect(runs).toEqual([1]);
+  });
+
+  test("bootDelayMs caps a future stamp at one interval", () => {
+    expect(bootDelayMs(1000, 10_000_000, HOUR, 0)).toBe(HOUR);
+    expect(bootDelayMs(1000, null, HOUR, 0)).toBe(1000);
+    expect(bootDelayMs(1000, 0, HOUR, HOUR / 2)).toBe(HOUR / 2);
+  });
+
+  test("a stamp read that throws still schedules the boot run", async () => {
+    const runs = await runsAcrossRestarts({
+      intervalMs: HOUR,
+      initialDelayMs: 45_000,
+      restartsMin: [0],
+      endMin: 2,
+      stamps: {
+        read: () => {
+          throw new Error("db locked");
+        },
+        write: () => {},
+      },
+    });
+    expect(runs).toEqual([1]);
+  });
+
+  test("metaJobStamps round-trips through meta, and a garbled value reads as never run", () => {
+    const db = makeSyntheticDb();
+    const stamps = metaJobStamps(db);
+    expect(stamps.read("qatar_schedule_ingester")).toBeNull();
+    const ms = Date.parse("2026-11-26T18:53:00Z");
+    stamps.write("qatar_schedule_ingester", ms);
+    expect(stamps.read("qatar_schedule_ingester")).toBe(ms);
+    setMeta(db, "jobStartedAt:faa_registry", "not-a-date", "ALL");
+    expect(stamps.read("faa_registry")).toBeNull();
+    db.close();
   });
 });
