@@ -78,7 +78,7 @@ function hitRadii(busiestFirst: MapAirport[], max: number) {
  * fingertip: client/routes-map.ts fills it with those airports and places it
  * by the tap; on wider screens only a finger's tap opens it. Markup lives here so the stylesheet compiles its classes.
  */
-function TapChooser({ airports }: { airports: number }) {
+function TapChooser({ listLabel }: { listLabel: string }) {
   return (
     <dialog
       className="js-map-chooser absolute inset-x-2 z-30 m-0 w-auto rounded-lg border border-subtle bg-surface-elevated p-3 text-primary shadow-xl shadow-black/40 sm:w-80"
@@ -91,7 +91,7 @@ function TapChooser({ airports }: { airports: number }) {
         type="button"
         className="js-map-chooser-all mt-1 py-2 text-xs text-accent hover:underline"
       >
-        {`Not here? See all ${fmt(airports)} airports`}
+        {`Not here? See ${listLabel}`}
       </button>
       {/* Last in the markup, still drawn in the top corner: focus opens on
           the first airport, and Tab from there must reach Close before it
@@ -138,21 +138,32 @@ export function RoutesMap({
   basemapHref,
   windowLabel,
   updatedAt,
-  airportLinks,
+  airportHref,
   airlineLabel,
 }: {
   net: RouteNetwork;
   basemapHref: string;
   windowLabel: string;
   updatedAt?: string | null;
-  airportLinks: boolean;
+  /** An airport's page where it indexes, else null: that dot takes no clicks. */
+  airportHref?: (airport: string) => string | null;
   /** "United " or "" on the hub. */
   airlineLabel: string;
 }) {
   const maxArc = net.arcs.at(-1)?.departures ?? 1;
   const maxAirport = net.airports.at(-1)?.departures ?? 1;
   const busiest = [...net.airports].reverse();
-  const linked = airportLinks ? busiest.filter((a) => a.departures > 0) : [];
+  const hrefs = new Map<string, string>();
+  for (const a of busiest) {
+    const href = a.departures > 0 ? airportHref?.(a.code) : null;
+    if (href) hrefs.set(a.code, href);
+  }
+  const linked = busiest.filter((a) => hrefs.has(a.code));
+  // Arrivals-only airports never had a page; only a thin one makes the list partial.
+  const allLinked = linked.length === busiest.filter((a) => a.departures > 0).length;
+  const listLabel = allLinked
+    ? `all ${fmt(linked.length)} airports`
+    : `the ${fmt(linked.length)} airports with a page`;
   const hits = hitRadii(linked, maxAirport);
   const wide = new Set(busiest.slice(0, LABELS_WIDE).map((a) => a.code));
   const narrow = new Set(busiest.slice(0, LABELS_NARROW).map((a) => a.code));
@@ -188,7 +199,7 @@ export function RoutesMap({
               viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
               className="absolute inset-0 h-full w-full [-webkit-tap-highlight-color:transparent]"
             >
-              <title>{`Map: ${summary}.${airportLinks ? " Each airport links to its page." : ""}`}</title>
+              <title>{`Map: ${summary}.${linked.length > 0 ? " Airports with a page link to it." : ""}`}</title>
               <g fill="none" strokeLinecap="round" className="stroke-accent">
                 {arcBands(net.arcs, maxArc).map((band) => (
                   <path
@@ -225,7 +236,7 @@ export function RoutesMap({
                   return (
                     <a
                       key={ap.code}
-                      href={`/routes/${ap.code}`}
+                      href={hrefs.get(ap.code)}
                       aria-label={title}
                       data-departures={ap.departures}
                       className={
@@ -271,7 +282,7 @@ export function RoutesMap({
               />
             )}
           </div>
-          {linked.length > 0 && <TapChooser airports={linked.length} />}
+          {linked.length > 0 && <TapChooser listLabel={listLabel} />}
           <figcaption className="mt-3 text-xs text-muted text-pretty">
             {offFlights > 0
               ? `${pct(net.drawnDepartures, net.totalDepartures)} of ${fmt(net.totalDepartures)} departures are on this map. `
@@ -283,11 +294,13 @@ export function RoutesMap({
           {linked.length > 0 && (
             <details className="js-map-list mt-3 text-xs sm:pointer-fine:hidden">
               <summary className="cursor-pointer py-1 text-secondary">
-                {`All ${fmt(linked.length)} airports on the map`}
+                {allLinked
+                  ? `All ${fmt(linked.length)} airports on the map`
+                  : `The ${fmt(linked.length)} airports on the map with a page`}
               </summary>
               <div className="mt-1 flex flex-wrap gap-x-4 *:py-1.5 *:font-mono *:whitespace-nowrap *:text-secondary *:hover:text-accent">
                 {linked.map((ap) => (
-                  <a key={ap.code} href={`/routes/${ap.code}`}>
+                  <a key={ap.code} href={hrefs.get(ap.code)}>
                     {ap.code} <span className="tabular-nums">{fmt(ap.departures)}</span>
                   </a>
                 ))}
@@ -297,11 +310,12 @@ export function RoutesMap({
           {shownOff.length > 0 && (
             <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-secondary">
               <span className="text-muted">Beyond the map, flights to or from:</span>
-              {shownOff.map((o) =>
-                airportLinks && o.departs ? (
+              {shownOff.map((o) => {
+                const href = o.departs ? airportHref?.(o.code) : null;
+                return href ? (
                   <a
                     key={o.code}
-                    href={`/routes/${o.code}`}
+                    href={href}
                     className="font-mono whitespace-nowrap hover:text-accent"
                   >
                     {o.code} <span className="tabular-nums">{fmt(o.flights)}</span>
@@ -310,8 +324,8 @@ export function RoutesMap({
                   <span key={o.code} className="font-mono whitespace-nowrap">
                     {o.code} <span className="tabular-nums">{fmt(o.flights)}</span>
                   </span>
-                )
-              )}
+                );
+              })}
               {net.offMap.length > shownOff.length && (
                 <span className="text-muted">
                   and {fmt(net.offMap.length - shownOff.length)} more

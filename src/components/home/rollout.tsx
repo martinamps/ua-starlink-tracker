@@ -13,7 +13,6 @@ import {
   unnamedSentence,
 } from "../../airlines/published-count";
 import type { AirlineConfig } from "../../airlines/registry";
-import { ROUTE_AIRPORT_RE } from "../../database/sql/fragments";
 import { airportPlaceName } from "../../utils/airport-names";
 import { excludeMassWriteDays } from "../../utils/install-rate";
 import { Sparkline } from "../charts/sparkline";
@@ -220,18 +219,18 @@ export function RolloutPanel({
 
 /** Top airports by Starlink departures, as bars scaled to the busiest. One
  * column where the list sits in a sidebar (/routes), two on the homepage.
- * `linked` points each code at its /routes/{airport} page, which serves for
- * any airport with a departure in the window. */
+ * `airportHref` links a code to its airport page where that page indexes;
+ * any other code is plain text. */
 export function AirportBars({
   rows,
   limit = 12,
   columns = 2,
-  linked = false,
+  airportHref,
 }: {
   rows: { airport: string; count: number }[];
   limit?: number;
   columns?: 1 | 2;
-  linked?: boolean;
+  airportHref?: (airport: string) => string | null;
 }) {
   const top = rows.slice(0, limit);
   if (top.length === 0) return null;
@@ -240,13 +239,14 @@ export function AirportBars({
     <ol className={columns === 2 ? "grid gap-x-8 sm:grid-cols-2" : ""}>
       {top.map((r) => {
         const place = airportPlaceName(r.airport);
+        const href = airportHref?.(r.airport);
         return (
           <Fragment key={r.airport}>
             <li className="py-1.5 text-sm">
               <div className="flex items-baseline gap-2">
-                {linked && ROUTE_AIRPORT_RE.test(r.airport) ? (
+                {href ? (
                   <a
-                    href={`/routes/${r.airport}`}
+                    href={href}
                     className="font-mono text-primary hover:text-accent transition-colors"
                   >
                     {r.airport}
