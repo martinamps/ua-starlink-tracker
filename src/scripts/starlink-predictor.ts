@@ -73,6 +73,7 @@ import {
   detourBoundMiles,
   hubAllowedForTrip,
 } from "../utils/airport-geo";
+import { airportWithCode } from "../utils/airport-names";
 import {
   airportTimezone,
   flightDateWindow,
@@ -2579,6 +2580,25 @@ export type EmptyPlanReason =
 /** Has coordinates, so the detour bound and the country gate can weigh it. */
 const isPlaced = (code: string): boolean => AIRPORT_COORDS[code] !== undefined;
 
+/**
+ * The ends of a trip that have no coordinates yet. A trip with any gets its
+ * nonstops and no connection, so an answer built on the planner must say that
+ * connections went unchecked, never that none exists.
+ */
+export function unplacedTripEnds(origin: string, destination: string): string[] {
+  return [origin, destination].map((code) => code.toUpperCase().trim()).filter((c) => !isPlaced(c));
+}
+
+/**
+ * Why a trip with an unplaced end lists no connection, for an answer that
+ * would otherwise read as "none exists": ORD to St. Kitts by way of Newark is
+ * a real routing the planner leaves out, not one it failed to find.
+ */
+export function unplacedTripNote(airports: string[]): string {
+  const names = airports.map(airportWithCode).join(" and ");
+  return `connections were not checked, because ${names} ${airports.length === 1 ? "is" : "are"} not in our airport tables yet and none can be held to how far out of the way it goes. One may exist; only nonstops are covered here`;
+}
+
 /** planItinerary, with the reason when nothing is offered. */
 export function planRoute(
   reader: ScopedReader,
@@ -2600,7 +2620,7 @@ export function planRoute(
   // An airport without coordinates can't be held to the detour bound or the
   // domestic-hub gate, so it is never a hub, and a trip that starts or ends
   // at one is answered with its nonstops alone.
-  const unplaced = [orig, dest].filter((code) => !isPlaced(code));
+  const unplaced = unplacedTripEnds(orig, dest);
   const maxStops = unplaced.length === 0 ? maxStopsAsked : 0;
 
   // Detour gate. With every airport of a connection placed, neither the bound

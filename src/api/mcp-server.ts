@@ -89,6 +89,8 @@ import {
   predictRoute,
   routeBaseline,
   storedUnreadAircraft,
+  unplacedTripEnds,
+  unplacedTripNote,
 } from "../scripts/starlink-predictor";
 import { clientIp } from "../server/client-ip";
 import { aircraftTypeText } from "../server/community-wire";
@@ -1437,12 +1439,19 @@ function buildAlternativesBlock(
       });
     }
 
+    // An unplaced end means the planner looked at nonstops alone, so an empty
+    // result is no finding about connections and must not read as one.
+    const unplaced = unplacedTripEnds(r.origin, r.destination);
+    if (unplaced.length > 0) notes.push(`${segment}: ${unplacedTripNote(unplaced)}.`);
+
     if (its.length === 0) {
-      notes.push(
-        hours !== null && ENFORCE_ITINERARY_TIME_BUDGET
-          ? `${segment}: no Starlink routing within +${fmtH(itineraryHourBudget(hours) - hours)} of the nonstop.`
-          : `${segment}: no Starlink routing found.`
-      );
+      if (unplaced.length === 0) {
+        notes.push(
+          hours !== null && ENFORCE_ITINERARY_TIME_BUDGET
+            ? `${segment}: no Starlink routing within +${fmtH(itineraryHourBudget(hours) - hours)} of the nonstop.`
+            : `${segment}: no Starlink routing found.`
+        );
+      }
       continue;
     }
 
@@ -1894,6 +1903,19 @@ function toolPlanStarlinkItinerary(
         ? `**Nonstop baseline** (${baseline.flight_number ?? "typical nonstop"}): ${nonstopStats}`
         : `**No United nonstop** ${orig}→${dest} has been observed, so every option connects (straight-line flying time ~${fmtBaseH(baseline.duration_hours)} for reference).`;
 
+  // The planner searched nonstops alone for such a trip: say connections went
+  // unchecked, never that no routing exists or that the nonstop is the answer.
+  const unplaced = unplacedTripEnds(orig, dest);
+  const unplacedNote =
+    unplaced.length > 0 ? `From ${orig} to ${dest}, ${unplacedTripNote(unplaced)}.` : "";
+
+  if (itineraries.length === 0 && unplaced.length > 0) {
+    const noNonstop = emptyPlanMessage({ kind: "no_route", max_stops: 0 }, dest);
+    return textResult(
+      `${unplacedNote}${baselineLine ? `\n\n${baselineLine}` : ""}\n\n${noNonstop}\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — near-term assignments to Starlink aircraft may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) for a connection the user is weighing, \`predict_route_starlink\` on each leg — do not tell them that no connection has Starlink, since none was checked.`
+    );
+  }
+
   if (itineraries.length === 0) {
     const headline =
       hasNonstop && !sparseNonstop && ENFORCE_ITINERARY_TIME_BUDGET
@@ -2023,7 +2045,7 @@ ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")
 
   const text = `**Starlink routings: ${origin.toUpperCase()} → ${destination.toUpperCase()}**
 
-${baselineSection}${sections.join("\n\n---\n\n")}${timingNote}
+${baselineSection}${sections.join("\n\n---\n\n")}${timingNote}${unplacedNote ? `\n\n${unplacedNote}` : ""}
 
 **Ranking**: by coverage ratio (expected Starlink hours / total hours), with a small penalty per stop. Connections are limited to ${ENFORCE_ITINERARY_TIME_BUDGET ? "a modest time premium over the nonstop (1h per layover on top of flying time, and where times are known, real waits no more than 2h a stop past that)" : "the geographic detour bound"}. "~1.8h Starlink / ~7h flying (26%)" = 26% of flight time expected on Starlink.`;
 

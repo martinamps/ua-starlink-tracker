@@ -71,6 +71,26 @@ beforeAll(() => {
   leg("UA601", "DEN", "EWR", "15:00", 3.8, false);
   leg("UA603", "EWR", "LHR", "23:00", 7, false);
   leg("UA605", "ORD", UNKNOWN, "14:00", 5, false);
+  leg("UA606", UNKNOWN, "ORD", "20:30", 5.2, false);
+  leg("UA607", "DEN", "SFO", "09:00", 2.6, false);
+  // predict_flight_starlink reads a flight's route from the stored routes
+  // first; with one there it never reaches for the live lookup.
+  for (const [fn, from, to, hours] of [
+    ["UA606", UNKNOWN, "ORD", 5.2],
+    ["UA607", "DEN", "SFO", 2.6],
+  ] as const) {
+    db.query(
+      `INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+       VALUES (?, ?, ?, ?, ?, ?, 3)`
+    ).run(
+      fn,
+      from,
+      to,
+      hours * 3600,
+      utc(`${DATE}T00:00:00Z`) - 86400 * 4,
+      Math.floor(Date.now() / 1000)
+    );
+  }
   factory = createReaderFactory(db);
   reader = factory("UA");
   app = createApp(db);
@@ -233,6 +253,124 @@ describe("the MCP answers built on the planner", () => {
     });
     expect(none).toContain(`${UNKNOWN} is not in our airport tables yet`);
     expect(none).not.toContain("via ");
+  });
+});
+
+/**
+ * The planner leaves a connection out for such a trip; it has not looked for
+ * one. Each answer used to turn that into "no Starlink routing", inside the
+ * block the client shows word for word, and into advice to book the nonstop.
+ */
+describe("an MCP answer for a trip with an unplaced end", () => {
+  const NOT_CHECKED = `connections were not checked, because ${UNKNOWN} is not in our airport tables yet`;
+  const DENIALS = [
+    /no Starlink routing/i,
+    /No Starlink routings found/,
+    /No reasonable path/,
+    /advise booking the nonstop/,
+    /mainline-only route/,
+  ];
+  const saysUnchecked = (text: string, label: string) => {
+    expect(text, label).toContain(NOT_CHECKED);
+    expect(text, label).toContain("One may exist");
+    for (const denial of DENIALS) expect(text, label).not.toMatch(denial);
+  };
+  const verbatim = (text: string) =>
+    text.slice(text.indexOf("<present_verbatim>"), text.indexOf("</present_verbatim>"));
+
+  test("check_flight says so inside the block shown word for word", async () => {
+    const text = await mcp("ALL", "check_flight", { flight_number: "UA605", date: DATE });
+    saysUnchecked(text, "UA605");
+    expect(verbatim(text)).toContain(`ORD→${UNKNOWN}: ${NOT_CHECKED}`);
+  });
+
+  test("predict_flight_starlink says so for the return", async () => {
+    const text = await mcp("ALL", "predict_flight_starlink", {
+      flight_number: "UA606",
+      date: DATE,
+    });
+    saysUnchecked(text, "UA606");
+    expect(verbatim(text)).toContain(`${UNKNOWN}→ORD: ${NOT_CHECKED}`);
+  });
+
+  test("plan_starlink_itinerary says so, at every stop limit, and sends nobody to the nonstop", async () => {
+    for (const [origin, destination] of [
+      ["ORD", UNKNOWN],
+      [UNKNOWN, "ORD"],
+    ]) {
+      for (const max_stops of [0, 1, 2, 3]) {
+        const text = toolText(
+          await mcpDirect("UA", factory, "tools/call", {
+            name: "plan_starlink_itinerary",
+            arguments: { origin, destination, date: DATE, max_stops },
+          })
+        ).text;
+        saysUnchecked(text, `${origin}-${destination} ${max_stops}`);
+        expect(text).toContain("No nonstop with Starlink odds");
+      }
+    }
+  });
+
+  test("plan_starlink_itinerary says so beside a listed nonstop too", async () => {
+    const text = await mcp("UA", "plan_starlink_itinerary", {
+      origin: "EWR",
+      destination: UNKNOWN,
+      date: DATE,
+    });
+    expect(text).toContain("**DIRECT**");
+    saysUnchecked(text, "EWR");
+  });
+
+  test("predict_route_starlink says so", async () => {
+    // Pairs with no nonstop on record: the tool then answers from the planner.
+    for (const [origin, destination] of [
+      ["SJU", UNKNOWN],
+      [UNKNOWN, "LHR"],
+    ]) {
+      const text = await mcp("UA", "predict_route_starlink", { origin, destination });
+      saysUnchecked(text, `${origin}-${destination}`);
+      expect(verbatim(text)).toContain(`${origin}→${destination}: ${NOT_CHECKED}`);
+    }
+  });
+
+  test("names both ends when neither is placed", async () => {
+    const text = await mcp("UA", "plan_starlink_itinerary", {
+      origin: UNKNOWN,
+      destination: "QQZ",
+      date: DATE,
+    });
+    // No flight joins them, so the tool may answer before the planner; either
+    // way it denies nothing.
+    for (const denial of DENIALS) expect(text).not.toMatch(denial);
+  });
+
+  test("a trip between placed airports keeps every word it had", async () => {
+    // Denver to San Francisco: its one Starlink routing went through the
+    // unplaced airport, so the planner looked and found nothing.
+    const planned = await mcp("UA", "plan_starlink_itinerary", {
+      origin: "DEN",
+      destination: "SFO",
+      date: DATE,
+    });
+    expect(planned).toMatch(/^No Starlink routing/);
+    expect(planned).toContain("No reasonable path through the Starlink route graph");
+    expect(planned).toContain("advise booking the nonstop");
+    const answers = [
+      planned,
+      await mcp("ALL", "check_flight", { flight_number: "UA607", date: DATE }),
+      await mcp("ALL", "predict_flight_starlink", { flight_number: "UA607", date: DATE }),
+      await mcp("UA", "predict_route_starlink", { origin: "SFO", destination: "DEN" }),
+      await mcp("ALL", "check_flight", { flight_number: "UA601", date: DATE }),
+      await mcp("UA", "plan_starlink_itinerary", { origin: "DEN", destination: "EWR", date: DATE }),
+    ];
+    for (const text of answers) {
+      expect(text).not.toContain("not in our airport tables");
+      expect(text).not.toContain("were not checked");
+      expect(text).not.toContain(UNKNOWN);
+    }
+    for (const text of answers.slice(1, 4)) {
+      expect(verbatim(text)).toMatch(/(DEN→SFO|SFO→DEN): no Starlink routing (within|found)/);
+    }
   });
 });
 
