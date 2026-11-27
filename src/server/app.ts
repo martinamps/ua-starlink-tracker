@@ -6396,6 +6396,20 @@ function createSharePictureHandler(limits: SharePictureLimits): Handler {
   };
 }
 
+/**
+ * A name shaped like a build's fingerprinted assets: `tailwind.<hash>.css`,
+ * `<entry>.<hash>.js`, `routes-map.<hash>.svg`.
+ *
+ * A miss on one of these must never be stored. A deploy runs the old and the
+ * new container side by side for a second or two, so a page rendered by the
+ * new one can have its stylesheet asked of the old one. The shared 404 policy
+ * (an hour at the edge) would then answer "not found" for the new build's
+ * stylesheet to every visitor behind that edge for the hour, and the origin
+ * would never see it. Uncached, the same race costs one request. It also
+ * keeps a reverted build's assets from being refused by an hour-old 404.
+ */
+const FINGERPRINTED_ASSET = /^\/static\/[a-z0-9-]+\.[0-9a-z]+\.(?:js|css|svg)$/;
+
 const staticDir: Handler = ({ url, site }) => {
   const subPath = url.pathname.replace(/^\/static\//, "");
   const filePath = path.join(STATIC_DIR, subPath);
@@ -6409,6 +6423,9 @@ const staticDir: Handler = ({ url, site }) => {
     }
   } catch (err) {
     logError(`Error serving static file ${filePath}`, err);
+  }
+  if (FINGERPRINTED_ASSET.test(url.pathname)) {
+    return text("Not found", "text/plain", { status: 404, cache: CACHE.noStore });
   }
   return notFound(site);
 };

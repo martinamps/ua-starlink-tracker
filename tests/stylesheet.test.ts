@@ -173,6 +173,34 @@ describe("stylesheet delivery", () => {
     expect((await app.dispatch(req(stale as string, HOST))).status).toBe(404);
   });
 
+  // A deploy runs two builds side by side for a moment, so a build is asked
+  // for a fingerprint it never had. Stored for the dead-URL hour, that miss
+  // would refuse the other build's stylesheet to everyone behind the same edge.
+  test("a miss on a fingerprinted asset is never stored", async () => {
+    const { text: home } = await bodyOf(app, "/", HOST);
+    const css = home.match(/href="(\/static\/tailwind\.[a-z0-9]+\.css)"/)?.[1] as string;
+    expect(css).toBeTruthy();
+    const otherBuild = [
+      css.replace(/tailwind\.[a-z0-9]+\./, "tailwind.1n21jyxlr3ot5."),
+      "/static/airport-picker.1xdu1m88z8ihp.js",
+      "/static/routes-map.deadbeef.svg",
+    ];
+    for (const path of otherBuild) {
+      const res = await app.dispatch(req(path, HOST));
+      expect({ path, status: res.status }).toEqual({ path, status: 404 });
+      expect({ path, cache: res.headers.get("Cache-Control") }).toEqual({
+        path,
+        cache: "no-store",
+      });
+    }
+
+    // Every other dead address under /static keeps the shared policy that
+    // spares the origin a crawler's sweep.
+    const swept = await app.dispatch(req("/static/$%7Bv(E.page)%7D", HOST));
+    expect(swept.status).toBe(404);
+    expect(swept.headers.get("Cache-Control")).toContain("s-maxage=3600");
+  });
+
   test("web fonts are self-hosted, content-hashed and immutable", async () => {
     for (const path of ["/", "/definitely-not-a-page"]) {
       const res = await app.dispatch(req(path, HOST));
