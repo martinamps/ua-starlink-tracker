@@ -2296,6 +2296,35 @@ export function getRouteGraphEdges(db: Database, airline?: AirlineFilter): Route
     .all(...q.params) as RouteGraphEdge[];
 }
 
+export interface RouteGraphSighting {
+  flight_number: string;
+  departure_airport: string;
+  arrival_airport: string;
+  /** Departure-local date of one logged departure. */
+  dep_date: string;
+}
+
+/**
+ * Each local day a flight was logged on a pair (flight_assignment_log: a week
+ * back, about two days ahead). The planner's times come from upcoming_flights,
+ * which holds one or two departures; these days say whether a time is a usual
+ * one and which weekdays the flight runs.
+ */
+export function getRouteGraphSightings(
+  db: Database,
+  airline?: AirlineFilter
+): RouteGraphSighting[] {
+  const q = withAirline(
+    `SELECT flight_number, departure_airport, arrival_airport, dep_date
+     FROM flight_assignment_log
+     WHERE departure_time IS NOT NULL AND arrival_airport IS NOT NULL`,
+    airline
+  );
+  return db
+    .query(`${q.sql} GROUP BY flight_number, departure_airport, arrival_airport, dep_date`)
+    .all(...q.params) as RouteGraphSighting[];
+}
+
 /**
  * Every ORIG-DEST pair the carrier flies. Only proves absence when a route
  * census exists — that's United's BTS T-100 only (bts_monthly_routes has no

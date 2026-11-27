@@ -30,6 +30,7 @@ import {
   buildAirlineFlightNumberVariants,
   ensureAirlinePrefix,
   inferSubfleet,
+  slotFlightKey,
 } from "../airlines/flight-number";
 import {
   AIRLINES,
@@ -48,7 +49,13 @@ import {
 } from "../airlines/registry";
 import { formatFactDate } from "../airlines/rollout-facts";
 import { type StatementAnswer, statementAnswer } from "../airlines/statement-rule";
-import { bandLabel, capitalize, zonedClock, zonedMinutes } from "../components/ui/format";
+import {
+  bandLabel,
+  capitalize,
+  zonedClock,
+  zonedMinutes,
+  zonedWeekday,
+} from "../components/ui/format";
 import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
 import type { AirlineTypeCount } from "../database/airline-count";
 import type {
@@ -2233,7 +2240,22 @@ export type ItineraryLeg = BasePrediction & {
   typical_arrival?: string;
   /** Origin-local date the leg flies on, given a searched date: a later leg can be the next day. */
   date?: string;
+  /**
+   * What the times rest on, in the route board's words: "usual" once the
+   * flight was seen on USUAL_TIME_DAYS days, else its "next" scheduled
+   * departure or the one "last_seen".
+   */
+  time_basis?: TimeBasis;
+  /** Local days the flight was seen on this pair, the timed leg's evidence. */
+  days_seen?: number;
+  /** Seen flying on the weekday of `date`; absent undated or with nothing logged. */
+  runs_on_date?: boolean;
 };
+
+export type TimeBasis = "usual" | "next" | "last_seen";
+
+/** Logged days a departure time needs before the board or the planner calls it usual. */
+export const USUAL_TIME_DAYS = 3;
 
 export interface Itinerary {
   via: string[]; // connection hub(s) in order, empty for direct
@@ -2274,6 +2296,12 @@ interface EdgeOption {
   duration_hours: number | null;
   /** Usual departure, minutes after local midnight at the origin; null when unknown. */
   minutes: number | null;
+  /** Local days the flight was seen on the pair (logged, plus its scheduled one). */
+  days: number;
+  /** Weekdays ("Sat") of those days. */
+  weekdays: ReadonlySet<string>;
+  /** The scheduled departure the time is read from (unix); null when unknown. */
+  newest: number | null;
 }
 
 /**
@@ -2312,6 +2340,30 @@ function confirmedEdgesOn(reader: ScopedReader, date: string): Map<string, "expr
 const nextIsoDate = (date: string) =>
   new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
+const weekdayOf = (date: string) => zonedWeekday(Date.parse(`${date}T12:00:00Z`) / 1000, "UTC");
+
+// The log holds a week; its grouped scan runs some tens of ms at United's size,
+// and a usual time or a weekday doesn't move within minutes.
+const sightingMemo = perOwner<ScopedReader, ReturnType<typeof memo<Map<string, Set<string>>>>>(() =>
+  memo<Map<string, Set<string>>>({ ttlSec: 600, maxEntries: 1 })
+);
+
+/** Logged local days per flight|dep|arr, the flight keyed as departure slots key it. */
+function sightingDays(reader: ScopedReader): Map<string, Set<string>> {
+  return sightingMemo(reader)("days", () => loadSightingDays(reader));
+}
+
+function loadSightingDays(reader: ScopedReader): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const r of reader.getRouteGraphSightings()) {
+    const key = `${slotFlightKey(r.flight_number, reader.scope) ?? r.flight_number}|${r.departure_airport}|${r.arrival_airport}`;
+    const days = out.get(key);
+    if (days) days.add(r.dep_date);
+    else out.set(key, new Set([r.dep_date]));
+  }
+  return out;
+}
+
 /**
  * Build the Starlink route adjacency graph: for each airport, every flight
  * number to each reachable destination that clears the odds floor on some day
@@ -2334,6 +2386,7 @@ function buildRouteGraph(
   searchedDate: string | null
 ): RouteGraph {
   const rows = reader.getRouteGraphEdges();
+  const logged = sightingDays(reader);
   // A later leg can fly the day after the searched one (a red-eye, a late
   // connection), so a flight confirmed on either day is worth keeping.
   const seedDays = searchedDate ? [searchedDate, nextIsoDate(searchedDate)] : [];
@@ -2351,6 +2404,10 @@ function buildRouteGraph(
     if (hist.probability < minLegProb && !confirmedSomeDay) continue;
 
     const zone = airportTimezone(dep);
+    const days = new Set(
+      logged.get(`${slotFlightKey(r.flight_number, reader.scope) ?? r.flight_number}|${dep}|${arr}`)
+    );
+    if (zone && r.departure_time) days.add(localDateISO(r.departure_time, zone));
     const option: EdgeOption = {
       stored: r.flight_number,
       hist,
@@ -2359,6 +2416,9 @@ function buildRouteGraph(
       arrival: arr,
       duration_hours: r.avg_duration_sec > 0 ? r.avg_duration_sec / 3600 : null,
       minutes: zone && r.departure_time ? zonedMinutes(r.departure_time, zone) : null,
+      days: days.size,
+      weekdays: new Set([...days].map(weekdayOf)),
+      newest: r.departure_time,
     };
     if (!graph.has(dep)) graph.set(dep, new Map());
     const edges = graph.get(dep)!;
@@ -2475,23 +2535,49 @@ export function planItinerary(
   reader: ScopedReader,
   origin: string,
   destination: string,
-  options: {
-    maxItineraries?: number;
-    minLegProbability?: number;
-    maxStops?: number;
-    targetDateUnix?: number;
-    /** Time budget + 2-stop gain rule; defaults to ENFORCE_ITINERARY_TIME_BUDGET. */
-    enforceTimeBudget?: boolean;
-  } = {}
+  options: PlanOptions = {}
 ): Itinerary[] {
+  return planRoute(reader, origin, destination, options).itineraries;
+}
+
+export interface PlanOptions {
+  maxItineraries?: number;
+  minLegProbability?: number;
+  maxStops?: number;
+  targetDateUnix?: number;
+  /** Time budget + 2-stop gain rule; defaults to ENFORCE_ITINERARY_TIME_BUDGET. */
+  enforceTimeBudget?: boolean;
+}
+
+/**
+ * Why a plan came back empty, so a page can say so instead of showing nothing:
+ * "over_budget" — connections exist but all take too long against the nonstop;
+ * "no_same_day" — Starlink flights reach `hubs`, but none flies on within
+ * MAX_CONNECTION_HOURS of landing; "no_route" — no Starlink legs join the pair.
+ */
+export type EmptyPlanReason =
+  | { kind: "over_budget"; budget_hours: number; nonstop_hours: number | null }
+  | { kind: "no_same_day"; hubs: string[] }
+  | { kind: "no_route"; max_stops: number };
+
+/** planItinerary, with the reason when nothing is offered. */
+export function planRoute(
+  reader: ScopedReader,
+  origin: string,
+  destination: string,
+  options: PlanOptions = {}
+): { itineraries: Itinerary[]; empty: EmptyPlanReason | null } {
   const orig = origin.toUpperCase().trim();
   const dest = destination.toUpperCase().trim();
-  if (orig === dest) return [];
+  const maxStopsAsked = Math.min(options.maxStops ?? 2, 3);
+  if (orig === dest)
+    return { itineraries: [], empty: { kind: "no_route", max_stops: maxStopsAsked } };
 
   const enforceBudget = options.enforceTimeBudget ?? ENFORCE_ITINERARY_TIME_BUDGET;
   const maxItineraries = options.maxItineraries ?? 10;
   const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
-  const maxStops = Math.min(options.maxStops ?? 2, 3);
+  const maxStops = maxStopsAsked;
+  const nowSec = Math.floor(Date.now() / 1000);
 
   // Detour gate. Unknown airports null the bound / the running path total,
   // which disables pruning for that query / that path (fail open).
@@ -2561,7 +2647,7 @@ export function planItinerary(
     it.via.length === 0 ||
     budgetHours === null ||
     it.total_flight_hours === null ||
-    elapsedHours(it) <= budgetHours;
+    fitsHourBudget(it, budgetHours);
   const hubAllowed = (hub: string) => hubAllowedForTrip(orig, dest, hub);
 
   const legHours = (leg: ItineraryLeg): number | null => withDuration(leg).duration_hours;
@@ -2597,11 +2683,18 @@ export function planItinerary(
 
   const timedLeg = (
     leg: ItineraryLeg,
+    option: EdgeOption,
     slot: { depart: number; arrive: number | null; date: string } | null
   ): ItineraryLeg => {
     if (!slot) return leg;
     const [from, to] = leg.route.split("-");
     const toZone = airportTimezone(to);
+    const basis: TimeBasis =
+      option.days >= USUAL_TIME_DAYS
+        ? "usual"
+        : option.newest !== null && option.newest > nowSec
+          ? "next"
+          : "last_seen";
     return {
       ...leg,
       typical_departure: zonedClock(slot.depart, airportTimezone(from)),
@@ -2609,6 +2702,11 @@ export function planItinerary(
         ? { typical_arrival: zonedClock(slot.arrive, toZone) }
         : {}),
       ...(searchedDate ? { date: slot.date } : {}),
+      time_basis: basis,
+      days_seen: option.days,
+      ...(searchedDate && option.days > 0
+        ? { runs_on_date: option.weekdays.has(weekdayOf(slot.date)) }
+        : {}),
     };
   };
 
@@ -2631,11 +2729,16 @@ export function planItinerary(
         const slot = schedule(option, state.landed);
         if (!slot) continue;
         const leg = datedLeg(option, searchedDate ? slot.date : null, confirmedOn, minLegProb);
-        if (leg) timed.push({ leg: timedLeg(leg, slot), slot });
+        if (leg) timed.push({ leg: timedLeg(leg, option, slot), slot });
       }
       if (!first && timed.length > 0) {
+        // A flight seen on the leg's weekday beats better odds on one that
+        // may not run that day.
         timed.sort(
-          (a, b) => b.leg.probability - a.leg.probability || a.slot!.depart - b.slot!.depart
+          (a, b) =>
+            offWeekday(a.leg) - offWeekday(b.leg) ||
+            b.leg.probability - a.leg.probability ||
+            a.slot!.depart - b.slot!.depart
         );
         return [timed[0]];
       }
@@ -2681,10 +2784,16 @@ export function planItinerary(
   // Every timing of a path (one per first-leg flight), until the budget is
   // known: the best odds can sit on a timing whose layover runs over it.
   const variantsByPath = new Map<string, Itinerary[]>();
+  // Hubs a timed leg reached whose flights on to the destination all leave
+  // too early or too late: the reason when no connection is left.
+  const missedHubs = new Set<string>();
   // A connection that is known to work beats better odds on one that may not;
   // a nonstop has nothing to connect, so its best odds win.
   const better = (a: Itinerary, b: Itinerary): boolean => {
     if (a.via.length > 0 && a.schedule !== b.schedule) return a.schedule === "same_day";
+    const offA = a.legs.reduce((n, l) => n + offWeekday(l), 0);
+    const offB = b.legs.reduce((n, l) => n + offWeekday(l), 0);
+    if (offA !== offB) return offA < offB;
     if (Math.abs(a.joint_probability - b.joint_probability) > 1e-9) {
       return a.joint_probability > b.joint_probability;
     }
@@ -2707,7 +2816,11 @@ export function planItinerary(
         const flown = pathMiles(state.flown, state.airport, nextAirport);
         if (exceedsBound(flown, nextAirport)) continue;
 
-        for (const { leg, slot } of stepsTo(options, state)) {
+        const steps = stepsTo(options, state);
+        if (steps.length === 0 && nextAirport === dest && state.landed !== null) {
+          missedHubs.add(state.airport);
+        }
+        for (const { leg, slot } of steps) {
           const first = state.legs.length === 0;
           const next: SearchState = {
             airport: nextAirport,
@@ -2766,6 +2879,7 @@ export function planItinerary(
   // we don't already have a strong direct (≥70% joint) — extra options
   // are noise when a 92% direct exists.
   const directIt = fulls.find((it) => it.via.length === 0);
+  let overBudget = connections.some((it) => !withinBudget(it));
   const showPartials = maxStops > 0 && (!directIt || directIt.joint_probability < 0.7);
 
   if (showPartials) {
@@ -2786,7 +2900,7 @@ export function planItinerary(
     const bestOn = (options: EdgeOption[] | undefined): ItineraryLeg | null => {
       for (const option of options ?? []) {
         const leg = datedLeg(option, searchedDate, confirmedOn, minLegProb);
-        if (leg) return timedLeg(leg, schedule(option, null));
+        if (leg) return timedLeg(leg, option, schedule(option, null));
       }
       return null;
     };
@@ -2834,6 +2948,7 @@ export function planItinerary(
     const partialsEmptied = itineraries.length === 0 && !partials.some(withinBudget);
     if (!firmNonstop && (budgetHours === null || partialsEmptied)) budgetFromFastest(partials);
     itineraries.push(...partials.filter(withinBudget).slice(0, partialLimit));
+    if (partials.some((it) => !withinBudget(it))) overBudget = true;
   }
 
   // A 2-stop has to buy real Starlink time over the simpler options (the
@@ -2882,8 +2997,42 @@ export function planItinerary(
     ? [direct, ...nonDirect.slice(0, maxItineraries - 1)]
     : nonDirect.slice(0, maxItineraries);
 
-  return [...fullKept, ...partialSorted.slice(0, 3)];
+  const result = [...fullKept, ...partialSorted.slice(0, 3)];
+  if (result.length > 0) return { itineraries: result, empty: null };
+  const empty: EmptyPlanReason =
+    overBudget && budgetHours !== null
+      ? {
+          kind: "over_budget",
+          budget_hours: budgetHours,
+          nonstop_hours: hasNonstop ? baseline.duration_hours : null,
+        }
+      : missedHubs.size > 0
+        ? { kind: "no_same_day", hubs: [...missedHubs].sort() }
+        : { kind: "no_route", max_stops: maxStops };
+  return { itineraries: [], empty };
 }
+
+/** The page's and the MCP tool's sentence for an empty plan. */
+export function emptyPlanMessage(why: EmptyPlanReason, destination: string): string {
+  const hours = (h: number) => `${h.toFixed(1)} hours`;
+  switch (why.kind) {
+    case "over_budget":
+      return why.nonstop_hours !== null
+        ? `Every connection with Starlink odds takes far longer than the ${hours(why.nonstop_hours)} nonstop (over ${hours(why.budget_hours)} of flying and stops, or a long wait), so none is listed. The nonstop is the quicker trip.`
+        : `Every connection with Starlink odds runs over ${hours(why.budget_hours)} of flying and stops, or waits long between flights, so none is listed.`;
+    case "no_same_day":
+      return `Flights with Starlink odds reach ${why.hubs.join(", ")}, but none flies on to ${destination} between 1 and ${MAX_CONNECTION_HOURS} hours after landing, so there is no same-day connection.`;
+    case "no_route": {
+      const odds = `Starlink odds of ${Math.round(MIN_LEG_PROBABILITY * 100)}% or more`;
+      return why.max_stops === 0
+        ? `No nonstop with ${odds} flies between these airports.`
+        : `No flights with ${odds} connect these airports within ${why.max_stops} stop${why.max_stops === 1 ? "" : "s"}.`;
+    }
+  }
+}
+
+/** 1 when a leg was logged, but never on the weekday it would fly. */
+const offWeekday = (leg: ItineraryLeg): number => (leg.runs_on_date === false ? 1 : 0);
 
 /**
  * Time budget for connections relative to the nonstop. Ratio-only ranking
@@ -2897,6 +3046,8 @@ const BUDGET_SLACK_HOURS = 2.5;
 // Minimum connection time per stop when the legs' times are unknown;
 // total_flight_hours is airborne time only.
 const LAYOVER_HOURS = 1.0;
+// How far past the budget a timed connection's real waits may take it, a stop.
+const WAIT_SLACK_HOURS = 2;
 // A connection must leave this long after the previous leg usually lands.
 // Times are usual ones, not today's schedule, so this is United's domestic
 // minimum (~45 min at its hubs) with room for a late first leg.
@@ -2927,7 +3078,24 @@ export function itineraryHourBudget(baselineHours: number): number {
 /** Door to door at the legs' usual times; else flying time plus a minimum connection per stop. */
 export function elapsedHours(it: Itinerary): number {
   if (typeof it.elapsed_hours === "number") return it.elapsed_hours;
-  return (it.total_flight_hours ?? 0) + LAYOVER_HOURS * it.via.length;
+  return flyingWithStops(it);
+}
+
+const flyingWithStops = (it: Itinerary) =>
+  (it.total_flight_hours ?? 0) + LAYOVER_HOURS * it.via.length;
+
+/**
+ * One yardstick for every connection: flying time plus LAYOVER_HOURS a stop
+ * within the budget, timed or not. Counting a timed connection's real wait
+ * against a budget that an untimed one meets with a flat hour dropped good
+ * flyable trips for unchecked ones (MSY-SFO via IAH at 64%, 2h 46m to
+ * connect, for a 35% DEN one). The real wait is capped apart: door to door
+ * may run WAIT_SLACK_HOURS a stop past the budget, no more.
+ */
+export function fitsHourBudget(it: Itinerary, budgetHours: number): boolean {
+  if (flyingWithStops(it) > budgetHours + 1e-9) return false;
+  if (typeof it.elapsed_hours !== "number") return true;
+  return it.elapsed_hours <= budgetHours + WAIT_SLACK_HOURS * it.via.length + 1e-9;
 }
 
 /**
