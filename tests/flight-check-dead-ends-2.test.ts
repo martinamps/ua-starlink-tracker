@@ -55,6 +55,21 @@ beforeAll(() => {
   addFleet(db, "N39450", "confirmed", { verifiedWifi: "Starlink" });
   const now = Math.floor(Date.now() / 1000);
   addFlight(db, "N39450", "UA1932", "DEN", now + 6 * 3600, { arrivalAirport: "ORD" });
+  // Airports each airline departs from, none of them on a pair the tests ask for.
+  const route = db.query(
+    `INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+     VALUES (?, ?, ?, 10800, ?, ?, 3)`
+  );
+  for (const [fn, origin, destination] of [
+    ["UA2001", "LGA", "ORD"],
+    ["UA2002", "LAS", "DEN"],
+    ["UA2003", "EWR", "DEN"],
+    ["UA2004", "SFO", "DEN"],
+    ["AS2001", "LGA", "SEA"],
+    ["AS2002", "LAS", "SEA"],
+  ] as const) {
+    route.run(fn, origin, destination, now - 86400, now);
+  }
   for (const [type, prefix] of [
     ["Boeing 737 MAX 8", "N2701"],
     ["Boeing 737-824", "N7380"],
@@ -107,6 +122,28 @@ describe("a route pair with no route page", () => {
     }
     expect((await get("/route-planner/LGA/LAS", HUB)).status).toBe(404);
   });
+
+  test("llms.txt names only route pairs whose page exists, even on thin data", async () => {
+    // With no popular routes, llms.txt once fell back to a fixed pair that
+    // now hops to the planner, which a < 400 check reads as fine.
+    for (const host of [UA, AS]) {
+      const body = await (await get("/llms.txt", host)).text();
+      const pairs = [...body.matchAll(/https:\/\/[^/\s]+(\/route-planner\/[A-Z]{3}\/[A-Z]{3})\b/g)];
+      for (const [, path] of pairs) {
+        expect((await get(path, host)).status, `${host} llms.txt names ${path}`).toBe(200);
+      }
+    }
+  });
+
+  test("an end the site's airline never departs from: still a 404", async () => {
+    for (const host of [UA, AS]) {
+      for (const path of ["/route-planner/LHR/CDG", "/route-planner/LGA/MIA"]) {
+        const res = await get(path, host);
+        expect(res.status, `${host}${path}`).toBe(404);
+        expect(res.headers.get("location"), `${host}${path}`).toBeNull();
+      }
+    }
+  });
 });
 
 describe("digits where a flight goes", () => {
@@ -129,6 +166,17 @@ describe("digits where a flight goes", () => {
       );
     }
     expect((await get("/check-flight/1618", HUB)).status).toBe(404);
+  });
+
+  test("zeros alone are no flight: a 404, not a hop to flight 0", async () => {
+    for (const path of ["/check-flight/0", "/check-flight/000", "/check-flight/00000"]) {
+      const res = await get(path, UA);
+      expect(res.status, path).toBe(404);
+      expect(res.headers.get("location"), path).toBeNull();
+    }
+    expect(bareDigitsFlight(AIRLINES.UA, "0")).toBeNull();
+    expect(bareDigitsFlight(AIRLINES.UA, "0000")).toBeNull();
+    expect(bareDigitsFlight(AIRLINES.UA, "0654")).toBe("UA654");
   });
 
   test("five digits that are a tail we track, with or without UA, go to the tail", async () => {
@@ -192,6 +240,21 @@ describe("two airport codes where a flight goes", () => {
     ]) {
       expectHop(await get(path, UA), 301, `https://${UA}/route-planner/DEN/ORD`, path);
     }
+  });
+
+  test("a typed date rides along as the route page's ?date=", async () => {
+    expectHop(
+      await get("/check-flight/DENORD/2026-11-30", UA),
+      301,
+      `https://${UA}/route-planner/DEN/ORD?date=2026-11-30`,
+      "dated pair"
+    );
+    expectHop(
+      await get("/check-flight/DENORD/2026-02-30", UA),
+      301,
+      `https://${UA}/route-planner/DEN/ORD`,
+      "a day that doesn't exist is dropped"
+    );
   });
 
   test("a pair nobody here flies, or a six-letter word, keeps its notice", async () => {
@@ -275,7 +338,7 @@ describe("typed values are hostile input", () => {
             const to = new URL(location);
             expect(ours.has(to.host), label).toBe(true);
             expect(`${to.pathname}${to.search}`, label).toMatch(
-              /^\/(?:check-flight\/[A-Z]{2}\d{1,4}(?:\/\d{4}-\d\d-\d\d)?|fleet(?:\/[A-Za-z0-9-]{1,40})?|route-planner(?:\/[A-Z]{3}\/[A-Z]{3}|\?origin=[A-Z]{3}&destination=[A-Z]{3})?)$/
+              /^\/(?:check-flight\/[A-Z]{2}\d{1,4}(?:\/\d{4}-\d\d-\d\d)?|fleet(?:\/[A-Za-z0-9-]{1,40})?|route-planner(?:\/[A-Z]{3}\/[A-Z]{3}(?:\?date=\d{4}-\d\d-\d\d)?|\?origin=[A-Z]{3}&destination=[A-Z]{3})?)$/
             );
           }
           expect(body, label).not.toMatch(/<script>alert|<img src=x|<svg onload/);

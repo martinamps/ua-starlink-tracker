@@ -86,9 +86,10 @@ export function looksLikeAFlight(raw: string): boolean {
 }
 
 /** Digits alone where a flight goes, completed with the site's own code the
- * way the search form completes them. Null unless that is a real permalink. */
+ * way the search form completes them. Null unless that is a real permalink,
+ * and for zeros alone: no airline flies flight 0, so "0" is no flight's hop. */
 export function bareDigitsFlight(pinned: AirlineConfig, raw: string): string | null {
-  return /^\d+$/.test(canonicalFlightInput(raw))
+  return /^0*[1-9]\d*$/.test(canonicalFlightInput(raw))
     ? canonicalFlightFor(flightInputRules(pinned), raw)
     : null;
 }
