@@ -2279,12 +2279,15 @@ export interface RouteGraphEdge {
   arrival_airport: string;
   obs: number;
   avg_duration_sec: number;
+  /** The newest scheduled departure (unix): its local clock is the flight's usual time. */
+  departure_time: number | null;
 }
 
 export function getRouteGraphEdges(db: Database, airline?: AirlineFilter): RouteGraphEdge[] {
   const q = withAirline(
     `SELECT flight_number, departure_airport, arrival_airport,
-            COUNT(*) as obs, AVG(arrival_time - departure_time) as avg_duration_sec
+            COUNT(*) as obs, AVG(arrival_time - departure_time) as avg_duration_sec,
+            MAX(departure_time) as departure_time
      FROM upcoming_flights WHERE 1=1`,
     airline
   );

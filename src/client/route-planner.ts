@@ -6,7 +6,7 @@
  * without data, so a reload would lose the search.
  */
 import type { RouteFlightBoard } from "../api/route-flights";
-import { probLabel, probTier } from "../components/ui/format";
+import { formatDuration, monthDay, probLabel, probTier } from "../components/ui/format";
 import { orList, placeCodeAirports } from "../utils/airport-aliases";
 import type { AirportBox, attachAirportBox } from "./airport-picker";
 import { esc } from "./esc";
@@ -14,6 +14,11 @@ import { HINT_ERROR, HINT_PLAIN } from "./hint-classes";
 import { renderRouteFlights } from "./route-flights";
 
 interface Leg {
+  /** Usual local times at each end ("8:15 AM"), when on record. */
+  typical_departure?: string;
+  typical_arrival?: string;
+  /** Origin-local date the leg flies, on a dated search. */
+  date?: string;
   route: string;
   flight_number: string;
   probability: number;
@@ -30,6 +35,9 @@ interface Itinerary {
   joint_probability: number;
   at_least_one_probability: number;
   total_flight_hours?: number;
+  /** "same_day": each connection leaves after the previous leg usually lands. */
+  schedule?: "same_day" | "unknown";
+  connection_minutes?: Array<number | null>;
 }
 
 interface Baseline {
@@ -90,6 +98,39 @@ function renderLeg(leg: Leg): string {
   return `<div class="flex items-center justify-between py-2 border-l-2 pl-3 ml-1" style="border-color:${color}"><div class="text-sm"><div class="font-mono text-secondary">${legFlight(leg)} <span class="text-muted">${from} → ${to}</span></div><div class="text-xs text-muted">Based on ${checks}${conf}</div></div>${odds}</div>`;
 }
 
+const TIMING_ROW = "text-xs text-muted pl-3 ml-1";
+
+/** The leg's usual times, dated when it flies on another day than the trip starts. */
+function legTimes(leg: Leg, tripDate: string | undefined): string {
+  if (!leg.typical_departure) return "";
+  const day = leg.date && leg.date !== tripDate ? ` · ${esc(monthDay(leg.date))}` : "";
+  const lands = leg.typical_arrival ? `, lands ${esc(leg.typical_arrival)}` : "";
+  return `<div class="${TIMING_ROW}">Usually leaves ${esc(leg.typical_departure)}${lands}${day}</div>`;
+}
+
+/**
+ * Time on the ground before leg `i`: the planner only shows a connection that
+ * leaves after the previous leg usually lands, and says so when it can't tell.
+ */
+function connectionRow(it: Itinerary, i: number): string {
+  if (i === 0 || it.legs[i].flight_number === "(any)" || it.legs[i - 1].flight_number === "(any)") {
+    return "";
+  }
+  const hub = esc(it.legs[i].route.split("-")[0]);
+  const minutes = it.connection_minutes?.[i - 1];
+  if (typeof minutes === "number") {
+    return `<div class="${TIMING_ROW}">${formatDuration(minutes * 60) ?? "0m"} to connect in ${hub}</div>`;
+  }
+  return `<div class="${TIMING_ROW}">Connection time in ${hub} not on record: check the flights connect</div>`;
+}
+
+function legRows(it: Itinerary): string {
+  const tripDate = it.legs[0]?.date;
+  return it.legs
+    .map((leg, i) => `${connectionRow(it, i)}${renderLeg(leg)}${legTimes(leg, tripDate)}`)
+    .join("");
+}
+
 function flightPath(legs: Leg[]): string {
   const parts = ['<div class="flight-path">'];
   legs.forEach((leg, i) => {
@@ -133,7 +174,7 @@ function renderItinerary(it: Itinerary, rank: number): string {
     ? '<span class="text-xs text-accent">Nonstop</span>'
     : `<span class="text-xs text-muted">via <span class="font-mono">${via.map(esc).join("→")}</span> · ${via.length} stop${via.length > 1 ? "s" : ""}${flying}</span>`;
   const airports = `<span>${origin}</span>${via.map((v) => `<span class="text-center flex-1">${esc(v)}</span>`).join("")}${direct ? '<span class="flex-1"></span>' : ""}<span>${dest}</span>`;
-  return `<div class="itin-card bg-surface border border-subtle rounded-lg p-4 mb-3 hover:border-accent/50 transition-colors"><div class="flex items-center justify-between mb-3"><div class="flex items-center gap-3"><span class="text-xs text-muted tabular-nums">#${rank}</span>${badge}</div><div class="font-display text-right" style="color:${headerColor}">${headerPct} <span class="text-xs text-muted font-normal">${headerLabel}</span></div></div><div class="mb-3"><div class="flex items-center gap-2 text-xs font-mono text-muted mb-1">${airports}</div>${flightPath(legs)}</div><div class="space-y-1">${legs.map(renderLeg).join("")}</div></div>`;
+  return `<div class="itin-card bg-surface border border-subtle rounded-lg p-4 mb-3 hover:border-accent/50 transition-colors"><div class="flex items-center justify-between mb-3"><div class="flex items-center gap-3"><span class="text-xs text-muted tabular-nums">#${rank}</span>${badge}</div><div class="font-display text-right" style="color:${headerColor}">${headerPct} <span class="text-xs text-muted font-normal">${headerLabel}</span></div></div><div class="mb-3"><div class="flex items-center gap-2 text-xs font-mono text-muted mb-1">${airports}</div>${flightPath(legs)}</div><div class="space-y-1">${legRows(it)}</div></div>`;
 }
 
 /** The nonstop every connection is traded against: without it a 9h two-stop
@@ -170,7 +211,7 @@ function renderResults(out: HTMLElement, data: PlanBody, boardHasRows: boolean):
       data.message ||
       (soft
         ? "No connection between these airports has Starlink on its legs."
-        : "No connection adds meaningful Starlink time without a long detour.");
+        : "No same-day connection adds meaningful Starlink time without a long detour.");
     out.innerHTML = `<div class="bg-surface border border-subtle rounded-lg p-6 text-center"><p class="text-sm text-muted">${esc(message)}</p>${baselineHtml(data.baseline)}</div>`;
     return;
   }
