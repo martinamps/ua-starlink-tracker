@@ -72,9 +72,12 @@ beforeAll(() => {
   // Enough Starlink departures flown from ORD that its airport page indexes,
   // so the route page links it (route pages link only indexed airports). The
   // history window is a few days and logs one flight number once a day, so
-  // three flight numbers to a city no other test reads.
+  // three flight numbers to a city no other test reads. One number's
+  // departures are whole days apart: 23 hours apart, two of them shared a UTC
+  // date for an hour of most afternoons, were logged as one, and ORD fell
+  // under the bar (the test failed 12-15, 16-19 and 20-23 UTC).
   for (let i = 0; i < AIRPORT_INDEX_MIN_DEPARTURES; i++) {
-    const departure_time = now - (1 + (i % 4)) * 86400 + (1 + i) * HOUR;
+    const departure_time = now - (1 + (i % 4)) * 86400 - (1 + Math.floor(i / 4)) * HOUR;
     logFlightAssignments(
       db,
       "UA",
