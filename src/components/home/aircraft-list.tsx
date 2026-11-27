@@ -59,7 +59,9 @@ export function operatorName(raw: string | null | undefined): string {
  * The pill carries the OPERATING carrier's callsign (OO4757, SKW5366) but the
  * permalink is minted under the marketing code, so this goes through
  * ensureAirlinePrefix — never a bare prefix strip, which turns G74561 into
- * UA74561 instead of UA4561. Non-numeric callsigns (SKW394Y) normalize to
+ * UA74561 instead of UA4561. The row is already the site's own airline, so a
+ * shared operator's callsign (OO3053 on an Alaska row) maps too, the same
+ * number the pill prints. Non-numeric callsigns (SKW394Y) normalize to
  * themselves and a foreign carrier's number belongs to no permalink this site
  * serves; both stay outbound rather than landing on the noindex generic page.
  */
@@ -69,7 +71,7 @@ function permalinker(airline: AirlineConfig | null, airlineByTail: Record<string
   return (tailNumber: string, flightNumber: string): string | null => {
     if (!airline || !pattern) return null;
     if ((airlineByTail[tailNumber] || airline.code) !== airline.code) return null;
-    const fn = ensureAirlinePrefix(airline, flightNumber);
+    const fn = ensureAirlinePrefix(airline, marketedRowFlightNumber(airline, flightNumber));
     return pattern.test(fn) && !isFlightZero(fn) ? `/check-flight/${fn}` : null;
   };
 }

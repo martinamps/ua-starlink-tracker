@@ -294,9 +294,6 @@ describe("each tenant normalizes to its own marketing code", () => {
     expect(pillFor(pills, "AS3053")?.ariaLabel).toContain("Flight AS3053,");
     expect(pillFor(pills, "AS3133")?.ariaLabel).toContain("Flight AS3133,");
     expect(pills.filter((p) => /^(OO|SKW)\d+$/.test(p.number))).toEqual([]);
-    // The outbound tracker link still follows the stored callsign.
-    expect(pillFor(pills, "AS3053")?.href).toBe("https://www.flightaware.com/live/flight/OO3053");
-    expect(pillFor(pills, "AS3133")?.href).toBe("https://www.flightaware.com/live/flight/SKW3133");
     const index = searchIndexFor(html, "N181SY");
     for (const term of ["AS3053", "AS3133", "OO3053", "SKW3133"]) {
       expect(searchFinds(index, term)).toBe(true);
@@ -310,6 +307,38 @@ describe("each tenant normalizes to its own marketing code", () => {
  * Pinning a non-UTC TZ makes a server-zone regression fail everywhere rather
  * than only on machines that happen not to run in UTC.
  */
+describe("Alaska's SkyWest pills link to Alaska flight pages", () => {
+  test("OO and SKW rows link to /check-flight/AS…, an indexable page for that number", async () => {
+    const app = createApp(seedDb());
+    const pills = pillsOf(await app.dispatch(req("/", AS_HOST)).then((r) => r.text()));
+    const skywest = pills.filter((p) => ["AS3053", "AS3133"].includes(p.number));
+    expect(skywest.length).toBe(2);
+    for (const p of skywest) {
+      expect(p.href).toBe(`/check-flight/${p.number}`);
+      expect(p.tag.includes('target="_blank"')).toBe(false);
+      const res = await app.dispatch(req(p.href, AS_HOST));
+      expect(res.status).toBe(200);
+      const page = await res.text();
+      expect(page).not.toContain("noindex");
+      expect(page).toContain(`<link rel="canonical" href="https://${AS_HOST}${p.href}"`);
+    }
+    expect(pills.some((p) => /\/check-flight\/(OO|SKW)/.test(p.href))).toBe(false);
+  });
+
+  test("United's site never links a SkyWest row to an Alaska page, nor Alaska's to a United one", async () => {
+    const app = createApp(seedDb());
+    for (const [host, own] of [
+      [UA_HOST, "UA"],
+      [AS_HOST, "AS"],
+    ] as const) {
+      const pills = pillsOf(await app.dispatch(req("/", host)).then((r) => r.text()));
+      for (const p of pills) {
+        if (p.href.startsWith("/check-flight/")) expect(p.href).toStartWith(`/check-flight/${own}`);
+      }
+    }
+  });
+});
+
 describe("the pill states a departure the permalink page agrees with", () => {
   // Resolved rather than read straight off the env, because under `bun test`
   // TZ is unset (the runner defaults ICU to UTC without exporting it) and
