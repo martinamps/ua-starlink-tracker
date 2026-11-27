@@ -277,39 +277,51 @@
   font-size: 0.85em;
   flex-shrink: 0;
 }
-/* Hangar floor: always-open blocks on desktop, collapsible on mobile. */
-.fam-summary::-webkit-details-marker {
-  display: none;
-}
-.fam-caret {
-  transition: transform 0.2s;
-}
+/* Hangar floor: every block open. From 768px a grid of 118px blocks with ten
+   squares a row; below it one block a row, its squares across the full width
+   and a little larger, with "Details" beside the name to save a line. */
 .fam-container {
   display: grid;
+}
+.fam-details-head {
+  display: none;
 }
 @media (min-width: 768px) {
   .fam-container {
     grid-template-columns: repeat(auto-fill, 118px);
     align-items: start;
   }
-  .fam-summary {
-    pointer-events: none;
+  .fam-head {
     min-height: 34px;
   }
-  .fam-caret {
-    display: none;
+  .fam-grid {
+    grid-template-columns: repeat(10, 8px);
+  }
+  .fam-details-foot {
+    display: block;
   }
 }
 @media (max-width: 767px) {
-  .fam-container {
-    grid-template-columns: 1fr;
+  .fam-grid {
+    grid-template-columns: repeat(auto-fill, 10px);
   }
-  .fam-summary {
-    cursor: pointer;
-    padding: 0.75rem;
+  .fam-grid > a {
+    width: 10px;
+    height: 10px;
   }
-  .fam-block[open] .fam-caret {
-    transform: rotate(180deg);
+  .fam-details-foot {
+    display: none;
+  }
+  .fam-details-head {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding-inline: 4px;
+  }
+  .fam-title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
   }
 }
 /* Route board odds history (components/odds-history.ts): a card per row, so
