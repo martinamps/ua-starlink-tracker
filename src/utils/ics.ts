@@ -9,7 +9,7 @@
  */
 
 import type { SiteConfig } from "../airlines/registry";
-import { capitalize, coldShare, flightShare, probLabel } from "../components/ui/format";
+import { capitalize, coldShare, flightLabel, flightShare } from "../components/ui/format";
 import type { AssignmentLogRow, SameDayAlternative } from "../database/assignment-log";
 import { toIata } from "./airport-code";
 import { airportTimezone } from "./airport-tz";
@@ -125,7 +125,7 @@ export function watchSummary(input: WatchIcsInput): string {
       body =
         verdict.probability === null
           ? `${fn} · Starlink status pending`
-          : `${fn} · ${probLabel(verdict.probability)} chance of Starlink`;
+          : `${fn} · ${flightLabel(verdict.probability, verdict.observations)} chance of Starlink`;
       break;
     case "yes": {
       const route = dep && arr ? ` ${toIata(dep)}→${toIata(arr)}` : "";

@@ -663,16 +663,33 @@ const StarlinkTrackerLib = (() => {
 
   // The site prints a percentage by two rules, and the badge follows whichever
   // one the site uses for the same answer, so a traveller reads one number in
-  // both places. Equipment-type answers (`basis`, Qatar) are rounded down, as
-  // the server's sentence is: a lower bound must not be rounded past itself.
-  // Everything else (United's history odds, an Alaska subfleet's share) is
-  // rounded to the nearest whole number, as the site's pages do. Only a share
-  // that is exactly the whole subfleet reads 100; odds never do.
+  // both places. A share of aircraft is rounded down, as every fleet percent
+  // on the site is, so the badge never claims a share before it is reached:
+  // an equipment-type answer (`basis`, Qatar), a subfleet's share (Alaska),
+  // and United's estimate for a flight number with no history, which is its
+  // subfleet's share too. Odds from a flight's own history are rounded to the
+  // nearest whole number, as the site's pages do. Only a share that is exactly
+  // the whole subfleet reads 100; odds never do.
+  function isShare(claim) {
+    return !!claim.typeShare || claim.nObservations === 0;
+  }
+
   function wholePct(claim) {
     const p = claim.probability;
     if (p >= 1) return claim.typeShare ? 100 : 99;
     if (claim.basis) return Math.floor(p * 100);
+    // The nudge undoes the division: 29 / 100 * 100 is 28.999….
+    if (isShare(claim)) return Math.floor(p * 100 + 1e-9);
     return Math.min(99, Math.round(p * 100));
+  }
+
+  // The site's edge for a share: "<1%" for a fleet with a few aircraft fitted,
+  // where "~0%" would read as none.
+  function approxPct(claim) {
+    const whole = wholePct(claim);
+    return whole === 0 && claim.probability > 0 && !claim.basis && isShare(claim)
+      ? "<1%"
+      : `~${whole}%`;
   }
 
   // A share of aircraft, in words, with the site's edges: "all" only for a
@@ -680,6 +697,7 @@ const StarlinkTrackerLib = (() => {
   function shareWords(claim) {
     if (claim.probability >= 1) return "all";
     if (!claim.basis && claim.probability > 0.99) return "over 99%";
+    if (approxPct(claim) === "<1%") return "under 1%";
     return `about ${wholePct(claim)}%`;
   }
 
@@ -688,7 +706,7 @@ const StarlinkTrackerLib = (() => {
   }
 
   function badgeLabel(claim) {
-    if (claim.status === "predicted") return `Starlink ~${wholePct(claim)}%`;
+    if (claim.status === "predicted") return `Starlink ${approxPct(claim)}`;
     if (claim.status === "installed") return "Starlink (installed)";
     if (claim.status === "stated") return "Starlink (likely)";
     return "Starlink";
@@ -769,7 +787,7 @@ const StarlinkTrackerLib = (() => {
           ? ` (${claim.nObservations} observed departure${claim.nObservations === 1 ? "" : "s"})`
           : "";
       return (
-        `~${wholePct(claim)}% chance this flight gets a Starlink-equipped ` +
+        `${approxPct(claim)} chance this flight gets a Starlink-equipped ` +
         `aircraft${obs}${airline}. Airlines assign the actual aircraft ~2 days before departure.`
       );
     }

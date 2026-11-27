@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:
 import extLib from "../chrome-extension/lib.js";
 import { dohDateISO } from "../src/api/qatar-status";
 import { type QatarVerdict, addDaysISO, qatarHistoryReason } from "../src/api/qatar-verdict";
-import { probLabel, probPhrase } from "../src/components/ui/format";
+import { probLabel, shareLabel, sharePhrase } from "../src/components/ui/format";
 import { upsertQatarEquipmentHistory, upsertQatarSchedule } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { airportLocalDate } from "../src/utils/airport-tz";
@@ -1430,12 +1430,15 @@ describe("the badge prints the whole percentage the site prints", () => {
     for (const p of SHARES.filter((s) => s > 0)) {
       const claim = alaska(p);
       expect(claim.typeShare).toBe(true);
-      const site = digits(probLabel(p));
+      // A share: the fleet page's percent for the same counts, rounded down.
+      const site = digits(shareLabel(p));
       expect(digits(extLib.badgeLabel(claim))).toBe(site);
       const title = extLib.badgeTitle(claim);
       if (p >= 1) expect(title).toStartWith("All of the Alaska Airlines aircraft");
       else {
-        expect(title.toLowerCase()).toStartWith(`${probPhrase(p)} of the alaska airlines aircraft`);
+        expect(title.toLowerCase()).toStartWith(
+          `${sharePhrase(p)} of the alaska airlines aircraft`
+        );
       }
     }
   });

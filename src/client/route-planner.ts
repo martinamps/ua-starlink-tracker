@@ -12,6 +12,7 @@ import {
   probLabel,
   probTier,
   seenOnDays,
+  shareLabel,
   weekdayName,
 } from "../components/ui/format";
 import { orList, placeCodeAirports } from "../utils/airport-aliases";
@@ -102,7 +103,7 @@ function legFlight(leg: Leg): string {
 function renderLeg(leg: Leg): string {
   const color = probColor(leg.probability);
   const [from, to] = leg.route.split("-").map(esc);
-  const odds = `<div class="flex items-center gap-2">${probBars(leg.probability, color)}<span class="text-xs w-10 text-right tabular-nums" style="color:${color}">${probLabel(leg.probability)}</span></div>`;
+  const odds = `<div class="flex items-center gap-2">${probBars(leg.probability, color)}<span class="text-xs w-10 text-right tabular-nums" style="color:${color}">${leg.flight_number === "(any)" ? shareLabel(leg.probability) : probLabel(leg.probability)}</span></div>`;
   if (leg.flight_number === "(any)") {
     return `<div class="flex items-center justify-between py-2 border-l-2 border-subtle pl-3 ml-1"><div class="text-sm"><div class="font-mono text-muted">${from} → ${to}</div><div class="text-xs text-muted">Any flight works for this leg</div></div>${odds}</div>`;
   }

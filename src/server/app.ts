@@ -249,6 +249,7 @@ import { type RouteNetwork, buildRouteNetwork } from "../components/routes-map/n
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
 import {
+  approxShare,
   capitalize,
   coldShare,
   flightShare,
@@ -256,7 +257,7 @@ import {
   monthDay,
   pct as pctLabel,
   pctWhole,
-  probPhrase,
+  sharePhrase,
   zonedDeparture,
 } from "../components/ui/format";
 import {
@@ -934,7 +935,12 @@ const apiData: Handler = ({ reader }) => {
 // Per-airline rollout summary — used by the OG image generator and any
 // cross-airline UI. Cheap to compute per-request. `percentage` is pctWhole,
 // the pages' own rule: it once rounded to a tenth, and answered 45 for the
-// 736 of 1,636 that the home page printed as 44%.
+// 736 of 1,636 that the home page printed as 44%. It is null where the pages
+// print no share at all (denominatorIsPublishable): a roster with aircraft the
+// programme excludes, or a count above its total. The counts stay.
+const sharedPct = (n: number, total: number, rosterIsProgramScope = true) =>
+  denominatorIsPublishable(n, total, rosterIsProgramScope) ? pctWhole(n, total) : null;
+
 const apiFleetSummary: Handler = ({ getReader }) => {
   const airlines = publicAirlines().map((cfg) => {
     const r = getReader(cfg.code);
@@ -945,7 +951,7 @@ const apiFleetSummary: Handler = ({ getReader }) => {
       body: f.body,
       installed: f.starlink,
       total: f.total,
-      percentage: pctWhole(f.starlink, f.total),
+      percentage: sharedPct(f.starlink, f.total),
       ...(f.outsideProgramme ? { excluded: true, label: f.outsideProgramme.label } : {}),
     }));
     return {
@@ -953,7 +959,7 @@ const apiFleetSummary: Handler = ({ getReader }) => {
       name: cfg.name,
       installed,
       total,
-      percentage: pctWhole(installed, total),
+      percentage: sharedPct(installed, total, cfg.rollout.rosterIsProgramScope),
       families,
     };
   });
@@ -1716,7 +1722,7 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   if (!cfg.flightHistoryModel) {
     const r = carrierRouteAnswer(cfg, reader, from, to);
     const message = r
-      ? joinSentences(`~${Math.round(r.probability * 100)}% Starlink — ${r.reason}`)
+      ? joinSentences(`${approxShare(r.probability)} Starlink — ${r.reason}`)
       : joinSentences(
           `Route predictions for ${cfg.name} are determined by aircraft type`,
           cfg.rollout.phaseNote
@@ -3846,8 +3852,8 @@ function flightMetaAnswer(
       // Model-less carriers: only a uniform subfleet penetration is an honest
       // number for meta copy; split/no-model carriers get none.
       const answer = carrierPrediction(cfg, reader, flightNumber);
-      if (answer.kind === "penetration" && Math.round(answer.pen.pct * 100) > 0) {
-        return ` ${capitalize(probPhrase(answer.pen.pct))} of the aircraft that fly it have Starlink.`;
+      if (answer.kind === "penetration" && answer.pen.pct > 0) {
+        return ` ${capitalize(sharePhrase(answer.pen.pct))} of the aircraft that fly it have Starlink.`;
       }
     }
   } catch {

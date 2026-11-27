@@ -14,9 +14,10 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { buildCardSpecs, buildShareCardSpecs } from "../scripts/generate-og-images";
-import { SITES, publicAirlines, siteForAirline } from "../src/airlines/registry";
+import { AIRLINES, SITES, publicAirlines, siteForAirline } from "../src/airlines/registry";
 import { pct, pctWhole } from "../src/components/ui/format";
 import { createApp } from "../src/server/app";
+import { denominatorIsPublishable } from "../src/utils/share-cards";
 import { bodyOf, jsonOf, mcpInitialize, mcpTool, openSnapshot, readableText } from "./helpers";
 
 const ROOT = join(import.meta.dir, "..");
@@ -158,15 +159,21 @@ describe("every surface states the rule's percent", () => {
         code: string;
         installed: number;
         total: number;
-        percentage: number;
+        percentage: number | null;
         families: Array<{ family: string; installed: number; total: number; percentage: number }>;
       }>;
     };
     expect(airlines.length).toBeGreaterThan(0);
     for (const a of airlines) {
+      // Null where the pages, the badge and the share card print no share.
+      const shared = denominatorIsPublishable(
+        a.installed,
+        a.total,
+        AIRLINES[a.code].rollout.rosterIsProgramScope
+      );
       expect({ code: a.code, percentage: a.percentage }).toEqual({
         code: a.code,
-        percentage: pctWhole(a.installed, a.total),
+        percentage: shared ? pctWhole(a.installed, a.total) : null,
       });
       for (const f of a.families) {
         expect({ code: a.code, family: f.family, percentage: f.percentage }).toEqual({
@@ -278,7 +285,6 @@ const OWN_ARITHMETIC: Record<string, string> = {
   "src/scripts/precision-backtest.ts": "backtest report",
   "src/scripts/outlook-backtest.ts": "backtest report",
   "src/scripts/route-backtest.ts": "backtest report",
-  "src/server/app.ts": "flight odds in flight sentences, never a fleet count",
 };
 
 const PERCENT_ARITHMETIC =

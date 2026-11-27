@@ -26,7 +26,8 @@ export interface Summary {
     name: string;
     installed: number;
     total: number;
-    percentage: number;
+    /** Null where the pages give no share. No card reads it. */
+    percentage: number | null;
   }>;
 }
 export interface ApiData {
@@ -130,6 +131,34 @@ async function renderWebp(page: Page, params: URLSearchParams, out: string) {
 }
 
 /**
+ * The hub grid's cards. An airline gets a percent only where its page, its
+ * badge and its share card would print one (denominatorIsPublishable): a
+ * roster with aircraft outside the programme, or a count above its total, is
+ * drawn as the count alone. Worked from the counts, never the summary's own
+ * `percentage`.
+ */
+export type HubGridCard = { name: string; accent: string } & ({ pct: number } | { count: number });
+
+export function hubGridCards(summary: Summary): HubGridCard[] {
+  return summary.airlines.map((a) => {
+    const card = {
+      name: a.name.replace(/ Airlines?$/, "").toUpperCase(),
+      accent: AIRLINES[a.code]?.brand.accentColor.replace("#", "") ?? "0ea5e9",
+    };
+    const shared = denominatorIsPublishable(
+      a.installed,
+      a.total,
+      AIRLINES[a.code]?.rollout.rosterIsProgramScope ?? false
+    );
+    return shared
+      ? { ...card, pct: pctWhole(a.installed, a.total) }
+      : { ...card, count: a.installed };
+  });
+}
+
+const cardDesc = (c: HubGridCard) => ("pct" in c ? `${c.name}=${c.pct}%` : `${c.name}=${c.count}`);
+
+/**
  * Card derivation: summary → one spec per renderable tenant card, hub card
  * last. The injected getData fetches a tenant's rollout history — it is only
  * called for tenants that pass the skip rules, so the fetch list and the
@@ -179,11 +208,7 @@ export async function buildCardSpecs(
   }
 
   // ── hub card ────────────────────────────────────────────────────────────────
-  const cards = summary.airlines.map((a) => ({
-    name: a.name.replace(/ Airlines?$/, "").toUpperCase(),
-    pct: pctWhole(a.installed, a.total),
-    accent: AIRLINES[a.code]?.brand.accentColor.replace("#", "") ?? "0ea5e9",
-  }));
+  const cards = hubGridCards(summary);
   specs.push({
     file: path.basename(SITES.airline.brand.socialImagePath),
     params: new URLSearchParams({
@@ -195,7 +220,7 @@ export async function buildCardSpecs(
       caption: "PER-AIRCRAFT STARLINK WIFI STATUS",
       date: oldestCardDate(stamps),
     }),
-    desc: cards.map((c) => `${c.name}=${c.pct}%`).join(" "),
+    desc: cards.map(cardDesc).join(" "),
   });
 
   return specs;
@@ -242,11 +267,7 @@ export function buildShareCardSpecs(
     });
   }
 
-  const cards = summary.airlines.map((a) => ({
-    name: a.name.replace(/ Airlines?$/, "").toUpperCase(),
-    pct: pctWhole(a.installed, a.total),
-    accent: AIRLINES[a.code]?.brand.accentColor.replace("#", "") ?? "0ea5e9",
-  }));
+  const cards = hubGridCards(summary);
   specs.push({
     file: shareCardFile("ALL"),
     params: new URLSearchParams({
@@ -258,7 +279,7 @@ export function buildShareCardSpecs(
       caption: "PER-AIRCRAFT STARLINK WIFI STATUS",
       date: oldestCardDate(summary.airlines.map((a) => lastUpdatedOf(a.code))),
     }),
-    desc: `share hub ${cards.map((c) => `${c.name}=${c.pct}%`).join(" ")}`,
+    desc: `share hub ${cards.map(cardDesc).join(" ")}`,
   });
 
   return specs;

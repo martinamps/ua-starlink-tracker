@@ -57,7 +57,13 @@ import {
   airlineOwnTypeSum,
 } from "../airlines/rollout-facts";
 import { retiredCodeNote, untrackedAirlineInfo } from "../airlines/untracked-airline";
-import { pct as pctLabel, seenOnDays, weekdayName } from "../components/ui/format";
+import {
+  approxShare as approxShareLabel,
+  pct as pctLabel,
+  seenOnDays,
+  shareLabel,
+  weekdayName,
+} from "../components/ui/format";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
 import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/windows";
@@ -1048,7 +1054,7 @@ export async function renderCheckFlightVerdict(
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
       const probLine = withLegNote(
-        `**${normalized} on ${date}**: ${approxPct(pred.probability)} Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}.${assignmentNote ? ` ${assignmentNote}` : ""}`,
+        `**${normalized} on ${date}**: ${flightPct(pred.probability, pred.n_observations)} Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}.${assignmentNote ? ` ${assignmentNote}` : ""}`,
         verdict
       );
 
@@ -1060,6 +1066,7 @@ export async function renderCheckFlightVerdict(
         const alt = buildAlternativesBlock(cfg, reader, routes, mid, {
           flightNumber: normalized,
           probability: pred.probability,
+          tracked: pred.n_observations,
         });
         if (alt) altBlock = `\n\n${alt}`;
       }
@@ -1352,7 +1359,7 @@ function buildAlternativesBlock(
    * baseline would contradict the headline — UA123 ~0% vs "nonstop ~20%"),
    * and it is never offered back as an alternative. `label` marks a firm NO.
    */
-  ownFlight?: { flightNumber: string; probability: number; label?: string }
+  ownFlight?: { flightNumber: string; probability: number; label?: string; tracked?: number }
 ): string {
   // The itinerary planner runs on the flight-history model; embedding its
   // table on a model-less carrier's scope would be foreign priors in
@@ -1420,7 +1427,8 @@ function buildAlternativesBlock(
         flights: ownFlight.flightNumber,
         via: "direct — your flight",
         stops: 0,
-        starlinkPct: approxPct(p),
+        // The headline's rule, so the person's row repeats the headline.
+        starlinkPct: flightPct(p, ownFlight.tracked ?? 1),
         starlinkH: hours !== null ? approxShare(p, hours, fmtH) : "?",
         totalH,
       });
@@ -1557,16 +1565,15 @@ function formatCarrierRoute(
   }
 
   const route = `${origin}→${destination}`;
-  const pct = (p: number) => `${(p * 100).toFixed(0)}%`;
   const footer = "For a specific flight, use check_flight with the flight number and date.";
   let text: string;
   if (r.kind === "observed_mixed" && r.lo != null && r.hi != null) {
     const breakdown = r.breakdown
-      .map((b) => `- ${b.label}${b.hint ? ` (${b.hint})` : ""}: ${approxPct(b.pct)}`)
+      .map((b) => `- ${b.label}${b.hint ? ` (${b.hint})` : ""}: ${approxFleetPct(b.pct)}`)
       .join("\n");
-    text = `**${route} (${cfg.name})**: ${pct(r.lo)}–${pct(r.hi)} Starlink — ${r.reason.toLowerCase()}:\n${breakdown}\n${footer}`;
+    text = `**${route} (${cfg.name})**: ${shareLabel(r.lo)}–${shareLabel(r.hi)} Starlink — ${r.reason.toLowerCase()}:\n${breakdown}\n${footer}`;
   } else {
-    text = `**${route} (${cfg.name})**: ${joinSentences(`${approxPct(r.probability)} Starlink — ${r.reason}`, footer)}`;
+    text = `**${route} (${cfg.name})**: ${joinSentences(`${approxFleetPct(r.probability)} Starlink — ${r.reason}`, footer)}`;
   }
   return textResult(text);
 }
@@ -1628,11 +1635,12 @@ function formatHubRouteComparison(
         : `No route data for ${origin}→${destination} on any tracked airline yet. For a specific flight, use check_flight with the flight number and date${lookupNames ? ` — ${lookupNames} ${HUB_LOOKUP_ONLY.length === 1 ? "answers" : "answer"} per flight there` : ""}.`
     );
   }
-  const pct = (p: number) => `${(p * 100).toFixed(0)}%`;
   const lines = results.map((r) => {
     if (r.kind === "no_data") return `- **${r.name}**: no route data yet`;
     const range =
-      r.lo != null && r.hi != null ? `${pct(r.lo)}–${pct(r.hi)}` : approxPct(r.probability);
+      r.lo != null && r.hi != null
+        ? `${shareLabel(r.lo)}–${shareLabel(r.hi)}`
+        : approxFleetPct(r.probability);
     return `- **${r.name}**: ${range} Starlink${r.reason ? ` — ${r.reason}` : ""}`;
   });
   lines.push(...lookupLines);
@@ -1718,7 +1726,9 @@ async function toolPredictFlightStarlink(
           : "Limited data — estimate may drift.";
   }
 
-  const probLine = `**${forPredict}**: ${approxPct(pred.probability)} Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
+  // A fleet prior is a share of aircraft, and rounds down as the fleet page does.
+  const tracked = pred.method === "flight_history_smoothed" ? Math.max(1, pred.n_observations) : 0;
+  const probLine = `**${forPredict}**: ${flightPct(pred.probability, tracked)} Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
 
   // Alternatives LAST so it's the agent's final impression (recency bias).
   let altBlock = "";
@@ -1729,7 +1739,7 @@ async function toolPredictFlightStarlink(
     const routes = await lookupFlightRoutes(cfg, reader, forPredict, dateUnix, {
       liveAssignments: hostReader.scope !== "ALL",
     });
-    const own = { flightNumber: forPredict, probability: pred.probability };
+    const own = { flightNumber: forPredict, probability: pred.probability, tracked };
     altBlock = `\n\n${buildAlternativesBlock(cfg, reader, routes, dateUnix, own)}`;
   }
 
@@ -1923,7 +1933,7 @@ function toolPlanStarlinkItinerary(
       const [from, to] = leg.route.split("-");
       const dur =
         leg.duration_hours !== null ? `~${fmtHours(leg.duration_hours)} est.` : "duration unknown";
-      return `position ${from}→${to} (mainline, ~${(leg.probability * 100).toFixed(0)}% Starlink, ${dur})`;
+      return `position ${from}→${to} (mainline, ${approxShareLabel(leg.probability)} Starlink, ${dur})`;
     }
     const pct = (leg.probability * 100).toFixed(0);
     const fleetTag = inferSubfleet(cfg, leg.flight_number) === "mainline" ? " [Mainline]" : "";
@@ -2373,6 +2383,15 @@ export function approxPct(p: number): string {
   const n = Number((p * 100).toFixed(0));
   return n === 0 ? "0%" : `~${n}%`;
 }
+
+/** approxPct for a share of aircraft: rounded down like the fleet pages, so a
+ * route or flight answered by its subfleet never says more than /fleet does. */
+export function approxFleetPct(p: number): string {
+  return p > 0 ? approxShareLabel(p) : "0%";
+}
+
+/** A flight's number: odds once it has history, its fleet's share until then. */
+const flightPct = (p: number, tracked: number) => (tracked > 0 ? approxPct(p) : approxFleetPct(p));
 
 /** Expected Starlink time for a share of `hours`, "0" when the share rounds to 0%. */
 function approxShare(

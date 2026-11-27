@@ -25,6 +25,7 @@ import {
 import { AIRLINES } from "../src/airlines/registry";
 import { resolveTailVerdict } from "../src/api/flight-verdict";
 import { handleMcpRequest } from "../src/api/mcp-server";
+import { pct as pctLabel, pctWhole } from "../src/components/ui/format";
 import {
   computeWifiConsensus,
   getFleetPageData,
@@ -325,15 +326,17 @@ describe("MCP tools", () => {
     });
     const text = json.result.content[0].text;
     // Format: **UAxxx**: ~N% Starlink probability (fleet prior). mainline fleet...
-    const pctMatch = text.match(/~?(\d+)% Starlink probability/);
-    expect(pctMatch).not.toBeNull();
-    const pct = Number(pctMatch![1]);
+    const said = text.match(/: ~?([<>]?\d+%) Starlink probability/);
+    expect(said).not.toBeNull();
     // The reported number IS United's live mainline penetration by design, so
-    // pin it to the same rate the site publishes rather than to a literal a
-    // rollout can overtake — and to the fact that mainline is the LOW prior.
+    // pin it to the same percent the fleet page prints for those counts,
+    // rounded down with the page's edges, rather than to a literal a rollout
+    // can overtake — and to the fact that mainline is the LOW prior.
     const stats = reader.getFleetStats()!;
-    expect(pct).toBe(Math.round(stats.mainline.percentage));
-    expect(pct).toBeLessThan(Math.round(stats.express.percentage));
+    expect(said![1]).toBe(pctLabel(stats.mainline.starlink, stats.mainline.total));
+    expect(pctWhole(stats.mainline.starlink, stats.mainline.total)).toBeLessThan(
+      pctWhole(stats.express.starlink, stats.express.total)
+    );
     expect(text).toContain("mainline");
     expect(text).toContain("fleet");
   });
