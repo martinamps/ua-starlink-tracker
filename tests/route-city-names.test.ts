@@ -325,8 +325,10 @@ describe("the flight page", () => {
   test("a row with an end we cannot name prints its codes alone", async () => {
     const body = await page("/check-flight/UA102");
     const routes = sectionOf(body, "Routes UA102 flies");
-    expect(routes).toContain(`ORD → ${UNKNOWN}`);
-    expect(routes).not.toContain(airportPlaceName("ORD") as string);
+    // The row itself; the link under the list names the departure airport's page.
+    const row = routes.match(/<li[\s\S]*?<\/li>/)?.[0] ?? "";
+    expect(row).toContain(`ORD → ${UNKNOWN}`);
+    expect(row).not.toContain(airportPlaceName("ORD") as string);
     expect(routes).not.toMatch(/\bnull\b|\bundefined\b/);
   });
 });

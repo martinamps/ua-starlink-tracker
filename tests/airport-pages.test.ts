@@ -25,6 +25,7 @@ import {
 import { logFlightAssignments } from "../src/database/assignment-log";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp, parseAirportPath } from "../src/server/app";
+import { airportLocalDate } from "../src/utils/airport-tz";
 import { addFlight, addPlane, makeFreshDb, req } from "./helpers";
 
 const UA = SITES.united.canonicalHost;
@@ -305,11 +306,18 @@ describe("sitemap rule", () => {
     expect(indexableAirports(createReaderFactory(db)("UA"))).toEqual(["DEN"]);
   });
 
-  test("an airport entry carries no lastmod", async () => {
+  // The page leads with the airport's own local day, so its answer is new from
+  // local midnight: the lastmod is that date, never a clock time that moves
+  // with each departure. The page's dateModified tells the same story.
+  test("an airport entry's lastmod is its local date, and the page's dateModified agrees", async () => {
     const xml = await (await app.dispatch(req("/sitemap.xml", UA))).text();
     const entry = xml.match(/<url>\s*<loc>[^<]*\/routes\/DEN<\/loc>[\s\S]*?<\/url>/)?.[0] ?? "";
     expect(entry).toContain("<changefreq>daily</changefreq>");
-    expect(entry).not.toContain("<lastmod>");
+    const lastmod = entry.match(/<lastmod>([^<]+)<\/lastmod>/)?.[1];
+    expect(lastmod).toBe(airportLocalDate("DEN", Math.floor(Date.now() / 1000)) ?? undefined);
+    expect(lastmod).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const body = await page("/routes/DEN");
+    expect(body.match(/"dateModified":"([^"]+)"/)?.[1]).toBe(lastmod);
   });
 
   test("llms.txt names an airport page the sitemap lists", async () => {
@@ -339,6 +347,29 @@ describe("links into the family", () => {
     expect(sfo).toContain('href="/routes/DEN"');
     expect(sfo).not.toContain('href="/routes/SFO"');
     expect((await get("/routes/SFO")).status).toBe(404);
+  });
+
+  test("a flight page links the airport its legs leave from", async () => {
+    const body = await page("/check-flight/UA100");
+    expect(body).toContain('href="/routes/DEN"');
+    expect(visibleText(body).replace(/\s+/g, " ")).toContain("Starlink flights from Denver (DEN)");
+    expect((await get("/routes/DEN")).status).toBe(200);
+  });
+
+  test("an airport page names its place in a breadcrumb trail, indexed or not", async () => {
+    for (const code of ["DEN", "GJT"]) {
+      const body = await page(`/routes/${code}`);
+      const trail = body.match(
+        /\{"@context":"https:\/\/schema.org","@type":"BreadcrumbList"[^<]*/
+      )?.[0];
+      expect(trail, code).toBeDefined();
+      const items = JSON.parse(trail ?? "{}").itemListElement as Array<{ item: string }>;
+      expect(items.map((i) => i.item)).toEqual([
+        `https://${UA}/`,
+        `https://${UA}/routes`,
+        `https://${UA}/routes/${code}`,
+      ]);
+    }
   });
 
   test("every link on an airport page serves", async () => {

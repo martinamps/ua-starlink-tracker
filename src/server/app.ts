@@ -2224,14 +2224,17 @@ const sitemap: Handler = (ctx) => {
           lastmod: changedIso(r.changed_at),
         }))
       : [];
-  // No lastmod: an airport's board moves with every departure, and a stamp
-  // that moves every few minutes teaches crawlers to ignore it.
+  // An airport page leads with its own local day's count, so it is a new
+  // answer from that airport's midnight: the local date is its lastmod. A
+  // finer stamp would move with every departure and teach crawlers to ignore it.
+  const nowSec = unixNow();
   const airportEntries =
     site.features.airportPages && tenantConfig(tenant)
       ? indexableAirports(reader).map((airport) => ({
           path: `/routes/${airport}`,
           changefreq: "daily",
           priority: "0.6",
+          lastmod: airportLocalDate(airport, nowSec) ?? undefined,
         }))
       : [];
   // A tail's lastmod is the day it joined our list, the one change that turns
@@ -3521,6 +3524,14 @@ function buildFlightFacts(
   };
 }
 
+/** The flight's departure airports with a page, current legs first, at most three. */
+function flightAirportLinks(ctx: RequestContext, routes: FlightFacts["routes"]): string[] {
+  if (!ctx.site.features.airportPages) return [];
+  return [...new Set(routes.map((r) => r.departure_airport))]
+    .filter((a) => ctx.reader.airportHasData(a))
+    .slice(0, 3);
+}
+
 /** The model's number for the permalink, so the page and the APIs quote one
  * figure. Best-effort: the page renders without it. */
 function permalinkPrediction(
@@ -3986,6 +3997,7 @@ const checkFlightPage: Handler = async (ctx) => {
         flight: {
           ...facts,
           aircraftTypeLinks: aircraftTypeLinks(ctx, facts.aircraftTypes),
+          airportLinks: flightAirportLinks(ctx, facts.routes),
           // The type seen on the number most recently: what the next one is likeliest to be.
           typeOutlook: facts.aircraftTypes[0]
             ? typeOutlookRef(ctx, reader, cfg, normalizeAircraftType(facts.aircraftTypes[0]))
@@ -4930,10 +4942,17 @@ function airportPageMeta(ctx: RequestContext, cfg: AirlineConfig, board: Airport
     keywords: `${airport} starlink flights, ${cfg.shortName.toLowerCase()} ${airport} starlink, ${airport} flights with starlink wifi`,
     ogTitle: airportQuestion(board),
     ogDescription: description,
-    // Structured data only where the page indexes, as on the type pages.
-    ...(board.indexable && routes.length > 0
-      ? {
-          pageJsonLd: jsonLdBlock({
+    pageJsonLd:
+      jsonLdBlock(
+        breadcrumbJsonLd(ctx.site.canonicalHost, [
+          { name: "Home", path: "/" },
+          { name: "Live routes", path: "/routes" },
+          { name: place, path: `/routes/${airport}` },
+        ])
+      ) +
+      // The route list only where the page indexes, as on the type pages.
+      (board.indexable && routes.length > 0
+        ? jsonLdBlock({
             "@context": "https://schema.org",
             "@type": "ItemList",
             name: `${cfg.name} routes from ${place} flown by Starlink planes`,
@@ -4944,9 +4963,8 @@ function airportPageMeta(ctx: RequestContext, cfg: AirlineConfig, board: Airport
               name: `${airport} to ${d.destination}`,
               url: `https://${ctx.site.canonicalHost}/route-planner/${airport}/${d.destination}`,
             })),
-          }),
-        }
-      : {}),
+          })
+        : ""),
     ...(board.indexable ? {} : { robotsMeta: "noindex, follow" }),
     ...sharePictureMeta(ctx, pictureOf("airport", airport, airportShareAnswer(board))),
   };
@@ -4971,10 +4989,16 @@ const airportPage: Handler = (ctx) => {
   const cfg = siteAirline(ctx.site);
   if (!ctx.reader.airportHasData(airport)) return notFound(ctx.site);
   const board = buildAirportBoard(cfg, ctx.reader, airport);
-  return renderSubPage(ctx, AirportPage, canonicalPath, airportPageMeta(ctx, cfg, board), {
-    board,
-    updatedAt: ctx.reader.getLastUpdatedRaw(),
-  });
+  // dateModified is the sitemap's lastmod for this URL: the airport's local day.
+  return renderSubPage(
+    ctx,
+    AirportPage,
+    canonicalPath,
+    airportPageMeta(ctx, cfg, board),
+    { board, updatedAt: ctx.reader.getLastUpdatedRaw() },
+    200,
+    board.today?.date
+  );
 };
 
 const hubTimelinePage: Handler = (ctx) => {

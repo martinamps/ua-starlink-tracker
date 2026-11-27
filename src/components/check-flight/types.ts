@@ -90,6 +90,9 @@ export interface FlightFacts {
   /** Newest sighting (unix sec) when the flight has gone quiet long enough to
    * say so on the page; null otherwise. */
   notObservedSince?: number | null;
+  /** Departure airports of `routes` whose /routes/{airport} page serves, each once:
+   * the page that answers "what else leaves from here with Starlink?". */
+  airportLinks?: string[];
   /** aircraftTypes with their /fleet/{slug} page, each page linked once. */
   aircraftTypeLinks?: Array<{ label: string; href: string | null }>;
   /** The rollout outlook of the type seen on this number most recently, where
