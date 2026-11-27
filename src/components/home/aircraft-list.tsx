@@ -8,6 +8,7 @@ import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
 import {
   ensureAirlinePrefix,
+  icaoCallsignToIata,
   isFlightZero,
   marketedRowFlightNumber,
 } from "../../airlines/flight-number";
@@ -77,12 +78,15 @@ function permalinker(airline: AirlineConfig | null, airlineByTail: Record<string
  * The number a row's flight is sold under: UA4757 for OO4757, AS3053 for an
  * Alaska row's OO3053. The row's airline is settled, so shared operators
  * (SkyWest flies for both) map too; a callsign with no number (SKW394Y)
- * stays as stored.
+ * stays as stored. A partner's own callsign maps to that partner's number:
+ * a Hawaiian tail flying Alaska's ASA800 prints AS800, the number it is sold
+ * under, rather than the radio callsign.
  */
 function rowMarketingNumber(rowAirline: AirlineConfig | undefined, flightNumber: string): string {
-  return rowAirline
+  const own = rowAirline
     ? ensureAirlinePrefix(rowAirline, marketedRowFlightNumber(rowAirline, flightNumber))
     : flightNumber;
+  return own === flightNumber ? icaoCallsignToIata(flightNumber) : own;
 }
 
 function FlightPills({
