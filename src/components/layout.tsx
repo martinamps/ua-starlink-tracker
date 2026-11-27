@@ -71,23 +71,25 @@ function SiteBar({ site, currentPath }: { site: SiteConfig; currentPath?: string
         aria-current={currentPath === "/" ? "page" : undefined}
       >
         {brandName(site)}
-      </a>
+      </a>{" "}
       {links.length > 0 && (
         <ul className="flex min-w-0 flex-wrap gap-x-4 gap-y-1 whitespace-nowrap sm:gap-x-5">
           {links.map((l) => (
-            <li key={l.href}>
-              <a
-                href={l.href}
-                aria-current={isCurrent(l.href) ? "page" : undefined}
-                className={
-                  isCurrent(l.href)
-                    ? "text-primary"
-                    : "text-secondary hover:text-accent transition-colors"
-                }
-              >
-                {l.label}
-              </a>
-            </li>
+            <React.Fragment key={l.href}>
+              <li>
+                <a
+                  href={l.href}
+                  aria-current={isCurrent(l.href) ? "page" : undefined}
+                  className={
+                    isCurrent(l.href)
+                      ? "text-primary"
+                      : "text-secondary hover:text-accent transition-colors"
+                  }
+                >
+                  {l.label}
+                </a>
+              </li>{" "}
+            </React.Fragment>
           ))}
         </ul>
       )}
@@ -195,6 +197,13 @@ export function SkipLink({ to, children }: { to: string; children: React.ReactNo
   );
 }
 
+/** A space in the page's plain text where a margin draws the gap on screen
+ * ("103/104 95%", "76 ft"): a crawler that doesn't render, or a reader that
+ * ignores layout, gets a word break, and the page draws nothing more. */
+export function TextGap() {
+  return <span className="sr-only"> </span>;
+}
+
 /** Where a SkipLink lands: focusable by script only, so the next Tab moves on from here. */
 export function SkipTarget({ id, children }: { id: string; children: React.ReactNode }) {
   return (
@@ -287,8 +296,9 @@ export function PageHeader({
   return (
     <header className="relative mx-auto w-full max-w-3xl pt-8 pb-6 text-center">
       {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
-      <h1 className={H1}>{title}</h1>
-      {dek && <p className="mx-auto mt-2 max-w-2xl text-base text-secondary text-pretty">{dek}</p>}
+      {eyebrow && " "}
+      <h1 className={H1}>{title}</h1>{" "}
+      {dek && <p className="mx-auto mt-2 max-w-2xl text-base text-secondary text-pretty">{dek}</p>}{" "}
       {children && <div className="mt-3">{children}</div>}
     </header>
   );
@@ -313,16 +323,20 @@ export function Section({
   className?: string;
   children: React.ReactNode;
 }) {
+  // The space after the section draws nothing between blocks, but keeps its
+  // last word off the next section's first in the page's plain text.
   return (
-    <section id={id} className={`${wide ? SECTION_WIDE : SECTION} ${className}`}>
-      {title && <SectionTitle>{title}</SectionTitle>}
-      {dek && <p className="mt-1 text-sm text-secondary text-pretty">{dek}</p>}
-      {bare ? (
-        <div className={title || dek ? "mt-4" : ""}>{children}</div>
-      ) : (
-        <Panel className={title || dek ? "mt-4" : ""}>{children}</Panel>
-      )}
-    </section>
+    <>
+      <section id={id} className={`${wide ? SECTION_WIDE : SECTION} ${className}`}>
+        {title && <SectionTitle>{title}</SectionTitle>}{" "}
+        {dek && <p className="mt-1 text-sm text-secondary text-pretty">{dek}</p>}{" "}
+        {bare ? (
+          <div className={title || dek ? "mt-4" : ""}>{children}</div>
+        ) : (
+          <Panel className={title || dek ? "mt-4" : ""}>{children}</Panel>
+        )}
+      </section>{" "}
+    </>
   );
 }
 
@@ -474,7 +488,7 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
           rel="noopener noreferrer"
           className="inline-flex items-center py-1 lg:py-0 text-secondary hover:text-primary transition-colors"
         >
-          Built with
+          Built with{" "}
           <svg
             className="w-4 h-4 mx-1 text-danger"
             xmlns="http://www.w3.org/2000/svg"
@@ -484,7 +498,7 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
             role="img"
           >
             <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-          </svg>
+          </svg>{" "}
           by @martinamps
         </a>
         <span className="text-subtle" aria-hidden="true">
@@ -512,9 +526,8 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
             </a>
           </>
         )}
-      </div>
-      <PageNavLinks links={pageLinks} />
-      <CrossSiteLinks site={site} />
+      </div>{" "}
+      <PageNavLinks links={pageLinks} /> <CrossSiteLinks site={site} />
     </footer>
   );
 }
@@ -542,20 +555,19 @@ export function PageShell({
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
       {/* First in the tab order, shown only on focus: the site bar's links
           repeat on every page, and /fleet puts hundreds more before its end. */}
-      <SkipLink to="main">Skip to content</SkipLink>
-      {before}
-      <SiteBar site={site} currentPath={currentPath} />
+      <SkipLink to="main">Skip to content</SkipLink> {before}
+      <SiteBar site={site} currentPath={currentPath} />{" "}
       <p
         data-independence
         className="relative mx-auto w-full max-w-6xl pt-2 text-xs text-muted text-balance"
       >
         {independenceLine(site)}
-      </p>
+      </p>{" "}
       {/* A column like its parent, so each page's header and sections lay out
           exactly as they did as the shell's own children. */}
       <main id="main" tabIndex={-1} className="flex w-full flex-1 flex-col outline-none">
         {children}
-      </main>
+      </main>{" "}
       <SiteFooter site={site} pageLinks={pageLinks} />
     </div>
   );

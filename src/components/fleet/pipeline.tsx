@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import { TYPE_DISPLAY } from "../../airlines/aircraft-pages";
 import { AIRLINES } from "../../airlines/registry";
@@ -116,8 +117,7 @@ export function PipelineTailChip({
       title={`${sheetTypeName(row.type_code)} · ${pipelinePhrase(row.state, row.mod_location)}`}
       className={cls}
     >
-      {row.tail}
-      {row.mod_location && <span className="opacity-60 ml-1">{row.mod_location}</span>}
+      {row.tail} {row.mod_location && <span className="opacity-60 ml-1">{row.mod_location}</span>}
     </a>
   );
 }
@@ -193,7 +193,7 @@ export function MovementsPanel({
 }: { movements: FleetMovement[]; anchorBase?: string }) {
   return (
     <div className={`${PANEL} mt-4`}>
-      <div className={EYEBROW}>Last 14 days</div>
+      <div className={EYEBROW}>Last 14 days</div>{" "}
       {movements.length === 0 ? (
         <p className="text-sm text-muted">No aircraft moved through the pipeline.</p>
       ) : (
@@ -201,26 +201,28 @@ export function MovementsPanel({
           {movements.map((m) => {
             const glyph = MOVEMENT_GLYPH[m.kind];
             return (
-              <li key={`${m.tail}-${m.kind}-${m.date}`}>
-                <a
-                  href={`${anchorBase}#t-${m.tail}`}
-                  className="flex items-baseline gap-2 px-2 py-1 rounded text-sm hover:bg-surface-elevated transition-colors group"
-                >
-                  <span aria-hidden="true" className={`w-4 text-center shrink-0 ${glyph.cls}`}>
-                    {glyph.ch}
-                  </span>
-                  <span className="font-mono text-xs text-primary group-hover:text-accent transition-colors w-16 shrink-0">
-                    {m.tail}
-                  </span>
-                  <span className="text-muted w-20 truncate hidden sm:inline shrink-0">
-                    {sheetTypeName(m.type_code)}
-                  </span>
-                  <span className="text-secondary min-w-0 flex-1 sm:truncate">
-                    {movementText(m)}
-                  </span>
-                  <span className="text-muted shrink-0 tabular-nums">{monthDay(m.date)}</span>
-                </a>
-              </li>
+              <Fragment key={`${m.tail}-${m.kind}-${m.date}`}>
+                <li>
+                  <a
+                    href={`${anchorBase}#t-${m.tail}`}
+                    className="flex items-baseline gap-2 px-2 py-1 rounded text-sm hover:bg-surface-elevated transition-colors group"
+                  >
+                    <span aria-hidden="true" className={`w-4 text-center shrink-0 ${glyph.cls}`}>
+                      {glyph.ch}
+                    </span>{" "}
+                    <span className="font-mono text-xs text-primary group-hover:text-accent transition-colors w-16 shrink-0">
+                      {m.tail}
+                    </span>{" "}
+                    <span className="text-muted w-20 truncate hidden sm:inline shrink-0">
+                      {sheetTypeName(m.type_code)}
+                    </span>{" "}
+                    <span className="text-secondary min-w-0 flex-1 sm:truncate">
+                      {movementText(m)}
+                    </span>{" "}
+                    <span className="text-muted shrink-0 tabular-nums">{monthDay(m.date)}</span>
+                  </a>
+                </li>{" "}
+              </Fragment>
             );
           })}
         </ul>
@@ -238,28 +240,32 @@ export function FittingPanel({
   if (fitting.length === 0) return null;
   return (
     <div className={`${PANEL} mt-4`}>
-      <div className={EYEBROW}>In the hangar, per the fleet sheet's notes</div>
+      <div className={EYEBROW}>In the hangar, per the fleet sheet's notes</div>{" "}
       <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-1">
         {fitting.map((n) => (
-          <li key={n.tail}>
-            <a
-              href={`${anchorBase}#t-${n.tail}`}
-              className="flex items-baseline gap-2 px-2 py-1 rounded text-sm hover:bg-surface-elevated transition-colors group"
-            >
-              <span
-                aria-hidden="true"
-                className={`w-4 text-center shrink-0 ${n.unsure ? "text-muted" : "dot-mod"}`}
+          <Fragment key={n.tail}>
+            <li>
+              <a
+                href={`${anchorBase}#t-${n.tail}`}
+                className="flex items-baseline gap-2 px-2 py-1 rounded text-sm hover:bg-surface-elevated transition-colors group"
               >
-                {n.unsure ? "◌" : "○"}
-              </span>
-              <span className="font-mono text-xs text-primary group-hover:text-accent transition-colors w-16 shrink-0">
-                {n.tail}
-              </span>
-              <span className="text-secondary min-w-0 flex-1">{capitalize(fittingPhrase(n))}</span>
-            </a>
-          </li>
+                <span
+                  aria-hidden="true"
+                  className={`w-4 text-center shrink-0 ${n.unsure ? "text-muted" : "dot-mod"}`}
+                >
+                  {n.unsure ? "◌" : "○"}
+                </span>{" "}
+                <span className="font-mono text-xs text-primary group-hover:text-accent transition-colors w-16 shrink-0">
+                  {n.tail}
+                </span>{" "}
+                <span className="text-secondary min-w-0 flex-1">
+                  {capitalize(fittingPhrase(n))}
+                </span>
+              </a>
+            </li>{" "}
+          </Fragment>
         ))}
-      </ul>
+      </ul>{" "}
       <p className="text-xs text-muted mt-2 text-pretty">
         Dates are the sheet's own estimates. None of these aircraft is in our count.
       </p>
@@ -299,7 +305,7 @@ function OfficialTrackerSection({
   const name = AIRLINES[totals[0].airline]?.shortName ?? totals[0].airline;
   return (
     <section className={SECTION_WIDE}>
-      <h2 className={H2}>Install progress, per {name}</h2>
+      <h2 className={H2}>Install progress, per {name}</h2>{" "}
       <p className="mt-1 mb-4 text-sm text-secondary text-pretty">
         From{" "}
         <a href={tracker.url} className={LINK} rel="noopener">
@@ -307,7 +313,7 @@ function OfficialTrackerSection({
         </a>
         {updated ? ` (${updated})` : ""}. {name} counts by type, not by tail, so totals can differ
         from ours.
-      </p>
+      </p>{" "}
       <div className="grid md:grid-cols-3 gap-4">
         {totals.map((seg) => {
           const complete = seg.starlink_complete ?? 0;
@@ -315,29 +321,33 @@ function OfficialTrackerSection({
             (r) => r.type_code !== "Totals" && r.segment === seg.segment
           );
           return (
-            <div key={seg.segment} className={PANEL}>
-              <div className={EYEBROW}>{officialSegmentLabel(seg.airline, seg.segment)}</div>
-              <StatValue
-                unit={`of ${seg.total !== null ? fmt(seg.total) : "?"} connected${seg.total ? ` · ${pct(complete, seg.total)}` : ""}`}
-              >
-                {fmt(complete)}
-              </StatValue>
-              <PipelineBar
-                complete={complete}
-                verifying={0}
-                inMod={0}
-                queued={0}
-                total={seg.total}
-              />
-              <ul className="text-sm text-secondary mt-3 space-y-1">
-                {types.map((r) => (
-                  <li key={r.type_code}>
-                    {sheetTypeName(r.type_code)}: {fmt(r.starlink_complete ?? 0)} of{" "}
-                    {fmt(r.total ?? 0)}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <Fragment key={seg.segment}>
+              <div className={PANEL}>
+                <div className={EYEBROW}>{officialSegmentLabel(seg.airline, seg.segment)}</div>{" "}
+                <StatValue
+                  unit={`of ${seg.total !== null ? fmt(seg.total) : "?"} connected${seg.total ? ` · ${pct(complete, seg.total)}` : ""}`}
+                >
+                  {fmt(complete)}
+                </StatValue>{" "}
+                <PipelineBar
+                  complete={complete}
+                  verifying={0}
+                  inMod={0}
+                  queued={0}
+                  total={seg.total}
+                />{" "}
+                <ul className="text-sm text-secondary mt-3 space-y-1">
+                  {types.map((r) => (
+                    <Fragment key={r.type_code}>
+                      <li>
+                        {sheetTypeName(r.type_code)}: {fmt(r.starlink_complete ?? 0)} of{" "}
+                        {fmt(r.total ?? 0)}
+                      </li>{" "}
+                    </Fragment>
+                  ))}
+                </ul>
+              </div>{" "}
+            </Fragment>
           );
         })}
       </div>
@@ -365,8 +375,7 @@ export function InstallPipelineSection({
     if (fitting.length === 0) return null;
     return (
       <section className={SECTION_WIDE}>
-        <h2 className={H2}>Install pipeline</h2>
-        <FittingPanel fitting={fitting} />
+        <h2 className={H2}>Install pipeline</h2> <FittingPanel fitting={fitting} />
       </section>
     );
   }
@@ -389,11 +398,11 @@ export function InstallPipelineSection({
 
   return (
     <section className={SECTION_WIDE}>
-      <h2 className={H2}>Install pipeline</h2>
+      <h2 className={H2}>Install pipeline</h2>{" "}
       <p className="mt-1 mb-4 text-sm text-secondary text-pretty">
         Aircraft being installed now, per the community progress sheet
         {updated ? ` (updated ${updated} ET)` : ""}. Its counts can differ slightly from ours.
-      </p>
+      </p>{" "}
       <div className="grid md:grid-cols-3 gap-4">
         {totals.map((seg) => {
           const segRows = bySegment.get(seg.segment) ?? [];
@@ -401,87 +410,95 @@ export function InstallPipelineSection({
           const segQueued = segRows.length - segTails.length;
           const complete = seg.starlink_complete ?? 0;
           return (
-            <div key={seg.segment} className={PANEL}>
-              <div className={EYEBROW}>{SEGMENT_LABELS[seg.segment] ?? seg.segment}</div>
-              <StatValue
-                unit={`of ${seg.total !== null ? fmt(seg.total) : "?"} complete${seg.total ? ` · ${pct(complete, seg.total)}` : ""}`}
-              >
-                {fmt(complete)}
-              </StatValue>
-              <PipelineBar
-                complete={complete}
-                verifying={seg.verification_needed ?? 0}
-                inMod={seg.in_mod ?? 0}
-                queued={segQueued}
-                total={seg.total}
-              />
-              <ul className="text-sm text-secondary mt-3 space-y-1">
-                {seg.in_mod !== null && (
-                  <li>
-                    <Swatch cls="bar-inmod" />
-                    {fmt(seg.in_mod)} being installed
-                  </li>
+            <Fragment key={seg.segment}>
+              <div className={PANEL}>
+                <div className={EYEBROW}>{SEGMENT_LABELS[seg.segment] ?? seg.segment}</div>{" "}
+                <StatValue
+                  unit={`of ${seg.total !== null ? fmt(seg.total) : "?"} complete${seg.total ? ` · ${pct(complete, seg.total)}` : ""}`}
+                >
+                  {fmt(complete)}
+                </StatValue>{" "}
+                <PipelineBar
+                  complete={complete}
+                  verifying={seg.verification_needed ?? 0}
+                  inMod={seg.in_mod ?? 0}
+                  queued={segQueued}
+                  total={seg.total}
+                />{" "}
+                <ul className="text-sm text-secondary mt-3 space-y-1">
+                  {seg.in_mod !== null && (
+                    <li>
+                      <Swatch cls="bar-inmod" />
+                      {fmt(seg.in_mod)} being installed
+                    </li>
+                  )}{" "}
+                  {seg.verification_needed !== null && (
+                    <li>
+                      <Swatch cls="bar-verif" />
+                      {fmt(seg.verification_needed)} awaiting verification
+                    </li>
+                  )}{" "}
+                  {segQueued > 0 && (
+                    <li>
+                      <Swatch cls="bar-queued" />
+                      {fmt(segQueued)} queued
+                    </li>
+                  )}{" "}
+                </ul>{" "}
+                {segTails.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {segTails.map((t) => (
+                      <Fragment key={t.tail}>
+                        <PipelineTailChip row={t} />{" "}
+                      </Fragment>
+                    ))}
+                  </div>
                 )}
-                {seg.verification_needed !== null && (
-                  <li>
-                    <Swatch cls="bar-verif" />
-                    {fmt(seg.verification_needed)} awaiting verification
-                  </li>
-                )}
-                {segQueued > 0 && (
-                  <li>
-                    <Swatch cls="bar-queued" />
-                    {fmt(segQueued)} queued
-                  </li>
-                )}
-              </ul>
-              {segTails.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-3">
-                  {segTails.map((t) => (
-                    <PipelineTailChip key={t.tail} row={t} />
-                  ))}
-                </div>
-              )}
-            </div>
+              </div>{" "}
+            </Fragment>
           );
         })}
-      </div>
+      </div>{" "}
       {(inModTypes.length > 0 || scheduled.length > 0) && (
         <div className="grid md:grid-cols-2 gap-4 mt-4">
           {inModTypes.length > 0 && (
             <div className={PANEL}>
-              <div className={EYEBROW}>By type</div>
+              <div className={EYEBROW}>By type</div>{" "}
               <ul className="grid grid-cols-2 gap-2 text-sm text-secondary">
                 {inModTypes.map((r) => (
-                  <li key={`${r.segment}-${r.type_code}`}>
-                    {sheetTypeName(r.type_code)}:{" "}
-                    {[
-                      (r.in_mod ?? 0) > 0 ? `${fmt(r.in_mod ?? 0)} being installed` : "",
-                      (r.verification_needed ?? 0) > 0
-                        ? `${fmt(r.verification_needed ?? 0)} awaiting verification`
-                        : "",
-                    ]
-                      .filter(Boolean)
-                      .join(", ")}
-                  </li>
+                  <Fragment key={`${r.segment}-${r.type_code}`}>
+                    <li>
+                      {sheetTypeName(r.type_code)}:{" "}
+                      {[
+                        (r.in_mod ?? 0) > 0 ? `${fmt(r.in_mod ?? 0)} being installed` : "",
+                        (r.verification_needed ?? 0) > 0
+                          ? `${fmt(r.verification_needed ?? 0)} awaiting verification`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </li>{" "}
+                  </Fragment>
                 ))}
               </ul>
             </div>
-          )}
+          )}{" "}
           {scheduled.length > 0 && (
             <div className={PANEL}>
-              <div className={EYEBROW}>Queued for install</div>
+              <div className={EYEBROW}>Queued for install</div>{" "}
               <div className="flex flex-wrap gap-1.5">
                 {scheduled.map((t) => (
-                  <PipelineTailChip key={t.tail} row={t} />
+                  <Fragment key={t.tail}>
+                    <PipelineTailChip row={t} />{" "}
+                  </Fragment>
                 ))}
               </div>
             </div>
           )}
         </div>
-      )}
-      <FittingPanel fitting={fitting} />
-      {tails.length > 0 && <MovementsPanel movements={movements} />}
+      )}{" "}
+      <FittingPanel fitting={fitting} />{" "}
+      {tails.length > 0 && <MovementsPanel movements={movements} />}{" "}
       {stations && <p className="text-xs text-muted mt-3">Install stations: {stations}</p>}
     </section>
   );

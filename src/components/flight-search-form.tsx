@@ -119,7 +119,7 @@ export function FlightSearchForm({
             required
             className={`${FIELD_CLASS} font-mono`}
           />
-        </div>
+        </div>{" "}
         {mode !== "report" && (
           <div className="sm:w-44">
             <label htmlFor={`${id}-date`} className={label}>
@@ -134,7 +134,7 @@ export function FlightSearchForm({
               className={FIELD_CLASS}
             />
           </div>
-        )}
+        )}{" "}
         {extra}
         <button type="submit" className={`${buttonClass()} min-h-11`}>
           {submitLabel}

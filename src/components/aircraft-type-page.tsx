@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import {
   type AircraftAnswer,
   type AircraftPageDef,
@@ -130,7 +131,7 @@ function TailMatrix({
     >
       <div className={EYEBROW}>
         Wi-Fi on {airline} {def.short}s
-      </div>
+      </div>{" "}
       <TailGrid tails={data.tails} size="lg" labels={labels} />
       <ProviderLegend counts={counts} labels={labels} className="mt-3" />
       <p className="text-xs text-muted mt-2">
@@ -175,7 +176,7 @@ function Header({
         <strong className="font-display text-lg text-primary">{answer.headline}</strong>{" "}
         {answer.sentence}
         {lastUpdated && <span className="text-muted text-sm"> As of {lastUpdated}.</span>}
-      </p>
+      </p>{" "}
       {official && (
         <p className="text-sm text-muted mt-3">
           {airline}'s own count: <StatInline n={official.count} />, from{" "}
@@ -184,12 +185,12 @@ function Header({
           </a>
           {`, updated ${formatFactDate(official.asOf)}.`}
         </p>
-      )}
+      )}{" "}
       {target?.asOf && (
         <p className="text-sm text-muted mt-3">
           {airline}'s stated target ({formatFactDate(target.asOf)}): {factText(target)}
         </p>
-      )}
+      )}{" "}
       <TailMatrix def={def} data={data} airline={airline} official={official} />
     </section>
   );
@@ -199,7 +200,7 @@ function VariantsSection({ data }: { data: AircraftTypePageData }) {
   if (!data.variants || data.variants.length < 2) return null;
   return (
     <section className={CARD}>
-      <h2 className={H2_CARD}>By variant</h2>
+      <h2 className={H2_CARD}>By variant</h2>{" "}
       <ul>
         {data.variants.map((v) => (
           <ShareBarRow key={v.label} label={v.label} n={v.starlink} total={v.total} />
@@ -222,15 +223,15 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
   const stations = stationKey(p.tails.map((t) => t.mod_location));
   return (
     <section className={CARD}>
-      <h2 className={H2_CARD}>{def.short} install pipeline</h2>
-      <p className="text-sm text-secondary leading-relaxed">{sheetComparison(p, data.starlink)}</p>
+      <h2 className={H2_CARD}>{def.short} install pipeline</h2>{" "}
+      <p className="text-sm text-secondary leading-relaxed">{sheetComparison(p, data.starlink)}</p>{" "}
       <PipelineBar
         complete={p.starlink_complete}
         verifying={p.verification_needed}
         inMod={p.in_mod}
         queued={queued}
         total={p.total}
-      />
+      />{" "}
       {p.rows.length > 1 && (
         <ul className="grid sm:grid-cols-2 gap-x-4 gap-y-1 text-sm text-secondary mt-3">
           {p.rows.map((r) => {
@@ -238,26 +239,30 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
             // Two sheet columns can share a name (789, 789L): the code tells them apart.
             const shared = p.rows.filter((o) => sheetTypeName(o.type_code) === name).length > 1;
             return (
-              <li key={r.type_code}>
-                {shared && r.type_code !== name ? `${name} (${r.type_code})` : name}:{" "}
-                {fmt(r.starlink_complete)} of {fmt(r.total)} complete
-                {r.in_mod > 0 ? `, ${fmt(r.in_mod)} being installed` : ""}
-                {r.verification_needed > 0
-                  ? `, ${fmt(r.verification_needed)} awaiting verification`
-                  : ""}
-              </li>
+              <Fragment key={r.type_code}>
+                <li>
+                  {shared && r.type_code !== name ? `${name} (${r.type_code})` : name}:{" "}
+                  {fmt(r.starlink_complete)} of {fmt(r.total)} complete
+                  {r.in_mod > 0 ? `, ${fmt(r.in_mod)} being installed` : ""}
+                  {r.verification_needed > 0
+                    ? `, ${fmt(r.verification_needed)} awaiting verification`
+                    : ""}
+                </li>{" "}
+              </Fragment>
             );
           })}
         </ul>
-      )}
+      )}{" "}
       {p.tails.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mt-3">
           {p.tails.map((t) => (
-            <PipelineTailChip key={t.tail} row={t} anchorBase="/fleet" />
+            <Fragment key={t.tail}>
+              <PipelineTailChip row={t} anchorBase="/fleet" />{" "}
+            </Fragment>
           ))}
         </div>
-      )}
-      {p.movements.length > 0 && <MovementsPanel movements={p.movements} anchorBase="/fleet" />}
+      )}{" "}
+      {p.movements.length > 0 && <MovementsPanel movements={p.movements} anchorBase="/fleet" />}{" "}
       {stations && <p className="text-xs text-muted mt-3">Install stations: {stations}</p>}
     </section>
   );
@@ -286,11 +291,11 @@ function PaceSection({
   const target = targetSentence(o, airline);
   return (
     <section className={CARD} id="pace">
-      <h2 className={H2_CARD}>How fast {def.short}s are getting Starlink</h2>
+      <h2 className={H2_CARD}>How fast {def.short}s are getting Starlink</h2>{" "}
       <p className="text-sm text-secondary leading-relaxed">
         {foundSentence(o, def.short)}
         {forecast ? ` ${forecast}` : ""}
-      </p>
+      </p>{" "}
       {drawn && (
         <div
           className="mt-4 flex max-w-md items-end gap-2"
@@ -298,20 +303,22 @@ function PaceSection({
           aria-label={blocks.map((b) => `${b.label}: ${fmt(b.installs)}`).join(", ")}
         >
           {blocks.map((b, i) => (
-            <div key={b.label} className="flex flex-1 flex-col items-center gap-1">
-              <span className="text-xs text-secondary tabular-nums">{fmt(b.installs)}</span>
-              <div
-                className={`w-full rounded-t bg-[var(--color-accent)] ${
-                  i === blocks.length - 1 ? "opacity-80" : "opacity-40"
-                }`}
-                style={{ height: `${Math.max(2, (b.installs / peak) * PACE_BAR_PX)}px` }}
-              />
-              <span className="text-xs text-muted text-center">{b.label}</span>
-            </div>
+            <Fragment key={b.label}>
+              <div className="flex flex-1 flex-col items-center gap-1">
+                <span className="text-xs text-secondary tabular-nums">{fmt(b.installs)}</span>{" "}
+                <div
+                  className={`w-full rounded-t bg-[var(--color-accent)] ${
+                    i === blocks.length - 1 ? "opacity-80" : "opacity-40"
+                  }`}
+                  style={{ height: `${Math.max(2, (b.installs / peak) * PACE_BAR_PX)}px` }}
+                />{" "}
+                <span className="text-xs text-muted text-center">{b.label}</span>
+              </div>{" "}
+            </Fragment>
           ))}
         </div>
-      )}
-      {target && <p className="text-sm text-secondary leading-relaxed mt-4">{target}</p>}
+      )}{" "}
+      {target && <p className="text-sm text-secondary leading-relaxed mt-4">{target}</p>}{" "}
       {peak > 0 && (
         <p className="text-xs text-muted mt-3">
           Counted by the day we first saw Starlink on each aircraft.
@@ -334,20 +341,22 @@ function RecentSection({
   if (data.recentInstalls.length === 0) return null;
   return (
     <section className={CARD}>
-      <h2 className={H2_CARD}>Recently added</h2>
+      <h2 className={H2_CARD}>Recently added</h2>{" "}
       <ul className="text-sm text-secondary grid grid-cols-2 sm:grid-cols-3 gap-1">
         {data.recentInstalls.map((r) => (
-          <li key={r.tail}>
-            <a
-              href={tailHref(site, r.tail) ?? `/fleet#t-${r.tail}`}
-              className={`${LINK} font-mono text-xs`}
-            >
-              {r.tail}
-            </a>{" "}
-            <span className="text-muted">{shortDate(r.date.slice(0, 10))}</span>
-          </li>
+          <Fragment key={r.tail}>
+            <li>
+              <a
+                href={tailHref(site, r.tail) ?? `/fleet#t-${r.tail}`}
+                className={`${LINK} font-mono text-xs`}
+              >
+                {r.tail}
+              </a>{" "}
+              <span className="text-muted">{shortDate(r.date.slice(0, 10))}</span>
+            </li>{" "}
+          </Fragment>
         ))}
-      </ul>
+      </ul>{" "}
       <p className="text-xs text-muted mt-3">
         Date we first saw Starlink on each.
         {data.firstSeen &&
@@ -364,28 +373,30 @@ function RoutesSection({ def, data }: { def: AircraftPageDef; data: AircraftType
   const { departures, pairs } = data.routeTotals;
   return (
     <section className={CARD}>
-      <h2 className={H2_CARD}>Where Starlink {def.short}s fly in the next 48 hours</h2>
+      <h2 className={H2_CARD}>Where Starlink {def.short}s fly in the next 48 hours</h2>{" "}
       <p className="text-sm text-muted mb-3">
         {fmt(departures)} scheduled {departures === 1 ? "departure" : "departures"} on {fmt(pairs)}{" "}
         {pairs === 1 ? "route" : "routes"}
         {data.routes.length < pairs ? ". The busiest:" : "."}
-      </p>
+      </p>{" "}
       <ul className="text-sm text-secondary grid sm:grid-cols-2 gap-x-4 gap-y-1">
         {data.routes.map((r) => (
-          <li key={`${r.origin}-${r.destination}`}>
-            {r.href ? (
-              <a href={r.href} className={`${LINK} font-mono text-xs`}>
-                {r.origin} → {r.destination}
-              </a>
-            ) : (
-              <span className="font-mono text-xs">
-                {r.origin} → {r.destination}
+          <Fragment key={`${r.origin}-${r.destination}`}>
+            <li>
+              {r.href ? (
+                <a href={r.href} className={`${LINK} font-mono text-xs`}>
+                  {r.origin} → {r.destination}
+                </a>
+              ) : (
+                <span className="font-mono text-xs">
+                  {r.origin} → {r.destination}
+                </span>
+              )}{" "}
+              <span className="text-muted tabular-nums">
+                {fmt(r.departures)} {r.departures === 1 ? "departure" : "departures"}
               </span>
-            )}{" "}
-            <span className="text-muted tabular-nums">
-              {fmt(r.departures)} {r.departures === 1 ? "departure" : "departures"}
-            </span>
-          </li>
+            </li>{" "}
+          </Fragment>
         ))}
       </ul>
     </section>
@@ -410,16 +421,16 @@ function TailsSection({
   const all = `All ${fmt(data.tails.length)}${checksEveryTail ? "" : " on our fleet list, with or without Starlink"}`;
   return (
     <section className={`${CARD} relative`} id="tails">
-      <SkipLink to="tails-end">Skip the tail list</SkipLink>
-      <h2 className={H2_CARD}>{`${airline} ${def.short} tail numbers`}</h2>
+      <SkipLink to="tails-end">Skip the tail list</SkipLink>{" "}
+      <h2 className={H2_CARD}>{`${airline} ${def.short} tail numbers`}</h2>{" "}
       <p className="text-sm text-muted mb-3">
         {`${all}, in the order of the squares above. Click one ${
           ownPages
             ? "for its page: Starlink status, checks and flights."
             : "to open it on FlightAware."
         }`}
-      </p>
-      <TypeTailList tails={data.tails} labels={labels} tailHref={(tail) => tailHref(site, tail)} />
+      </p>{" "}
+      <TypeTailList tails={data.tails} labels={labels} tailHref={(tail) => tailHref(site, tail)} />{" "}
       <SkipTarget id="tails-end">End of the tail list.</SkipTarget>
     </section>
   );
@@ -458,15 +469,17 @@ function FlightsSection({
     <section className={CARD}>
       <h2 className={H2_CARD}>
         {starlinkOnly ? "Recent flights" : `Flights that use the ${def.short}`}
-      </h2>
-      <p className="text-sm text-muted mb-3">{caption}</p>
+      </h2>{" "}
+      <p className="text-sm text-muted mb-3">{caption}</p>{" "}
       <ul className="flex flex-wrap gap-x-3 gap-y-2 font-mono text-xs">
         {data.flightNumbers.map((f) => (
-          <li key={f.flightNumber}>
-            <a href={f.href} className={LINK}>
-              {f.flightNumber}
-            </a>
-          </li>
+          <Fragment key={f.flightNumber}>
+            <li>
+              <a href={f.href} className={LINK}>
+                {f.flightNumber}
+              </a>
+            </li>{" "}
+          </Fragment>
         ))}
       </ul>
     </section>
@@ -498,7 +511,7 @@ function FactsSection({
   if (facts.length === 0) return null;
   return (
     <section className={CARD}>
-      <h2 className={H2_CARD}>What {airline} has said</h2>
+      <h2 className={H2_CARD}>What {airline} has said</h2>{" "}
       <ul className="space-y-3">
         {facts.map((f) => (
           <li
@@ -512,7 +525,7 @@ function FactsSection({
             </a>
           </li>
         ))}
-      </ul>
+      </ul>{" "}
       {caveat && (
         <p className="mt-4 border-t border-subtle pt-3 text-sm text-secondary leading-relaxed">
           <strong className="text-primary">How this fits the answer above.</strong> {caveat.text}
@@ -534,13 +547,15 @@ function SpecsSection({ def, spec }: { def: AircraftPageDef; spec: AircraftSpec 
   ];
   return (
     <section className={CARD}>
-      <h2 className={H2_CARD}>The {def.name}</h2>
+      <h2 className={H2_CARD}>The {def.name}</h2>{" "}
       <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
         {rows.map(([k, v]) => (
-          <div key={k}>
-            <dt className="text-xs text-muted">{k}</dt>
-            <dd className="text-secondary tabular-nums">{v}</dd>
-          </div>
+          <Fragment key={k}>
+            <div>
+              <dt className="text-xs text-muted">{k}</dt>{" "}
+              <dd className="text-secondary tabular-nums">{v}</dd>
+            </div>{" "}
+          </Fragment>
         ))}
       </dl>
     </section>
@@ -560,7 +575,7 @@ function SiblingsSection({
   );
   return (
     <section className={CARD}>
-      <h2 className={H2_CARD}>Other {airline} aircraft</h2>
+      <h2 className={H2_CARD}>Other {airline} aircraft</h2>{" "}
       <ul className="grid sm:grid-cols-2 gap-x-8">
         {sorted.map((s) => (
           <ShareBarRow
@@ -623,14 +638,13 @@ export default function AircraftTypePage({
           airline={airline}
           lastUpdated={lastUpdated}
           target={headerTarget}
-        />
-
+        />{" "}
         {answer.shareLine && (
           <section className={CARD}>
             <h2 className={H2_CARD}>
               Flying on {article(def.short)} {def.short}?
-            </h2>
-            <p className="text-sm text-secondary leading-relaxed">{answer.shareLine}</p>
+            </h2>{" "}
+            <p className="text-sm text-secondary leading-relaxed">{answer.shareLine}</p>{" "}
             {checkFlight && (
               <FlightSearchForm
                 site={site}
@@ -642,14 +656,11 @@ export default function AircraftTypePage({
               />
             )}
           </section>
-        )}
-
-        <PaceSection def={def} outlook={outlook} airline={airline} />
-        <VariantsSection data={data} />
-        <PipelineSection def={def} data={data} />
-        <RecentSection site={site} def={def} data={data} />
-        <RoutesSection def={def} data={data} />
-        <FlightsSection def={def} data={data} answer={answer} />
+        )}{" "}
+        <PaceSection def={def} outlook={outlook} airline={airline} />{" "}
+        <VariantsSection data={data} /> <PipelineSection def={def} data={data} />{" "}
+        <RecentSection site={site} def={def} data={data} /> <RoutesSection def={def} data={data} />{" "}
+        <FlightsSection def={def} data={data} answer={answer} />{" "}
         <FactsSection
           facts={facts.filter((f) => f !== headerTarget)}
           airline={airline}
@@ -658,8 +669,8 @@ export default function AircraftTypePage({
               ? programmeExclusionCaveat(siteAirline(site).code)
               : null
           }
-        />
-        <SpecsSection def={def} spec={spec} />
+        />{" "}
+        <SpecsSection def={def} spec={spec} />{" "}
         <Faq
           variant="card"
           structuredData={false}
@@ -678,10 +689,9 @@ export default function AircraftTypePage({
               item.a
             ),
           }))}
-        />
-        <SiblingsSection siblings={siblings} airline={airline} />
-        <TailsSection site={site} def={def} data={data} airline={airline} />
-
+        />{" "}
+        <SiblingsSection siblings={siblings} airline={airline} />{" "}
+        <TailsSection site={site} def={def} data={data} airline={airline} />{" "}
         <p className="text-sm text-muted text-center">
           {checkFlight ? (
             <a href="/check-flight" className={LINK}>

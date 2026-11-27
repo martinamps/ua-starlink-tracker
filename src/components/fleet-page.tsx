@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { tenantCopy } from "../airlines/aircraft-pages";
 import {
   BY_TYPE_METHOD,
@@ -45,23 +46,25 @@ function OfficialAnchorsSection({ anchors }: { anchors: FleetAnchorRow[] }) {
   return (
     <section className={SECTION_WIDE}>
       <div className={PANEL}>
-        <div className={EYEBROW}>Reported in SEC filings</div>
+        <div className={EYEBROW}>Reported in SEC filings</div>{" "}
         <ul className="text-sm text-secondary space-y-1">
           {shown.map((a) => (
-            <li key={a.metric}>
-              {a.scope}:{" "}
-              <a
-                href={a.source_url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-accent hover:underline tabular-nums"
-              >
-                {/^\d+$/.test(a.value) ? fmt(Number(a.value)) : a.value}
-              </a>{" "}
-              <span className="text-muted">
-                ({a.source_form}, {shortDate(a.as_of_date)})
-              </span>
-            </li>
+            <Fragment key={a.metric}>
+              <li>
+                {a.scope}:{" "}
+                <a
+                  href={a.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent hover:underline tabular-nums"
+                >
+                  {/^\d+$/.test(a.value) ? fmt(Number(a.value)) : a.value}
+                </a>{" "}
+                <span className="text-muted">
+                  ({a.source_form}, {shortDate(a.as_of_date)})
+                </span>
+              </li>{" "}
+            </Fragment>
           ))}
         </ul>
       </div>
@@ -235,48 +238,43 @@ export default function FleetPage({
               };
             }
           )}
-        />
+        />{" "}
         {typeGaps && <p className="mt-2 text-sm text-secondary text-pretty">{typeGaps}</p>}
-      </PageHeader>
-
+      </PageHeader>{" "}
       {!scopeCode && (
         <div className={SECTION_WIDE}>
           <TrackerLinks />
         </div>
-      )}
-
+      )}{" "}
       <TypeBarsSection
         families={data.families}
         typeLinks={typeLinkByFamily}
         unknownLabel={labels.unknown.toLowerCase()}
-      />
-      <LivePulse pulse={data.pulse} />
-      <InstallPaceSection pace={data.installPace} projectionHref={installRateHref} />
+      />{" "}
+      <LivePulse pulse={data.pulse} />{" "}
+      <InstallPaceSection pace={data.installPace} projectionHref={installRateHref} />{" "}
       <InstallPipelineSection
         progress={data.progress}
         tails={data.progressTails}
         movements={data.movements}
         fitting={data.sheetFitting}
-      />
-      <OfficialAnchorsSection anchors={data.anchors} />
+      />{" "}
+      <OfficialAnchorsSection anchors={data.anchors} />{" "}
       <HangarFloor
         families={data.families}
         marks={marks}
         typeLinks={typeLinkByFamily}
         labels={labels}
-      />
-      <CarrierSection carriers={data.carriers} />
+      />{" "}
+      <CarrierSection carriers={data.carriers} />{" "}
       <TailRegistry
         allTails={data.allTails}
         marks={marks}
         typeLinks={typeLinkByFamily}
         labels={labels}
         tailHref={(tail) => tailHref(site, tail)}
-      />
-
-      <ShareCardLink path={shareCard} />
-
-      <CiteThis site={site} cite={cite} />
+      />{" "}
+      <ShareCardLink path={shareCard} /> <CiteThis site={site} cite={cite} />{" "}
     </PageShell>
   );
 }

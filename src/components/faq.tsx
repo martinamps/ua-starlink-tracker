@@ -5,6 +5,7 @@
  * are functions of the stats; homeFaqItems resolves them into plain entries.
  */
 import type React from "react";
+import { Fragment } from "react";
 import ReactDOMServer from "react-dom/server";
 import type { ContentStats, FaqSection, HomeFaqEntry } from "../airlines/content";
 import { Eyebrow, Panel, Section, SectionTitle } from "./layout";
@@ -121,7 +122,7 @@ function Accordion({ item }: { item: FaqEntry }) {
             d="M12 6v6m0 0v6m0-6h6m-6 0H6"
           />
         </svg>
-      </summary>
+      </summary>{" "}
       <div className="mt-3 text-sm leading-relaxed text-secondary">{item.a}</div>
     </details>
   );
@@ -157,18 +158,19 @@ export function Faq({
   const list = (
     <dl className="space-y-5">
       {all.map((item) => (
-        <div key={item.q}>
-          <dt className="font-semibold text-primary">{item.q}</dt>
-          <dd className="mt-1 text-sm leading-relaxed text-secondary">{item.a}</dd>
-        </div>
+        <Fragment key={item.q}>
+          <div>
+            <dt className="font-semibold text-primary">{item.q}</dt>{" "}
+            <dd className="mt-1 text-sm leading-relaxed text-secondary">{item.a}</dd>
+          </div>{" "}
+        </Fragment>
       ))}
     </dl>
   );
   if (variant === "card") {
     return (
       <Panel as="section" id={id} className="mb-4">
-        <SectionTitle className="mb-3">{title}</SectionTitle>
-        {list}
+        <SectionTitle className="mb-3">{title}</SectionTitle> {list}
         {structuredData && <JsonLd data={faqJsonLd(all)} />}
       </Panel>
     );
@@ -178,25 +180,31 @@ export function Faq({
       {variant === "accordion" && sections ? (
         <div className={wide ? "grid items-start gap-4 lg:grid-cols-2" : "space-y-4"}>
           {sections.map((s) => (
-            <div key={s.title}>
-              <Eyebrow as="h3" className="mb-2">
-                {s.title}
-              </Eyebrow>
-              <Panel pad="none" className="divide-y divide-subtle px-5">
-                {s.items.map((item) => (
-                  <Accordion key={item.q} item={item} />
-                ))}
-              </Panel>
-            </div>
+            <Fragment key={s.title}>
+              <div>
+                <Eyebrow as="h3" className="mb-2">
+                  {s.title}
+                </Eyebrow>{" "}
+                <Panel pad="none" className="divide-y divide-subtle px-5">
+                  {s.items.map((item) => (
+                    <Fragment key={item.q}>
+                      <Accordion item={item} />{" "}
+                    </Fragment>
+                  ))}
+                </Panel>
+              </div>{" "}
+            </Fragment>
           ))}
         </div>
       ) : variant === "grid" ? (
         <Panel className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
           {all.map((item) => (
-            <div key={item.q}>
-              <h3 className="font-display text-base text-primary">{item.q}</h3>
-              <div className="mt-1 text-sm leading-relaxed text-secondary">{item.a}</div>
-            </div>
+            <Fragment key={item.q}>
+              <div>
+                <h3 className="font-display text-base text-primary">{item.q}</h3>{" "}
+                <div className="mt-1 text-sm leading-relaxed text-secondary">{item.a}</div>
+              </div>{" "}
+            </Fragment>
           ))}
         </Panel>
       ) : (
