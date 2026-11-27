@@ -115,15 +115,24 @@ const LEFT_LOOKBACK_SEC = 26 * 3600;
 
 /**
  * Departures that left in [from, to) on a tail that is equipped now, one row
- * per spelling the updater logged. Driven from departure_log, which holds a
- * slot only once its time has passed with the tail still assigned (a leg
- * swapped away before departure is never archived), and probing the
- * assignment log on its (tail, time) index for the flight and the pair. The
- * CROSS JOIN keeps that order: left to itself the planner walks the airline's
- * whole log instead.
+ * per spelling the updater logged. Driven from departure_log, which archives
+ * every schedule row whose time has passed, and probing the assignment log on
+ * its (tail, time) index for the flight and the pair. The CROSS JOIN keeps
+ * that order: left to itself the planner walks the airline's whole log.
+ *
+ * A late swap leaves the old tail's row in the schedule until that tail is
+ * refreshed, so both tails can be archived for one flight. `newer` lists the
+ * numbers other tails were seen on, for the same leg and time, after this
+ * tail last was (the route index finds them): the newest sighting is the
+ * plane that flew it.
  */
 const LEFT_SQL = `SELECT dl.airport AS origin, dl.tail_number AS tail, dl.departed_at AS departure_time,
-       fal.flight_number AS flight_number, fal.arrival_airport AS destination
+       fal.flight_number AS flight_number, fal.arrival_airport AS destination,
+       (SELECT group_concat(fal2.flight_number, ' ') FROM flight_assignment_log fal2
+         WHERE fal2.departure_airport = fal.departure_airport
+           AND fal2.arrival_airport = fal.arrival_airport
+           AND fal2.departure_time = fal.departure_time AND fal2.airline = fal.airline
+           AND fal2.tail_number <> fal.tail_number AND fal2.last_seen > fal.last_seen) AS newer
   FROM departure_log dl
   CROSS JOIN flight_assignment_log fal
     ON fal.tail_number = dl.tail_number AND fal.departure_time = dl.departed_at
@@ -133,10 +142,12 @@ const LEFT_SQL = `SELECT dl.airport AS origin, dl.tail_number AS tail, dl.depart
 
 /**
  * Starlink departures that have already left, over the last day, from one
- * airport or from all: what the schedule held at departure time, under the
- * same rule the scheduled count keeps (one tail leaves one airport at one time
- * once; it counts only under a number the airline sells and with a clean
- * destination, so a positioning leg is left out here as it is there).
+ * airport or from all, under the rule the scheduled count keeps: one flight
+ * leaves one airport at one time once, whichever tail flew it and however it
+ * is spelled, and counts only under a number the airline sells with a clean
+ * destination (a positioning leg is left out here as it is there). A flight
+ * seen later on another tail belongs to that tail: counted there if it has
+ * Starlink, not at all if not.
  */
 export function getStarlinkDeparturesLeft(
   db: Database,
@@ -159,15 +170,20 @@ export function getStarlinkDeparturesLeft(
     departure_time: number;
     flight_number: string;
     destination: string | null;
+    newer: string | null;
   }>;
+  const tails = new Set<string>();
   const left = new Map<string, { origin: string; departure_time: number }>();
   for (const r of rows) {
-    const key = `${r.origin}|${r.tail}|${r.departure_time}`;
-    if (left.has(key)) continue;
     const flight = slotFlightKey(r.flight_number, airline);
     if (!flight || !permalink.test(flight)) continue;
     if (!r.destination || !isCleanAirportPair(r.origin, r.destination)) continue;
-    left.set(key, { origin: r.origin, departure_time: r.departure_time });
+    if (r.newer?.split(" ").some((n) => slotFlightKey(n, airline) === flight)) continue;
+    const tailKey = `${r.origin}|${r.tail}|${r.departure_time}`;
+    const flightKey = `${r.origin}|${flight}|${r.departure_time}`;
+    if (tails.has(tailKey) || left.has(flightKey)) continue;
+    tails.add(tailKey);
+    left.set(flightKey, { origin: r.origin, departure_time: r.departure_time });
   }
   return [...left.values()];
 }
@@ -278,8 +294,9 @@ export interface AirportHistory {
 }
 
 /**
- * The assignment log names the pair; departure_log says the tail really left
- * (a leg swapped away before departure is never archived). Driven from the
+ * The assignment log names the pair; departure_log says the time passed with
+ * the tail's row still in the schedule (a late swap can leave the old tail's
+ * row there too, so a swap between two Starlink planes counts twice here). Driven from the
  * log, probing departure_log on its (tail, time) index. One tail leaves one
  * airport at one time once, however many spellings logged it.
  */

@@ -21,7 +21,7 @@ import {
   nextLocalDay,
 } from "../src/database/airports";
 import { logFlightAssignments } from "../src/database/assignment-log";
-import { getRouteStarlinkSchedule } from "../src/database/database";
+import { archivePastDepartures, getRouteStarlinkSchedule } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
 import { airportLocalDate, localDayEndSec } from "../src/utils/airport-tz";
@@ -230,6 +230,55 @@ describe("getAirportDayCounts", () => {
 
   test("an airline's count never takes another's rows", () => {
     expect(getAirportDayCounts(db, "UA", now).some((r) => r.airport === "SEA")).toBe(false);
+  });
+});
+
+describe("a late swap", () => {
+  // UA1234 ORD-DEN at 13:00 at O'Hare, swapped late: the old tail's row is
+  // still in the schedule when the time passes, so both rows are archived.
+  const t0 = Date.parse("2026-11-27T18:00:00Z") / 1000;
+  const dep = t0 + HOUR;
+  const seed = (to: string, toListed: boolean) => {
+    const swapDb = makeFreshDb();
+    addPlane(swapDb, "N37501", "Starlink");
+    if (toListed) addPlane(swapDb, to, "Starlink");
+    for (const [tail, seen] of [
+      ["N37501", t0 - 3 * HOUR],
+      [to, t0 - HOUR],
+    ] as const) {
+      addFlight(swapDb, tail, "UA1234", "ORD", dep, { arrivalAirport: "DEN", lastUpdated: seen });
+      logFlightAssignments(
+        swapDb,
+        "UA",
+        tail,
+        [
+          {
+            flight_number: "UA1234",
+            departure_airport: "ORD",
+            arrival_airport: "DEN",
+            departure_time: dep,
+            arrival_time: dep + 2 * HOUR,
+          },
+        ],
+        seen
+      );
+    }
+    return swapDb;
+  };
+  const today = (swapDb: Database, at: number) =>
+    getAirportDayCounts(swapDb, "UA", at).find((c) => c.airport === "ORD")?.today;
+
+  test("between two Starlink planes is one departure before and after it leaves", () => {
+    const swapDb = seed("N37502", true);
+    expect(today(swapDb, t0)).toMatchObject({ left: 0, toGo: 1, departures: 1 });
+    expect(archivePastDepartures(swapDb, dep + 60)).toBe(2);
+    expect(today(swapDb, dep + 120)).toMatchObject({ left: 1, toGo: 0, departures: 1 });
+  });
+
+  test("onto a plane without Starlink is no Starlink departure once it is seen", () => {
+    const swapDb = seed("N99NOT", false);
+    archivePastDepartures(swapDb, dep + 60);
+    expect(today(swapDb, dep + 120)?.left ?? 0).toBe(0);
   });
 });
 
