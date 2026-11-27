@@ -16,6 +16,8 @@
  * that none exists.
  */
 
+import { registerAirport } from "./airport-register";
+
 // biome-ignore format: one airport per line keeps the table diffable
 export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
   ABE: [40.6518, -75.4428],
@@ -635,10 +637,19 @@ export const AIRPORT_COORDS: Record<string, readonly [number, number]> = {
 const EARTH_RADIUS_MI = 3959;
 const rad = (deg: number) => (deg * Math.PI) / 180;
 
+/**
+ * The airport's reference point: the hand table's, else the register's
+ * (airport-register.ts) for a code the table lacks. Undefined when neither
+ * holds the code.
+ */
+export function airportCoords(code: string): readonly [number, number] | undefined {
+  return Object.hasOwn(AIRPORT_COORDS, code) ? AIRPORT_COORDS[code] : registerAirport(code)?.coords;
+}
+
 /** Great-circle distance in statute miles; null when either code is unknown. */
 export function airportDistanceMiles(a: string, b: string): number | null {
-  const ca = AIRPORT_COORDS[a];
-  const cb = AIRPORT_COORDS[b];
+  const ca = airportCoords(a);
+  const cb = airportCoords(b);
   if (!ca || !cb) return null;
   return milesBetween(ca[0], ca[1], cb[0], cb[1]);
 }
@@ -653,8 +664,9 @@ function milesBetween(aLat: number, aLon: number, bLat: number, bLon: number): n
 
 /**
  * The airport whose reference point is nearest a position, when that is
- * within `withinMiles`; null otherwise. The table holds the route network
- * only, so a position at a field outside it (a maintenance base) names none.
+ * within `withinMiles`; null otherwise. The hand table holds the route network
+ * only, so a position at a field outside it (a maintenance base) names none;
+ * the register's thousands of fields are deliberately not searched.
  * Separate fields in it are at least 2.8 miles apart (SAN and NZY).
  */
 export function nearestAirport(lat: number, lon: number, withinMiles: number): string | null {
@@ -740,9 +752,14 @@ export const AIRPORT_COUNTRY: Record<string, string> = {
   SPU: "HR", ZNZ: "TZ",
 };
 
-/** ISO country code: "US" for a mapped airport with no entry, null when the code is unknown. */
+/**
+ * ISO country code: "US" for an airport of the hand table with no entry, the
+ * register's country for a code that table lacks, null when the code is unknown.
+ */
 export function airportCountry(code: string): string | null {
-  return AIRPORT_COUNTRY[code] ?? (AIRPORT_COORDS[code] ? "US" : null);
+  if (Object.hasOwn(AIRPORT_COUNTRY, code)) return AIRPORT_COUNTRY[code];
+  if (Object.hasOwn(AIRPORT_COORDS, code)) return "US";
+  return registerAirport(code)?.country ?? null;
 }
 
 /**

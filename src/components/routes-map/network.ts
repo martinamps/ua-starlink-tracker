@@ -1,5 +1,5 @@
 import type { RouteScheduleRow } from "../../types";
-import { AIRPORT_COORDS } from "../../utils/airport-geo";
+import { airportCoords } from "../../utils/airport-geo";
 import { greatCircleMidpoint, onMap, projectToMap } from "../../utils/map-projection";
 
 export interface MapArc {
@@ -49,7 +49,7 @@ export function buildRouteNetwork(rows: RouteScheduleRow[]): RouteNetwork {
   const point = new Map<string, [number, number] | null>();
   const at = (code: string) => {
     if (!point.has(code)) {
-      const c = AIRPORT_COORDS[code];
+      const c = airportCoords(code);
       const p = c ? projectToMap(c[0], c[1]) : null;
       point.set(code, p && onMap(p, 2) ? p : null);
     }
@@ -69,7 +69,7 @@ export function buildRouteNetwork(rows: RouteScheduleRow[]): RouteNetwork {
     if (pb && !outbound.has(r.destination)) outbound.set(r.destination, 0);
     if (!pa || !pb) {
       for (const code of [r.origin, r.destination]) {
-        if (at(code) || !AIRPORT_COORDS[code]) continue;
+        if (at(code) || !airportCoords(code)) continue;
         const o = offMap.get(code) ?? { flights: 0, departs: false };
         o.flights += r.departures;
         o.departs ||= code === r.origin;
@@ -89,7 +89,10 @@ export function buildRouteNetwork(rows: RouteScheduleRow[]): RouteNetwork {
     .map(([key, { a, b, departures }]) => {
       const [x0, y0] = at(a) as [number, number];
       const [x2, y2] = at(b) as [number, number];
-      const [mLat, mLon] = greatCircleMidpoint(AIRPORT_COORDS[a], AIRPORT_COORDS[b]);
+      const [mLat, mLon] = greatCircleMidpoint(
+        airportCoords(a) as readonly [number, number],
+        airportCoords(b) as readonly [number, number]
+      );
       const [mx, my] = projectToMap(mLat, mLon);
       // The control point that puts the curve through the midpoint at t = 0.5.
       const cx = 2 * mx - (x0 + x2) / 2;

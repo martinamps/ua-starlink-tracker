@@ -69,12 +69,12 @@ import type {
 import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
 import type { RouteFlightLeg } from "../database/route-flights";
 import {
-  AIRPORT_COORDS,
+  airportCoords,
   airportDistanceMiles,
   detourBoundMiles,
   hubAllowedForTrip,
 } from "../utils/airport-geo";
-import { airportWithCode } from "../utils/airport-names";
+import { airportWithCode } from "../utils/airport-places";
 import {
   airportTimezone,
   flightDateWindow,
@@ -2578,8 +2578,11 @@ export type EmptyPlanReason =
   | { kind: "no_route"; max_stops: number }
   | { kind: "unplaced_airport"; airports: string[] };
 
-/** Has coordinates, so the detour bound and the country gate can weigh it. */
-const isPlaced = (code: string): boolean => AIRPORT_COORDS[code] !== undefined;
+/**
+ * Has coordinates, from the hand table or the register under it, so the
+ * detour bound and the country gate can weigh it.
+ */
+const isPlaced = (code: string): boolean => airportCoords(code) !== undefined;
 
 /**
  * The ends of a trip that have no coordinates yet. A trip with any gets its

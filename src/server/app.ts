@@ -313,12 +313,12 @@ import type {
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
 import { orList, placeCodeAirports } from "../utils/airport-aliases";
 import { toIata } from "../utils/airport-code";
-import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-names";
+import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-places";
 import {
   airportLocalDate,
   airportTimezone,
   flightDateWindow,
-  isPlacedAirportPair,
+  isHandPlacedAirportPair,
   isRealIsoDate,
   secondsToFirstLocalMidnight,
 } from "../utils/airport-tz";
@@ -4677,10 +4677,11 @@ const routePlannerPage: Handler = (ctx) => {
     const flightNumbers = routeFlightNumbers(ctx, board);
     // A pair with an empty board that nobody flew this week stays reachable
     // (flight permalinks link it) but doesn't index, and the sitemap skips it.
-    // Nor does a pair with an end no airport table holds: its page can name
-    // neither the place nor its local time (the sitemap's rule again).
+    // Nor does a pair with an end nobody placed by hand: no table holds it and
+    // the page can name neither the place nor its local time, or only the
+    // register does, under a name nobody checked (the sitemap's rule again).
     const indexable =
-      isPlacedAirportPair(parsed.origin, parsed.destination) &&
+      isHandPlacedAirportPair(parsed.origin, parsed.destination) &&
       (board.flights.length > 0 || ctx.reader.routeIsRecent(parsed.origin, parsed.destination));
     return renderSubPage(
       ctx,

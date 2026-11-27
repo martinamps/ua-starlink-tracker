@@ -1,4 +1,4 @@
-import { airportCityWithCode, routePairLabel } from "../../utils/airport-names";
+import { airportCityWithCode, routePairLabel } from "../../utils/airport-places";
 import { Panel } from "../layout";
 import { zonedDeparture } from "../ui/format";
 import { Pill, type Tone } from "../ui/tone";

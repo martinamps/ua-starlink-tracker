@@ -11,6 +11,7 @@ import {
 } from "../client/flight-answer";
 import type { PopularFlight } from "../database/database";
 import { SEATBACK_LIVE_TV_COPY } from "../utils/aircraft-specs";
+import { toIata } from "../utils/airport-code";
 import { AIRPORT_TZ, airportTimezone, flightDateWindow } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
@@ -65,6 +66,24 @@ const AIRPORT_ZONES: Record<string, string> = (() => {
   for (const [iata, zone] of Object.entries(AIRPORT_TZ)) byZone[zone] = (byZone[zone] ?? "") + iata;
   return byZone;
 })();
+
+/**
+ * AIRPORT_ZONES for one page's re-check, plus any of the page's own airports
+ * that only the register places, so the browser prints the local times the
+ * server did. The very object when there is none: a page whose airports are
+ * all hand-placed sends the bytes it always sent.
+ */
+export function zonesForPage(airports: Array<string | null | undefined>): Record<string, string> {
+  let zones = AIRPORT_ZONES;
+  for (const raw of new Set(airports)) {
+    const code = toIata(raw);
+    const zone = Object.hasOwn(AIRPORT_TZ, code) ? undefined : airportTimezone(code);
+    if (!zone) continue;
+    if (zones === AIRPORT_ZONES) zones = { ...AIRPORT_ZONES };
+    zones[zone] = (zones[zone] ?? "") + code;
+  }
+  return zones;
+}
 
 /** A type rule of all or nothing: no date can change the answer. */
 const typeSettled = (flight: FlightFacts) =>
@@ -430,7 +449,24 @@ export default function CheckFlightPage({
               zoneFor: undefined,
               nowSec: undefined,
               refresh,
-              zones: refresh ? AIRPORT_ZONES : {},
+              zones: refresh
+                ? zonesForPage([
+                    ctx?.origin,
+                    dated.leg?.destination,
+                    ...(dated.body.flights ?? []).flatMap((f) => [
+                      f.departure_airport,
+                      f.arrival_airport,
+                    ]),
+                    ...(dated.body.fallback?.segments ?? []).flatMap((g) => [
+                      g.origin,
+                      g.destination,
+                    ]),
+                    ...(flight?.routes ?? []).flatMap((r) => [
+                      r.departure_airport,
+                      r.arrival_airport,
+                    ]),
+                  ])
+                : {},
               ...(dated.leg ? { leg: dated.leg } : {}),
               ...(seen ? { seen } : {}),
             }),

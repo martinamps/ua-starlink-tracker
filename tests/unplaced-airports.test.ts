@@ -5,6 +5,11 @@
  * name or a local time we would have to guess, and its route page is not
  * offered to search until someone checks the code and adds it.
  *
+ * Since the register (tests/airport-register.test.ts) a code the hand tables
+ * lack may still get a name and a zone from the register under them. This
+ * file's unknown code is in neither; that file covers a code only the
+ * register places, which is named and timed but kept out of search the same.
+ *
  * Found on 2026-11-27: the live sitemap listed sixteen route pages on eight
  * codes no table held, one of them (MDH to STL) a single charter leg whose
  * board said "Times local to MDH" beside UTC times.
@@ -21,7 +26,7 @@ import { unplacedAirportsByAirline } from "../src/scripts/data-freshness";
 import { createApp } from "../src/server/app";
 import { AIRPORT_COORDS, airportCountry } from "../src/utils/airport-geo";
 import { AIRPORT_NAMES, airportWithCode } from "../src/utils/airport-names";
-import { AIRPORT_TZ, airportTimezone, isPlacedAirportPair } from "../src/utils/airport-tz";
+import { AIRPORT_TZ, airportTimezone, isHandPlacedAirportPair } from "../src/utils/airport-tz";
 import { addFlight, addPlane, makeFreshDb, req } from "./helpers";
 
 const UA = SITES.united.canonicalHost;
@@ -95,12 +100,12 @@ describe("the airport tables", () => {
 });
 
 describe("a pair with an end no table holds", () => {
-  test("is told from a placed pair, whichever end it is", () => {
-    expect(isPlacedAirportPair("ORD", "DEN")).toBe(true);
-    expect(isPlacedAirportPair("ord", "den")).toBe(true);
-    expect(isPlacedAirportPair(UNKNOWN, "STL")).toBe(false);
-    expect(isPlacedAirportPair("STL", UNKNOWN)).toBe(false);
-    expect(isPlacedAirportPair("", "")).toBe(false);
+  test("is told from a hand-placed pair, whichever end it is", () => {
+    expect(isHandPlacedAirportPair("ORD", "DEN")).toBe(true);
+    expect(isHandPlacedAirportPair("ord", "den")).toBe(true);
+    expect(isHandPlacedAirportPair(UNKNOWN, "STL")).toBe(false);
+    expect(isHandPlacedAirportPair("STL", UNKNOWN)).toBe(false);
+    expect(isHandPlacedAirportPair("", "")).toBe(false);
   });
 
   test("stays out of the sitemap, while the placed pair beside it stays in", async () => {
