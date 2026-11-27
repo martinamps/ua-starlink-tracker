@@ -350,15 +350,42 @@ describe("links into the family", () => {
     }
   });
 
-  test("a route page links the airports at both ends that have a page", async () => {
+  test("a route page links the airports at both ends whose page indexes", async () => {
     const body = await page("/route-planner/DEN/ORD");
     expect(body).toContain('href="/routes/DEN"');
-    expect(body).toContain('href="/routes/ORD"');
+    // ORD has a page (the route cache knows it) but no Starlink departures
+    // flown, so it is noindex and gets no link.
+    expect((await get("/routes/ORD")).status).toBe(200);
+    expect(body).not.toContain('href="/routes/ORD"');
     // SFO has no United departure on file, so no page and no link.
     const sfo = await page("/route-planner/DEN/SFO");
     expect(sfo).toContain('href="/routes/DEN"');
     expect(sfo).not.toContain('href="/routes/SFO"');
     expect((await get("/routes/SFO")).status).toBe(404);
+  });
+
+  // The sitemap's rule, on route pages too: a thin airport's page serves but
+  // is noindex, so a route page leaving from it links only the far end.
+  test("a route page does not link a thin airport's noindex page", async () => {
+    const gjt = await get("/routes/GJT");
+    expect(gjt.status).toBe(200);
+    expect(robots(await gjt.text())).toContain("noindex");
+    const body = await page("/route-planner/GJT/DEN");
+    expect(body).toContain('href="/routes/DEN"');
+    expect(body).not.toContain('href="/routes/GJT"');
+    for (const m of body.matchAll(/href="\/routes\/([A-Z]{3})"/g)) {
+      expect(await sitemapAirports(), m[1]).toContain(m[1]);
+    }
+  });
+
+  test("a tail page links only airports whose page indexes", async () => {
+    const body = await page("/fleet/N2LIST");
+    expect(body).toContain('href="/routes/DEN"');
+    expect(body).not.toContain('href="/routes/GJT"');
+    const listed = await sitemapAirports();
+    for (const m of body.matchAll(/href="\/routes\/([A-Z]{3})"/g)) {
+      expect(listed, m[1]).toContain(m[1]);
+    }
   });
 
   test("a flight page links the airport its legs leave from", async () => {
