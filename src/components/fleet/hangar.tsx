@@ -9,7 +9,7 @@ import type {
 } from "../../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../../utils/aircraft-specs";
 import { reportedClause } from "../../utils/reported-reason";
-import { H2, SECTION_WIDE, SkipLink, SkipTarget } from "../layout";
+import { H2, SECTION_WIDE, SkipLink, SkipTarget, TextGap } from "../layout";
 import { fmt, pct } from "../ui/format";
 import { type PipelineMap, fittingPhrase, pipelinePhrase } from "./pipeline";
 import { PROVIDER_LABEL, PROVIDER_ORDER, ProviderLegend, WIFI_CLASS } from "./providers";
@@ -116,13 +116,20 @@ export function TailGrid({
 
 function SpecCard({ id, name, spec }: { id: string; name: string; spec: AircraftSpec }) {
   const row = (label: string, value: string | number, unit = "") => (
-    <div className="flex justify-between gap-4">
-      <dt className="text-muted">{label}</dt>
-      <dd className="text-secondary text-right tabular-nums">
-        {value}
-        {unit && <span className="text-muted ml-0.5">{unit}</span>}
-      </dd>
-    </div>
+    <>
+      <div className="flex justify-between gap-4">
+        <dt className="text-muted">{label}</dt>{" "}
+        <dd className="text-secondary text-right tabular-nums">
+          {value}
+          {unit && (
+            <>
+              <TextGap />
+              <span className="text-muted ml-0.5">{unit}</span>
+            </>
+          )}
+        </dd>
+      </div>{" "}
+    </>
   );
   return (
     <span
@@ -133,7 +140,7 @@ function SpecCard({ id, name, spec }: { id: string; name: string; spec: Aircraft
       aria-hidden="true"
       className="spec-card absolute top-full left-0 mt-1 w-64 bg-surface-elevated border border-subtle rounded-lg p-3 text-xs shadow-xl z-20 block"
     >
-      <span className="block font-display text-sm text-primary mb-2">{name}</span>
+      <span className="block font-display text-sm text-primary mb-2">{name}</span>{" "}
       <dl className="space-y-1 mb-2">
         {row("Seats", spec.seats)}
         {row("Wingspan", spec.wingspan_ft, "ft")}
@@ -142,7 +149,7 @@ function SpecCard({ id, name, spec }: { id: string; name: string; spec: Aircraft
         {row("Cruise", spec.cruise_mph, "mph")}
         {row("First flight", spec.first_flight)}
         {row("Engines", spec.engines)}
-      </dl>
+      </dl>{" "}
       <span className="block text-xs text-secondary leading-snug pt-2 border-t border-subtle">
         {spec.fun_fact}
       </span>
@@ -191,20 +198,23 @@ function FamilyBlock({
             tabIndex={spec ? 0 : -1}
             aria-describedby={spec ? specId : undefined}
           >
-            <span className="block truncate">{name}</span>
+            <span className="block truncate">{name}</span>{" "}
             {spec && <SpecCard id={specId} name={name} spec={spec} />}
-          </span>
+          </span>{" "}
           <span className="text-xs text-muted tabular-nums">
             {fmt(fam.starlink)}/{fmt(fam.total)}
             {fam.starlink > 0 && (
-              <span className="text-accent ml-1.5">{pct(fam.starlink, fam.total)}</span>
+              <>
+                <TextGap />
+                <span className="text-accent ml-1.5">{pct(fam.starlink, fam.total)}</span>
+              </>
             )}
           </span>
-        </div>
+        </div>{" "}
         {details("fam-details-head shrink-0 text-xs text-accent hover:underline")}
-      </div>
+      </div>{" "}
       <div className="px-2 pb-2">
-        <TailGrid tails={fam.tails} marks={marks} labels={labels} />
+        <TailGrid tails={fam.tails} marks={marks} labels={labels} />{" "}
         {details("fam-details-foot mt-2 text-xs text-accent hover:underline")}
       </div>
     </div>
@@ -237,10 +247,10 @@ export function HangarFloor({
     count("verification_needed") + [...reported.keys()].filter((t) => !fitting.has(t)).length;
   return (
     <section className={SECTION_WIDE}>
-      <h2 className={H2}>Every aircraft</h2>
+      <h2 className={H2}>Every aircraft</h2>{" "}
       <p className="mt-1 mb-3 text-sm text-secondary">
         One square per aircraft, colored by Wi-Fi system.
-      </p>
+      </p>{" "}
       <ProviderLegend
         className="mb-4"
         providers={PROVIDER_ORDER.filter((p) => counts[p] > 0)}
@@ -270,14 +280,15 @@ export function HangarFloor({
       />
       <div className="fam-container gap-3">
         {hangarFamilies.map((fam) => (
-          <FamilyBlock
-            labels={labels}
-            key={fam.family}
-            fam={fam}
-            marks={marks}
-            typeLink={typeLinks.get(fam.family)}
-            typeLinks={typeLinks}
-          />
+          <Fragment key={fam.family}>
+            <FamilyBlock
+              labels={labels}
+              fam={fam}
+              marks={marks}
+              typeLink={typeLinks.get(fam.family)}
+              typeLinks={typeLinks}
+            />{" "}
+          </Fragment>
         ))}
       </div>
     </section>
@@ -325,14 +336,14 @@ export function TailRegistry({
   const ownPages = allTails.length > 0 && allTails.every((t) => tailHref?.(t.tail));
   return (
     <section className={SECTION_WIDE}>
-      {allTails.length > 0 && <SkipLink to="tail-registry-end">Skip the tail registry</SkipLink>}
-      <h2 className={H2}>Tail registry</h2>
+      {allTails.length > 0 && <SkipLink to="tail-registry-end">Skip the tail registry</SkipLink>}{" "}
+      <h2 className={H2}>Tail registry</h2>{" "}
       <p className="mt-1 mb-3 text-sm text-secondary">
         All {fmt(allTails.length)} aircraft. Click one{" "}
         {ownPages
           ? "for its page: Starlink status, checks and flights."
           : "to open it on FlightAware."}
-      </p>
+      </p>{" "}
       <ProviderLegend counts={counts} labels={labels} className="mb-4" />
       <div
         className="tail-registry bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[2] columns-[20ch] gap-x-3"
@@ -404,23 +415,24 @@ export function TypeTailList({
         const own = tailHref(t.tail);
         const lit = isStarlinkProvider(t.provider);
         return (
-          <a
-            key={t.tail}
-            id={`t-${t.tail}`}
-            {...(own
-              ? { href: own }
-              : {
-                  href: `https://flightaware.com/live/flight/${t.tail}`,
-                  target: "_blank",
-                  rel: "nofollow noreferrer noopener",
-                })}
-            title={labels[t.provider]}
-            aria-label={`${t.tail} · ${labels[t.provider]}`}
-            data-dot={lit ? (t.provider === "starlink" ? "◉" : "◍") : undefined}
-            className={lit ? "tail-sl" : "tail-dim"}
-          >
-            {t.tail}
-          </a>
+          <Fragment key={t.tail}>
+            <a
+              id={`t-${t.tail}`}
+              {...(own
+                ? { href: own }
+                : {
+                    href: `https://flightaware.com/live/flight/${t.tail}`,
+                    target: "_blank",
+                    rel: "nofollow noreferrer noopener",
+                  })}
+              title={labels[t.provider]}
+              aria-label={`${t.tail} · ${labels[t.provider]}`}
+              data-dot={lit ? (t.provider === "starlink" ? "◉" : "◍") : undefined}
+              className={lit ? "tail-sl" : "tail-dim"}
+            >
+              {t.tail}
+            </a>{" "}
+          </Fragment>
         );
       })}
     </div>
