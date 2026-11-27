@@ -1043,6 +1043,14 @@ export const GAUGES = {
   // flights instead of the nearest. tags: airline
   UPCOMING_CAPPED_FUTURE_SHARE: "upcoming.capped_future_share",
 
+  // Distinct airport codes in upcoming_flights that no airport table holds
+  // (airportTimezone): the feed's charter fields and newly issued codes. Their
+  // pages print the bare code in UTC and stay out of search until someone
+  // checks the code and adds it; the codes themselves are logged when the set
+  // changes. 0 is emitted too, so a monitor can tell "none" from "not running".
+  // tags: airline
+  UPCOMING_UNPLACED_AIRPORTS: "upcoming.unplaced_airports",
+
   // Community fleet guide (AF) with no live import: seconds since the guide's
   // own date. Deliberately not a data.freshness_seconds job — it ages by
   // design, and the freshness monitors would page on it forever.

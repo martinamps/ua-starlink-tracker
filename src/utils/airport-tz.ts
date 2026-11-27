@@ -175,6 +175,10 @@ export const AIRPORT_TZ: Record<string, string> = {
   OMA: "America/Chicago",
   ORD: "America/Chicago",
   PAH: "America/Chicago",
+  ACT: "America/Chicago",
+  CLL: "America/Chicago",
+  MDH: "America/Chicago",
+  OWB: "America/Chicago",
   PIA: "America/Chicago",
   PNS: "America/Chicago",
   SAT: "America/Chicago",
@@ -259,6 +263,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   LGA: "America/New_York",
   MCO: "America/New_York",
   MDT: "America/New_York",
+  LNS: "America/New_York",
   MIA: "America/New_York",
   MYR: "America/New_York",
   ORF: "America/New_York",
@@ -371,6 +376,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   BQN: "America/Puerto_Rico",
   BDA: "Atlantic/Bermuda",
   BGI: "America/Barbados",
+  ANU: "America/Antigua",
   BON: "America/Kralendijk",
   PLS: "America/Grand_Turk",
   POS: "America/Port_of_Spain",
@@ -379,6 +385,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   XPL: "America/Tegucigalpa",
   // South America
   BOG: "America/Bogota",
+  GEO: "America/Guyana",
   EZE: "America/Argentina/Buenos_Aires",
   GIG: "America/Sao_Paulo",
   GRU: "America/Sao_Paulo",
@@ -491,6 +498,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   CAN: "Asia/Shanghai",
   PEK: "Asia/Shanghai",
   PVG: "Asia/Shanghai",
+  XMN: "Asia/Shanghai",
   PKX: "Asia/Shanghai",
   HND: "Asia/Tokyo",
   KIX: "Asia/Tokyo",
@@ -645,6 +653,17 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
 
 export function airportTimezone(iata: string): string | undefined {
   return AIRPORT_TZ[iata.toUpperCase()];
+}
+
+/**
+ * Both ends are airports the tables hold. The zone, name and coordinate tables
+ * carry one set of codes (tests/unplaced-airports.test.ts), so a code with no zone
+ * is one we can neither name nor time: the flight feed hands us charter fields
+ * and brand-new codes before anyone has checked them. Such a pair still
+ * serves, as bare codes in UTC, but is not offered to search.
+ */
+export function isPlacedAirportPair(origin: string, destination: string): boolean {
+  return Boolean(airportTimezone(origin) && airportTimezone(destination));
 }
 
 export { toIata as icaoToIata } from "./airport-code";

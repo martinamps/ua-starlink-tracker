@@ -71,7 +71,7 @@ export function emptyBoardMessage(board: RouteFlightBoard): string | null {
 
 export function boardDek(board: RouteFlightBoard): string {
   const n = board.flights.length;
-  const head = `${fmt(n)} ${board.airline} nonstop${n === 1 ? "" : "s"} seen on this route in the past week, best Starlink odds first. Times local to ${board.origin}.`;
+  const head = `${fmt(n)} ${board.airline} nonstop${n === 1 ? "" : "s"} seen on this route in the past week, best Starlink odds first. ${board.utc_times ? "Times in UTC" : `Times local to ${board.origin}`}.`;
   const day = board.weekday ? WEEKDAY_NAME[board.weekday] : null;
   return day ? `${head} Flights not seen on a ${day} are listed last.` : head;
 }
