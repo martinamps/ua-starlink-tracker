@@ -259,6 +259,7 @@ import {
   COUNTERS,
   classifyLookupCaller,
   classifyMarket,
+  classifyPreload,
   classifyRequest,
   classifyVisitSource,
   metrics,
@@ -601,6 +602,7 @@ function countRequest(
     ...client,
     visit_source: classifyVisitSource(req, url, String(client.client_class)),
     market: requestMarket(req, tenant, server),
+    preload: classifyPreload(req),
   });
 }
 

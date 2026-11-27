@@ -28,6 +28,7 @@ export {
   classifyRequest,
   classifyVisitSource,
   classifyMarket,
+  classifyPreload,
   classifyLookupCaller,
   normalizeLookupCaller,
   normalizeLookupShedReason,

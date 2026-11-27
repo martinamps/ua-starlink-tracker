@@ -59,6 +59,8 @@
  *                    other | none                                    (9)
  *   market:          http.request only (classifyMarket): home | abroad |
  *                    unknown, against the site's home market      (3)
+ *   preload:         http.request only (classifyPreload): none | prefetch |
+ *                    prerender, a load the browser made ahead of a click (3)
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | type_yes | type_no |
  *                    predicted | no_data | error                     (7)
@@ -506,6 +508,49 @@ export function classifyMarket(
   return home.has(country) ? "home" : "abroad";
 }
 
+// ============ Preload ============
+
+export const PRELOADS = ["none", "prefetch", "prerender"] as const;
+export type Preload = (typeof PRELOADS)[number];
+
+// Every header a browser has used to say "nobody asked for this page yet":
+// Sec-Purpose is the standard one (Chrome's speculation rules and its search
+// prefetch proxy, Firefox's link prefetch), Purpose is what Chrome sent before
+// it, X-Moz is Firefox's old one and X-Purpose Safari's.
+const PRELOAD_HEADERS = ["sec-purpose", "purpose", "x-purpose", "x-moz"] as const;
+// Real values are a few words ("prefetch;anonymous-client-ip"); the rest of a
+// longer one is never read.
+const MAX_PURPOSE_LENGTH = 128;
+
+/**
+ * Whether the browser loaded this ahead of any click, as one of three words.
+ * Chrome marks a prerender as `prefetch;prerender`, so prerender is looked
+ * for first. Safari's `preview` is a prefetch here. Only whole tokens count,
+ * and only the word leaves: the header's text goes to no metric, span or log.
+ *
+ * A click that follows a prefetch or prerender is served from the browser's
+ * copy and sends no second request, so these loads are possible arrivals,
+ * not failed ones: `visit_source` is deliberately left as it would be for a
+ * click.
+ */
+export function classifyPreload(req: Request): Preload {
+  let prefetch = false;
+  for (const name of PRELOAD_HEADERS) {
+    const raw = req.headers.get(name);
+    if (!raw) continue;
+    // "prerender=?0" is a structured field's way of saying no.
+    const tokens = raw
+      .slice(0, MAX_PURPOSE_LENGTH)
+      .toLowerCase()
+      .split(/[;,\s]+/)
+      .filter((t) => !t.endsWith("=?0"))
+      .map((t) => t.split("=")[0]);
+    if (tokens.includes("prerender")) return "prerender";
+    if (tokens.includes("prefetch") || tokens.includes("preview")) prefetch = true;
+  }
+  return prefetch ? "prefetch" : "none";
+}
+
 const LOOKUP_CALLERS = ["page", "api", "extension", "mcp", "other"] as const;
 export type LookupCaller = (typeof LOOKUP_CALLERS)[number];
 const LOOKUP_CALLER_SET: ReadonlySet<string> = new Set(LOOKUP_CALLERS);
@@ -779,7 +824,8 @@ export const COUNTERS = {
 
   // HTTP requests
   // tags: method, route (allowlisted), status_code, tenant, client_class,
-  //   visit_source (classifyVisitSource), market (classifyMarket)
+  //   visit_source (classifyVisitSource), market (classifyMarket),
+  //   preload (classifyPreload)
   HTTP_REQUEST: "http.request",
 
   // A Host header that is not a host at all, answered 400 before any tenant
