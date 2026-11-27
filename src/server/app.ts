@@ -359,6 +359,7 @@ import { recordWatchCtaShown, sameDayAlternativesField, watchFeed } from "./watc
 
 import {
   type AirportBoard,
+  airportIndexes,
   airportMetaDescription,
   airportQuestion,
   airportTitle,
@@ -4303,10 +4304,10 @@ const routePlannerPage: Handler = (ctx) => {
       return plannerSearchFor(ctx, parsed.origin, parsed.destination) ?? notFound(ctx.site);
     }
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
-    // The origin always has an airport page (its gate mirrors this one); the
-    // destination has one only when the airline departs from it too.
+    // Only ends whose airport page indexes: a thin end's page serves but is
+    // noindex, and a link to it passes nothing (the sitemap's rule).
     const airportLinks = ctx.site.features.airportPages
-      ? [parsed.origin, parsed.destination].filter((a) => ctx.reader.airportHasData(a))
+      ? firstIndexedAirports(ctx.reader, [parsed.origin, parsed.destination], 2)
       : [];
     const board = buildRouteFlightBoard(cfg, ctx.reader, parsed.origin, parsed.destination, {
       date: ctx.url.searchParams.get("date"),
@@ -4728,7 +4729,7 @@ function tailPage(ctx: RequestContext): Promise<Response> | Response | null {
     flightLinks: features.checkFlightPage,
     routeLinks: features.routePlannerPage,
     airportHref: (airport) =>
-      features.airportPages && ctx.reader.airportHasData(airport) ? `/routes/${airport}` : null,
+      features.airportPages && airportIndexes(ctx.reader, airport) ? `/routes/${airport}` : null,
   });
   if (!model) return null;
   const wayOn: PageLink[] = [
