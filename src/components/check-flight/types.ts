@@ -141,6 +141,9 @@ export interface DatedAnswer {
   dayLegs?: DayLeg[];
   /** A change of aircraft on the answered departure, from our own log. */
   swap?: PlaneSwap | null;
+  /** The body's aircraft is a logged sighting read back (storedTailSightings),
+   * last seen then: the card dates it and the browser still re-checks it. */
+  seenAt?: number;
 }
 
 /** "gained"/"lost" when one side is known to have Starlink and the other known

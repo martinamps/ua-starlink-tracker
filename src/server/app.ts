@@ -169,7 +169,9 @@ import {
   datePassed,
   forecastNote,
   inTravelOrder,
+  noPlaneLine,
   renderFlightAnswer,
+  seenNote,
   shareOffered,
   unansweredLegs,
 } from "../client/flight-answer";
@@ -3875,7 +3877,7 @@ function flightMetaAnswer(
  * the flight's undated lines stand. */
 export function datedPageLines(
   site: SiteConfig,
-  facts: FlightFacts,
+  facts: FlightFacts | undefined,
   dated: DatedAnswer | undefined
 ): { title: string; description: string } | null {
   if (!dated || dated.body.error) return null;
@@ -3885,8 +3887,12 @@ export function datedPageLines(
   const forecast =
     answer.tone === "likely" || answer.tone === "maybe" || answer.tone === "unlikely";
   // The card's own caveat, so the preview never promises what the card doesn't.
+  // A no read back from the log names its aircraft and dates the sighting: a
+  // preview is kept long after the page that made it.
+  const plane = noPlaneLine(dated.body);
+  const seen = dated.seenAt ? ` ${seenNote(dated.seenAt)}` : "";
   const after = answer.firm
-    ? " Aircraft can be swapped before departure."
+    ? `${plane ? ` ${plane}` : ""}${seen} Aircraft can be swapped before departure.`
     : forecast
       ? ` ${forecastNote(dated.body, answerCtx)}`
       : "";
@@ -3910,9 +3916,9 @@ export function datedPageLines(
 
 /** The asked leg as a title names it: the flight's own route row when it flies
  * that leg (buildFlightFacts puts it first), else the parsed airports. */
-function datedLegLabel(facts: FlightFacts, leg: LegQuery | undefined): string {
+function datedLegLabel(facts: FlightFacts | undefined, leg: LegQuery | undefined): string {
   if (!leg) return "";
-  const route = facts.routes[0];
+  const route = facts?.routes[0];
   if (route && onLeg(route, leg)) return ` (${route.departure_airport} → ${route.arrival_airport})`;
   if (leg.origin && leg.destination) return ` (${leg.origin} → ${leg.destination})`;
   return leg.origin ? ` (from ${leg.origin})` : leg.destination ? ` (to ${leg.destination})` : "";
@@ -4042,7 +4048,7 @@ async function datedAnswer(
       reader,
       flightNumber,
       date,
-      withLeg({ lookupTail: null }, legParse)
+      withLeg({ lookupTail: null, storedSightings: true }, legParse)
     );
     if (
       verdict.kind === "invalid_date" ||
@@ -4066,6 +4072,7 @@ async function datedAnswer(
       ...(legParse.leg ? { leg: legParse.leg } : {}),
       body,
       ...(dayLegs.length > 0 ? { dayLegs } : {}),
+      ...(verdict.kind === "fr24_no" && verdict.storedAsOf ? { seenAt: verdict.storedAsOf } : {}),
       swap: planeSwapFor(
         reader,
         verdict,
@@ -4321,11 +4328,22 @@ const checkFlightPage: Handler = async (ctx) => {
     const dated = date ? await datedAnswer(cfg, reader, fn, date, legParse) : undefined;
     if (!reader.flightNumberHasData(variants)) {
       countShareShown(ctx, dated);
+      // The card can still answer the date from stored data; its lines go with it.
+      const ownDate = datedPageLines(ctx.site, undefined, dated);
+      const unknown = unknownFlightMeta(fn, cfg);
       return renderSubPage(
         ctx,
         CheckFlightPage,
         ctx.url.pathname,
-        unknownFlightMeta(fn, cfg),
+        ownDate
+          ? {
+              ...unknown,
+              siteTitle: ownDate.title,
+              siteDescription: ownDate.description,
+              ogTitle: ownDate.title,
+              ogDescription: ownDate.description,
+            }
+          : unknown,
         // noindex but follow: hand the crawler somewhere real to go.
         { popular: reader.getPopularFlights(), noindex: true, dated, unknownFlight: fn }
       );

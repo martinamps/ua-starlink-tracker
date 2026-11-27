@@ -74,7 +74,14 @@ import {
   flightDateWindow,
   matchesLocalDate,
 } from "../utils/airport-tz";
-import { type FallbackSegment, lookupFlightTailVerdict, unreadAircraft } from "./flight-verdict";
+import {
+  type FallbackSegment,
+  lookupFlightTailVerdict,
+  storedSightingAsOf,
+  storedSightingKey,
+  storedTailSightings,
+  unreadAircraft,
+} from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
 import {
   type QatarGrade,
@@ -274,7 +281,15 @@ export type AnsweredVerdict =
       fr24Error: boolean;
     }
   | { kind: "fr24"; window: FlightDateWindow; normalized: string; starlink: FallbackSegment[] }
-  | { kind: "fr24_no"; window: FlightDateWindow; normalized: string; segments: FallbackSegment[] }
+  | {
+      kind: "fr24_no";
+      window: FlightDateWindow;
+      normalized: string;
+      segments: FallbackSegment[];
+      /** Set when the segments are logged sightings read back, not a lookup
+       * made now: when the oldest of them was seen. Never serialized. */
+      storedAsOf?: number;
+    }
   | {
       kind: "no_model";
       window: FlightDateWindow;
@@ -718,6 +733,10 @@ export interface ResolveDeps {
   aircraftType?: string | null;
   /** Override the FR24 reverse lookup; pass null to disable it (hub check-any-flight). */
   lookupTail?: typeof lookupFlightTailVerdict | null;
+  /** With lookupTail null: read back what an earlier lookup logged for the
+   * date (storedTailSightings), so a page's first paint can name an aircraft
+   * the schedule does not hold. The hub's answers leave it off. */
+  storedSightings?: boolean;
   predict?: typeof predictFlight;
   /** The traveller's own leg. Absent = every leg of the number (the unscoped answer). */
   leg?: LegQuery;
@@ -732,9 +751,9 @@ export async function resolveFlightVerdict(
   reader: ScopedReader,
   flightNumber: string,
   date: string,
-  deps: ResolveDeps = {}
+  asked: ResolveDeps = {}
 ): Promise<FlightVerdict> {
-  const now = deps.now ?? unixNow();
+  const now = asked.now ?? unixNow();
   const window = flightDateWindow(date, now);
   if (!window) return { kind: "invalid_date" };
 
@@ -743,10 +762,23 @@ export async function resolveFlightVerdict(
     return { kind: "invalid_flight_number", normalized };
   }
 
-  if (cfg.code === "QR") return resolveQatarLeg(reader, normalized, date, window, now, deps);
-  if (cfg.statementRule) return statementVerdict(cfg, reader, normalized, date, window, now, deps);
+  if (cfg.code === "QR") return resolveQatarLeg(reader, normalized, date, window, now, asked);
+  if (cfg.statementRule) return statementVerdict(cfg, reader, normalized, date, window, now, asked);
 
-  const { rows, unequipped } = assignmentRowsOn(cfg, reader, normalized, date, window, deps);
+  const { rows, unequipped } = assignmentRowsOn(cfg, reader, normalized, date, window, asked);
+  // Community carriers hold their unequipped tails in the schedule already.
+  let deps = asked;
+  if (asked.lookupTail === null && asked.storedSightings && !cfg.communitySource) {
+    const scheduled = new Set(
+      rows.map((r) => storedSightingKey(r.departure_airport, r.tail_number))
+    );
+    const variants = buildAirlineFlightNumberVariants(cfg, normalized);
+    deps = {
+      ...asked,
+      lookupTail: async (scope, _fn, day, start, end, at) =>
+        storedTailSightings(scope, variants, day, start, end, scheduled, at),
+    };
+  }
 
   const leg = deps.leg;
   if (!leg) {
@@ -1287,8 +1319,15 @@ async function verdictFromRows(
       // verified non-Starlink tail is. With our own firm-no rows in hand,
       // prefer those (they carry per-row reasons); otherwise fr24_no.
       if (nonStarlink.length === 0 && segments.some((s) => s.hasStarlink === false)) {
+        const storedAsOf = storedSightingAsOf(raw);
         return {
-          verdict: { kind: "fr24_no", window, normalized, segments },
+          verdict: {
+            kind: "fr24_no",
+            window,
+            normalized,
+            segments,
+            ...(storedAsOf ? { storedAsOf } : {}),
+          },
           segments: raw,
           ...scopedTo,
         };

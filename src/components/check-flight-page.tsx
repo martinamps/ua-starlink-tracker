@@ -123,6 +123,7 @@ export function answerContext(
     host: site.canonicalHost,
     shareUrl: datedAnswerUrl(site, dated),
     ...(dated.dayLegs?.length ? { dayLegs: dated.dayLegs } : {}),
+    ...(dated.seenAt ? { seenAt: dated.seenAt } : {}),
   };
 }
 
@@ -242,7 +243,10 @@ export default function CheckFlightPage({
   const answer: FlightAnswer | null = dated && ctx ? renderFlightAnswer(dated.body, ctx) : null;
   // A prediction near departure may firm up from the API's live schedule
   // lookup, which the server render deliberately skips.
-  const refresh = !!ctx && !!answer && !answer.firm && !datePassed(ctx) && ctx.daysOut <= 2;
+  // An answer read back from the log is firm and may be hours old: the
+  // browser asks as often as it did when this page served odds here.
+  const refresh =
+    !!ctx && !!answer && (!answer.firm || !!dated?.seenAt) && !datePassed(ctx) && ctx.daysOut <= 2;
 
   // What the homepage's "Your flights" compares a later answer with
   // (src/client/recent-checks.ts): only for an answer worth coming back to.
