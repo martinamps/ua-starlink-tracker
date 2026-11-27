@@ -66,7 +66,7 @@ function SidePanel({ side }: { side: CompareSide }) {
   const showBlended = fleet > 0 && !side.phases && !side.typeProgress;
   return (
     <Panel className="flex flex-col">
-      <div className="flex items-center justify-between gap-2 mb-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <a
           href={`/airlines/${airlineSlug(cfg)}`}
           className="font-display text-lg font-semibold text-primary hover:text-accent transition-colors"

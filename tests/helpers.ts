@@ -94,6 +94,7 @@ export function sectionOf(html: string, heading: string): string {
  */
 export function readableText(html: string): string {
   return html
+    .replace(/<span class="inline-block max-w-full">((?:[^<]|<wbr\/?>)*)<\/span>/g, "$1")
     .replace(/<wbr\/?>/g, "")
     .replace(/&#x27;|&#39;/g, "'")
     .replace(/&quot;/g, '"')

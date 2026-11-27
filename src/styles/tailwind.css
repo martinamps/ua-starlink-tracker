@@ -292,6 +292,7 @@
    and a little larger, with "Details" beside the name to save a line. */
 .fam-container {
   display: grid;
+  gap: 0.75rem;
 }
 .fam-details-head {
   display: none;
@@ -415,43 +416,111 @@
 /* From 768px the card hangs right from the name, 16rem wide over 118px
    blocks, so the right-hand column's ran up to 115px past the window. The
    grid's own width gives its column count, (width + 12px gap) / 130px, and
-   that column's card ends at its block's right padding instead. The
-   container is lifted so the cards still draw over the sections below it. */
+   that column's card ends at its block's right padding instead. The gap is
+   in px like the blocks: at a 20px base font a 0.75rem gap made a column
+   fewer than these ranges count, and the shift went to the wrong block.
+   The column before the last has 248px to the grid's edge and the page's
+   2rem padding beyond it: at 16px its card fits there as it always did (the
+   shift is 0), and from about 17px it moves left by what it would overrun,
+   staying 4px inside the window. Ranges run to 14 columns, the grid's width
+   at a 26px base font. The container is lifted so the cards still draw over
+   the sections below it. */
 @media (min-width: 768px) {
   .fam-container {
     container-type: inline-size;
     position: relative;
     z-index: 1;
+    gap: 12px;
+    --spec-last: calc(118px - 1rem - 16rem);
+    --spec-next: min(0px, calc(243px + 1.5rem - 16rem));
   }
 }
 @container (508px <= width < 638px) {
   .fam-container > :nth-child(4n) .spec-card {
-    left: calc(118px - 1rem - 16rem);
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(4n - 1) .spec-card {
+    left: var(--spec-next);
   }
 }
 @container (638px <= width < 768px) {
   .fam-container > :nth-child(5n) .spec-card {
-    left: calc(118px - 1rem - 16rem);
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(5n - 1) .spec-card {
+    left: var(--spec-next);
   }
 }
 @container (768px <= width < 898px) {
   .fam-container > :nth-child(6n) .spec-card {
-    left: calc(118px - 1rem - 16rem);
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(6n - 1) .spec-card {
+    left: var(--spec-next);
   }
 }
 @container (898px <= width < 1028px) {
   .fam-container > :nth-child(7n) .spec-card {
-    left: calc(118px - 1rem - 16rem);
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(7n - 1) .spec-card {
+    left: var(--spec-next);
   }
 }
 @container (1028px <= width < 1158px) {
   .fam-container > :nth-child(8n) .spec-card {
-    left: calc(118px - 1rem - 16rem);
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(8n - 1) .spec-card {
+    left: var(--spec-next);
   }
 }
 @container (1158px <= width < 1288px) {
   .fam-container > :nth-child(9n) .spec-card {
-    left: calc(118px - 1rem - 16rem);
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(9n - 1) .spec-card {
+    left: var(--spec-next);
+  }
+}
+@container (1288px <= width < 1418px) {
+  .fam-container > :nth-child(10n) .spec-card {
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(10n - 1) .spec-card {
+    left: var(--spec-next);
+  }
+}
+@container (1418px <= width < 1548px) {
+  .fam-container > :nth-child(11n) .spec-card {
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(11n - 1) .spec-card {
+    left: var(--spec-next);
+  }
+}
+@container (1548px <= width < 1678px) {
+  .fam-container > :nth-child(12n) .spec-card {
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(12n - 1) .spec-card {
+    left: var(--spec-next);
+  }
+}
+@container (1678px <= width < 1808px) {
+  .fam-container > :nth-child(13n) .spec-card {
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(13n - 1) .spec-card {
+    left: var(--spec-next);
+  }
+}
+@container (1808px <= width < 1938px) {
+  .fam-container > :nth-child(14n) .spec-card {
+    left: var(--spec-last);
+  }
+  .fam-container > :nth-child(14n - 1) .spec-card {
+    left: var(--spec-next);
   }
 }
 @media (max-width: 767px) {

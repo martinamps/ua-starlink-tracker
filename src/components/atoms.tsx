@@ -220,7 +220,7 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
         return (
           <React.Fragment key={cfg.code}>
             <li className="py-3 first:pt-0 last:pb-0">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                 <span className="flex flex-wrap items-baseline gap-x-2">
                   <a
                     href={stat.href || "#"}
