@@ -2293,8 +2293,8 @@ export interface Itinerary {
 
 /** One flight number on one pair, before its odds are dated. */
 interface EdgeOption {
-  /** The number as stored, keying confirmed assignments. */
-  stored: string;
+  /** flight|dep|arr with the flight as its departure slot (slotFlightKey), keying confirmed assignments. */
+  slot: string;
   /** History-only prediction (flight_number is the UA spelling). */
   hist: BasePrediction;
   route: string;
@@ -2323,7 +2323,9 @@ type RouteGraph = Map<string, Map<string, EdgeOption[]>>;
  * Same-day assignments on VERIFIED-Starlink tails (verified_wifi = 'Starlink',
  * not NULL — spreadsheet-listed-but-unverified planes don't get the confirmed
  * tier), keyed flight|dep|arr. Only valid for a date our upcoming_flights
- * snapshot covers; outside it the map is simply empty.
+ * snapshot covers; outside it the map is simply empty. The flight is its slot
+ * key: one departure is stored as SKW5771 on one row and OO5771 on another,
+ * and the graph's option for it may come from either.
  */
 function confirmedEdgesOn(reader: ScopedReader, date: string): Map<string, "express" | "mainline"> {
   const out = new Map<string, "express" | "mainline">();
@@ -2337,12 +2339,15 @@ function confirmedEdgesOn(reader: ScopedReader, date: string): Map<string, "expr
       continue;
     }
     out.set(
-      `${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`,
+      slotEdgeKey(reader, r.flight_number, r.departure_airport, r.arrival_airport),
       r.fleet === "mainline" ? "mainline" : "express"
     );
   }
   return out;
 }
+
+const slotEdgeKey = (reader: ScopedReader, flight: string, dep: string, arr: string) =>
+  `${slotFlightKey(flight, reader.scope) ?? flight}|${dep}|${arr}`;
 
 const nextIsoDate = (date: string) =>
   new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
@@ -2363,7 +2368,7 @@ function sightingDays(reader: ScopedReader): Map<string, Set<string>> {
 function loadSightingDays(reader: ScopedReader): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   for (const r of reader.getRouteGraphSightings()) {
-    const key = `${slotFlightKey(r.flight_number, reader.scope) ?? r.flight_number}|${r.departure_airport}|${r.arrival_airport}`;
+    const key = slotEdgeKey(reader, r.flight_number, r.departure_airport, r.arrival_airport);
     const days = out.get(key);
     if (days) days.add(r.dep_date);
     else out.set(key, new Set([r.dep_date]));
@@ -2405,18 +2410,16 @@ function buildRouteGraph(
     // A row whose origin equals its destination is bad upstream data; letting
     // it into the graph is what let the planner emit self-loop legs.
     if (!dep || !arr || dep === arr) continue;
-    const key = `${r.flight_number}|${dep}|${arr}`;
+    const key = slotEdgeKey(reader, r.flight_number, dep, arr);
     const hist = predictLegOrFlight(reader, uaPrefix(r.flight_number), dep, arr);
     const confirmedSomeDay = seedDays.some((d) => confirmedOn(d).has(key));
     if (hist.probability < minLegProb && !confirmedSomeDay) continue;
 
     const zone = airportTimezone(dep);
-    const days = new Set(
-      logged.get(`${slotFlightKey(r.flight_number, reader.scope) ?? r.flight_number}|${dep}|${arr}`)
-    );
+    const days = new Set(logged.get(key));
     if (zone && r.departure_time) days.add(localDateISO(r.departure_time, zone));
     const option: EdgeOption = {
-      stored: r.flight_number,
+      slot: key,
       hist,
       route: `${dep}-${arr}`,
       departure: dep,
@@ -2452,9 +2455,7 @@ function datedLeg(
   confirmedOn: (date: string) => Map<string, "express" | "mainline">,
   minLegProb: number
 ): ItineraryLeg | null {
-  const fleet = date
-    ? confirmedOn(date).get(`${option.stored}|${option.departure}|${option.arrival}`)
-    : undefined;
+  const fleet = date ? confirmedOn(date).get(option.slot) : undefined;
   const confirmedP = fleet ? CONFIRMED_PROB[fleet] : 0;
   const pred: BasePrediction =
     fleet && option.hist.probability < confirmedP
