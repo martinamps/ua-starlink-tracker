@@ -1,5 +1,6 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { clientScriptSrc } from "../client/bundle";
+import { routePlannerPath } from "../utils/airport-renames";
 import { ClientScriptTag } from "./layout";
 import type { Link } from "./layout";
 import { Chip, Eyebrow, PageHeader, PageShell, Panel, SectionTitle, buttonClass } from "./layout";
@@ -170,7 +171,7 @@ export default function RoutePlannerPage({
               {popularRoutes.map((r) => (
                 <Chip
                   key={`${r.origin}-${r.destination}`}
-                  href={`/route-planner/${r.origin}/${r.destination}`}
+                  href={routePlannerPath(r.origin, r.destination)}
                 >
                   {r.origin} → {r.destination}
                 </Chip>

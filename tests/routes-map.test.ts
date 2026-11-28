@@ -303,7 +303,7 @@ describe("/routes map clicks", () => {
     ["SJC", 2],
     ["FLL", 6],
     ["MIA", 2],
-    ["PBI", 1],
+    ["DJT", 1],
   ];
   let dense: ReturnType<typeof createApp>;
 

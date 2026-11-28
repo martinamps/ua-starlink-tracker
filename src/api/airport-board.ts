@@ -18,6 +18,7 @@ import { countOnLocalDay, nextLocalDay } from "../database/airports";
 import type { ScopedReader } from "../database/reader";
 import { DEPARTURE_WINDOW_HOURS, unixNow } from "../database/sql/windows";
 import { airportWithCode } from "../utils/airport-places";
+import { isRetiredAirportCode } from "../utils/airport-renames";
 import { airportLocalDate, airportTimezone, isHandPlacedAirport } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { AIRPORT_RANK_MIN_DEPARTURES } from "./airport-ranking";
@@ -208,7 +209,10 @@ function todayStanding(
  * served but not offered to search (isHandPlacedAirport says why).
  */
 const meetsIndexBar = (airport: string, starlinkFlown: number) =>
-  isHandPlacedAirport(airport) && starlinkFlown >= AIRPORT_INDEX_MIN_DEPARTURES;
+  isHandPlacedAirport(airport) &&
+  // A retired code (PBI) has its page under the code now (DJT).
+  !isRetiredAirportCode(airport) &&
+  starlinkFlown >= AIRPORT_INDEX_MIN_DEPARTURES;
 
 /**
  * Does this airport's page index? The page's own rule, read off the memoised

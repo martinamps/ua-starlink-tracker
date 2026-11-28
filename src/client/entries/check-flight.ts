@@ -7,7 +7,7 @@
 import {
   type AnswerContext,
   type CheckFlightBody,
-  answerTails,
+  answerShown,
   renderFlightAnswer,
 } from "../flight-answer";
 import { wireFlightSearchForms } from "../flight-search";
@@ -37,7 +37,12 @@ function remember(config: CheckFlightConfig, shown: Shown): void {
         o: config.leg?.origin,
         a: config.leg?.destination,
         h: shown.headline,
-        seen: { tone: shown.tone, firm: shown.firm, tails: shown.tails },
+        seen: {
+          tone: shown.tone,
+          firm: shown.firm,
+          tails: shown.tails,
+          ...(shown.odds ? { odds: shown.odds } : {}),
+        },
       },
       Math.floor(Date.now() / 1000)
     );
@@ -77,12 +82,7 @@ function refreshAnswer(config: CheckFlightConfig): void {
       const answer = renderFlightAnswer(body, ctx);
       target.innerHTML = answer.html;
       if (config.seen) {
-        remember(config, {
-          tone: answer.tone,
-          firm: answer.firm,
-          tails: answerTails(body),
-          headline: answer.headline,
-        });
+        remember(config, answerShown(answer, body));
       }
     })
     .catch(() => {})

@@ -12,6 +12,7 @@
  */
 
 import { unixNow } from "../database/sql/windows";
+import { toIata } from "./airport-code";
 import { registerAirport } from "./airport-register";
 import { debug } from "./logger";
 
@@ -791,6 +792,89 @@ export function matchesLocalDate(
   }
   return departureTimeSec >= fallbackStart && departureTimeSec < fallbackEnd;
 }
+
+/**
+ * Longest ground stop between two legs of one through flight. The island
+ * hoppers stop 50 to 60 minutes; the same number flying out of that airport
+ * again after a night on the ground is the next day's flight.
+ */
+export const THROUGH_STOP_MAX_SEC = 3 * 3600;
+/** How far past the date's own window a through flight's last leg can depart. */
+export const THROUGH_SPAN_SEC = 18 * 3600;
+
+export interface DatedLeg {
+  departure_airport: string;
+  arrival_airport?: string | null;
+  departure_time: number;
+  arrival_time?: number | null;
+}
+
+/**
+ * The legs that fly on a flight's date: each leg departing on that local date
+ * at its own airport, and each later leg that continues one of them as the
+ * same through flight. An airline dates a through flight by its first
+ * departure, so UA176 of 29 Nov (GUM 20:20 → PNI → TKK → GUM) still flies
+ * PNI → TKK at 00:45 on 30 Nov, Pohnpei time. A continuation leg stays on its
+ * own local date too: that is the date on a ticket boarded there.
+ */
+export function throughLegsOnFlightDate<T extends DatedLeg>(
+  date: string,
+  legs: readonly T[],
+  fallbackStart: number,
+  fallbackEnd: number
+): Set<T> {
+  const on = new Set<T>();
+  const later: T[] = [];
+  for (const l of legs) {
+    if (matchesLocalDate(date, l.departure_airport, l.departure_time, fallbackStart, fallbackEnd)) {
+      on.add(l);
+    } else if (l.departure_time >= fallbackStart) {
+      later.push(l);
+    }
+  }
+  if (on.size === 0) return on;
+  const dated = [...on];
+  for (const l of later.sort((a, b) => a.departure_time - b.departure_time)) {
+    const continues = dated.some(
+      (p) =>
+        p.arrival_time != null &&
+        p.arrival_airport === l.departure_airport &&
+        l.departure_time >= p.arrival_time &&
+        l.departure_time - p.arrival_time <= THROUGH_STOP_MAX_SEC
+    );
+    if (continues) {
+      on.add(l);
+      dated.push(l);
+    }
+  }
+  return on;
+}
+
+/**
+ * throughLegsOnFlightDate, one night per pair. A daily through flight puts two
+ * nights on one date: the earlier night's later legs on their own local date,
+ * and this night's past midnight. Where a leg of the same pair departs on the
+ * date at its own airport, that leg is the date's and the continuation is left
+ * out. `blockers` can claim a pair this way but carry no flight on (a carrier's
+ * unequipped rows, where the answer doesn't read them).
+ */
+export function legsOnFlightDate<T extends DatedLeg>(
+  date: string,
+  legs: readonly T[],
+  fallbackStart: number,
+  fallbackEnd: number,
+  blockers: readonly DatedLeg[] = []
+): Set<T> {
+  const on = throughLegsOnFlightDate(date, legs, fallbackStart, fallbackEnd);
+  const ownDay = (l: DatedLeg) =>
+    matchesLocalDate(date, l.departure_airport, l.departure_time, fallbackStart, fallbackEnd);
+  const claimed = new Set([...legs, ...blockers].filter(ownDay).map(legPair));
+  for (const l of on) if (!ownDay(l) && claimed.has(legPair(l))) on.delete(l);
+  return on;
+}
+
+const legPair = (l: DatedLeg) =>
+  `${toIata(l.departure_airport)}>${l.arrival_airport ? toIata(l.arrival_airport) : ""}`;
 
 const wallCache = new Map<string, Intl.DateTimeFormat>();
 
