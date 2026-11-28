@@ -120,7 +120,7 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
                   </>
                 )}
               </Td>
-              <Td className="w-full pr-3 align-top">
+              <Td label="Starlink departures" className="w-full pr-3 align-top">
                 <div className="flex items-center gap-2">
                   <span className="w-8 shrink-0 text-right font-semibold text-primary">
                     {fmt(r.departures)}
@@ -131,7 +131,7 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
                   />
                 </div>
               </Td>
-              <Td numeric className="align-top text-secondary">
+              <Td numeric label="Next departure" className="align-top text-secondary">
                 <div className="whitespace-nowrap">{at.date}</div>
                 <div className="whitespace-nowrap text-xs text-muted">
                   {at.time}

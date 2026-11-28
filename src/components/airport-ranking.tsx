@@ -67,7 +67,9 @@ function RankTable({
       <tbody>
         {rows.map((r) => (
           <tr key={r.airport}>
-            <Td className="w-7 pr-2 text-muted tabular-nums">{fmt(r.rank)}</Td>
+            <Td label="#" labelInline className="w-7 pr-2 text-muted tabular-nums">
+              {fmt(r.rank)}
+            </Td>
             <Td className="pr-3">
               <AirportCode airport={r.airport} href={airportHref} />
               <PlaceName airport={r.airport} />
@@ -75,7 +77,7 @@ function RankTable({
                 <div className="whitespace-nowrap text-xs text-muted">{monthDay(r.date)}</div>
               )}
             </Td>
-            <Td className="w-full">
+            <Td label="Today" className="w-full">
               <div className="flex items-center gap-2">
                 <span className="w-8 shrink-0 text-right font-semibold text-primary tabular-nums">
                   {fmt(r.departures)}
@@ -87,7 +89,7 @@ function RankTable({
                 />
               </div>
             </Td>
-            <Td numeric className="pl-3 text-secondary tabular-nums">
+            <Td numeric label="Tomorrow" className="pl-3 text-secondary tabular-nums">
               {fmt(r.tomorrow)}
             </Td>
           </tr>
