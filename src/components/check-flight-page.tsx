@@ -57,6 +57,8 @@ interface CheckFlightPageProps {
   currentPath?: string;
   /** FAQPage rich results are ignored on noindex URLs; keep the markup off them. */
   noindex?: boolean;
+  /** The flight-change notice's public key; absent while its switch is off. */
+  noticeKey?: string;
 }
 
 /** Zone → concatenated IATA codes; a third the bytes of the flat map, and the
@@ -231,6 +233,7 @@ export default function CheckFlightPage({
   pageLinks,
   currentPath,
   noindex = false,
+  noticeKey,
 }: CheckFlightPageProps) {
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
@@ -239,7 +242,9 @@ export default function CheckFlightPage({
   const flightExample = fn ?? `${cfg.iata}123`;
   const shortName = cfg.shortName;
 
-  const ctx = dated ? answerContext(site, dated, flight) : null;
+  const ctx = dated
+    ? { ...answerContext(site, dated, flight), ...(noticeKey ? { noticeKey } : {}) }
+    : null;
   const answer: FlightAnswer | null = dated && ctx ? renderFlightAnswer(dated.body, ctx) : null;
   // A prediction near departure may firm up from the API's live schedule
   // lookup, which the server render deliberately skips.

@@ -137,6 +137,9 @@ export interface AnswerContext {
   /** This answer's own page: canonical host, with its date and leg. Absent
    * where the answer has no page of its own. */
   shareUrl?: string;
+  /** The flight-change notice's public key, beside the calendar offer; absent
+   * while its switch is off, and the card is then the one it always was. */
+  noticeKey?: string;
 }
 
 export interface FlightAnswer {
@@ -509,8 +512,25 @@ function watchRow(ctx: AnswerContext, firm: boolean): string {
   const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
   const heading = `${CALENDAR_OFFER_ID}-title`;
   const add = '<span class="sr-only">Add to </span>';
-  return ` <section id="${CALENDAR_OFFER_ID}" aria-labelledby="${heading}" class="mt-4 border-t border-subtle pt-4"><h3 id="${heading}" class="text-sm font-semibold text-primary">Add this flight to your calendar</h3> <p class="mt-1 text-sm text-secondary">${firm ? CALENDAR_LEAD_FIRM : CALENDAR_LEAD_PENDING}</p> <ul class="mt-3 flex flex-wrap gap-2"><li><a href="${esc(webcal)}" data-watch="webcal" class="${CALENDAR_BUTTON}">${add}Apple Calendar or Outlook</a></li> <li><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="${CALENDAR_BUTTON}">${add}Google Calendar</a></li></ul> <p class="mt-3 text-xs text-muted">${CALENDAR_LAG} Or <a href="${esc(path)}" data-watch="ics" download class="text-accent underline hover:no-underline">download the event as a file</a>, a one-time copy that will not update.</p></section>`;
+  return ` <section id="${CALENDAR_OFFER_ID}" aria-labelledby="${heading}" class="mt-4 border-t border-subtle pt-4"><h3 id="${heading}" class="text-sm font-semibold text-primary">Add this flight to your calendar</h3> <p class="mt-1 text-sm text-secondary">${firm ? CALENDAR_LEAD_FIRM : CALENDAR_LEAD_PENDING}</p> <ul class="mt-3 flex flex-wrap gap-2"><li><a href="${esc(webcal)}" data-watch="webcal" class="${CALENDAR_BUTTON}">${add}Apple Calendar or Outlook</a></li> <li><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="${CALENDAR_BUTTON}">${add}Google Calendar</a></li></ul> <p class="mt-3 text-xs text-muted">${CALENDAR_LAG} Or <a href="${esc(path)}" data-watch="ics" download class="text-accent underline hover:no-underline">download the event as a file</a>, a one-time copy that will not update.</p>${noticeRow(ctx)}</section>`;
 }
+
+/** The notice control's wrapper, found by the page script. */
+export const NOTICE_CONTROL_ID = "flight-notice";
+
+/**
+ * "Tell me if this changes", under the calendar offer. Drawn hidden: the
+ * page script shows it only where the browser can take a notice, and on an
+ * iPhone outside a home-screen site it shows the hint instead, so the
+ * calendar above stays the way to follow the flight there.
+ */
+function noticeRow(ctx: AnswerContext): string {
+  if (!ctx.noticeKey) return "";
+  return ` <div id="${NOTICE_CONTROL_ID}" data-notice-key="${esc(ctx.noticeKey)}" hidden class="mt-4"><button type="button" data-notice-toggle hidden class="${CALENDAR_BUTTON}">Tell me if this changes</button> <p data-notice-status hidden class="mt-2 text-xs text-muted">${NOTICE_LEAD}</p><p data-notice-ios hidden class="mt-2 text-xs text-muted">On an iPhone, notices work once this site is added to your Home Screen. The calendar above follows the flight without that.</p></div>`;
+}
+
+export const NOTICE_LEAD =
+  "A browser notice when we see a different aircraft on this flight or its Starlink answer changes, and once when the aircraft is first assigned. No account or email. It stops after departure.";
 
 /** The page's one swap caveat: firm cards carry it, nothing else repeats it. */
 const CHANGE_NOTE = "Aircraft can be swapped before departure.";

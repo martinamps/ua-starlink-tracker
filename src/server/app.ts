@@ -352,6 +352,7 @@ import {
   xml,
 } from "./respond";
 
+import { type NoticeDecider, type NoticeLeg, noticeStore } from "../database/flight-notice";
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { type SocketPeer, cameThroughCloudflare, clientIp, isLocalCaller } from "./client-ip";
 import { aircraftTypeParam, communityWireFields } from "./community-wire";
@@ -364,6 +365,7 @@ import {
   tenantScope,
 } from "./context";
 import { type CrawlerDns, createCrawlerVerifier } from "./crawler-verify";
+import { NOTICE_PREFIX, createNoticeHandler } from "./flight-notice";
 import {
   PROBE_SNIPPET,
   StarlinkIpDetector,
@@ -4055,6 +4057,26 @@ async function datedAnswer(
   date: string,
   legParse: LegParse = { leg: undefined }
 ): Promise<DatedAnswer | undefined> {
+  return (await datedShown(cfg, reader, flightNumber, date, legParse))?.dated;
+}
+
+type ShownVerdict = Exclude<
+  Awaited<ReturnType<typeof resolveFlightVerdict>>,
+  | { kind: "invalid_date" }
+  | { kind: "invalid_flight_number" }
+  | { kind: "qatar" }
+  | { kind: "qatar_no_data" }
+  | { kind: "qatar_history" }
+>;
+
+/** datedAnswer, with the verdict it was rendered from. */
+async function datedShown(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  date: string,
+  legParse: LegParse
+): Promise<{ verdict: ShownVerdict; dated: DatedAnswer } | undefined> {
   try {
     const verdict = await resolveFlightVerdict(
       cfg,
@@ -4078,7 +4100,7 @@ async function datedAnswer(
     );
     const body = checkFlightBody(cfg, reader, verdict, date, {}) as DatedAnswer["body"];
     const dayLegs = datedDayLegs(cfg, reader, flightNumber, date, body, legParse);
-    return {
+    const dated: DatedAnswer = {
       flightNumber,
       date,
       daysOut: verdict.window.daysOut,
@@ -4093,10 +4115,101 @@ async function datedAnswer(
         (body.flights ?? []).map((f) => f.departure_airport)
       ),
     };
+    return { verdict, dated };
   } catch (err) {
     logError(`Dated answer failed for ${flightNumber} ${date}`, err);
     return undefined;
   }
+}
+
+/**
+ * The aircraft a dated page names, leg by leg, and its Starlink answer as
+ * the page gives it: the verdict's own legs first, then the date's other
+ * legs the page lists beside it. What a flight-change notice is decided from
+ * (database/flight-notice.ts), so a notice can say nothing the page doesn't.
+ */
+export function shownNoticeLegs(
+  verdict: ShownVerdict,
+  dated: Pick<DatedAnswer, "dayLegs">,
+  origin: string | null
+): NoticeLeg[] {
+  const legs = new Map<string, NoticeLeg>();
+  const put = (
+    dep: string | null | undefined,
+    arr: string | null | undefined,
+    tail: string | null | undefined,
+    aircraft: string | null | undefined,
+    starlink: boolean | null | undefined,
+    departure: number | null | undefined
+  ) => {
+    const at = dep ? toIata(dep) : "";
+    if (!at || !tail || legs.has(at) || (origin && at !== origin)) return;
+    legs.set(at, {
+      dep: at,
+      arr: arr ? toIata(arr) : null,
+      tail,
+      aircraft: aircraft ?? null,
+      starlink: starlink ?? null,
+      departure_time: departure ?? null,
+    });
+  };
+  switch (verdict.kind) {
+    case "scheduled":
+      for (const r of scheduledFlights(verdict))
+        put(
+          r.departure_airport,
+          r.arrival_airport,
+          r.tail_number,
+          r.aircraft_type,
+          true,
+          r.departure_time
+        );
+      break;
+    case "scheduled_no":
+      for (const r of verdict.flights)
+        put(
+          r.departure_airport,
+          r.arrival_airport,
+          r.tail_number,
+          r.aircraft_type,
+          false,
+          r.departure_time
+        );
+      break;
+    case "fr24":
+      for (const s of verdict.starlink)
+        put(
+          s.origin,
+          s.destination,
+          s.tail_number,
+          s.aircraft_model,
+          s.hasStarlink,
+          s.departure_time
+        );
+      break;
+    case "fr24_no":
+      for (const s of verdict.segments)
+        put(
+          s.origin,
+          s.destination,
+          s.tail_number,
+          s.aircraft_model,
+          s.hasStarlink,
+          s.departure_time
+        );
+      break;
+    default: {
+      const summary = verdictSummary(verdict);
+      const a = summary.assignment;
+      if (a) put(a.origin, a.destination, a.tail, a.aircraft, summary.hasStarlink, a.departure);
+    }
+  }
+  for (const l of dated.dayLegs ?? [])
+    put(l.origin, l.destination, l.tail, null, l.starlink, l.departure_time);
+  return [...legs.values()].sort(
+    (x, y) =>
+      (x.departure_time ?? Number.MAX_SAFE_INTEGER) - (y.departure_time ?? Number.MAX_SAFE_INTEGER)
+  );
 }
 
 /**
@@ -4358,7 +4471,13 @@ const checkFlightPage: Handler = async (ctx) => {
             }
           : unknown,
         // noindex but follow: hand the crawler somewhere real to go.
-        { popular: reader.getPopularFlights(), noindex: true, dated, unknownFlight: fn }
+        {
+          popular: reader.getPopularFlights(),
+          noindex: true,
+          dated,
+          unknownFlight: fn,
+          noticeKey: pageNoticeKey(ctx, dated),
+        }
       );
     }
     const facts = buildFlightFacts(reader, cfg, fn, variants, legParse.leg, datedAnswerLegs(dated));
@@ -4379,6 +4498,7 @@ const checkFlightPage: Handler = async (ctx) => {
             : null,
         },
         dated,
+        noticeKey: pageNoticeKey(ctx, dated),
       }
     );
   }
@@ -4449,6 +4569,21 @@ const recentCheckAnswer: Handler = async (ctx) => {
     { cache: CACHE.noStore, headers: { ...BASE_RESPONSE_HEADERS, "X-Robots-Tag": "noindex" } }
   );
 };
+
+/** A flight-change notice's flight: this pinned host's own number, in its
+ * permalink spelling, on a real date; null for anything else. */
+const noticeFlight = (ctx: RequestContext, f: string, d: string): string | null => {
+  const pinned = tenantConfig(ctx.tenant);
+  if (!pinned || !/^[A-Z0-9]{2,10}$/.test(f)) return null;
+  const parsed = parseCheckFlightPath(`/check-flight/${f}/${d}`);
+  if (parsed.kind !== "flight" || parsed.fn !== f || parsed.date !== d) return null;
+  return permalinkCarrier(pinned, parsed.fn) ? parsed.fn : null;
+};
+
+/** The notice control's key for a dated page on a pinned host; undefined
+ * while the switch is off, so the page is the one it always was. */
+const pageNoticeKey = (ctx: RequestContext, dated: DatedAnswer | undefined) =>
+  dated && tenantConfig(ctx.tenant) ? (ctx.noticeKey?.() ?? undefined) : undefined;
 
 /** `/route-planner/SFO/EWR` → `{ origin, destination }`; anything else → null. */
 export function parseRoutePath(pathname: string): { origin: string; destination: string } | null {
@@ -6475,6 +6610,8 @@ function staticDir(
 
 export interface App {
   routes: RouteTable;
+  /** What a dated page answers now, as a flight-change notice reads it. */
+  noticeAnswer: NoticeDecider;
   /** Every value the `route` metric tag can take — the tag's cardinality budget. */
   routeTags: readonly string[];
   dispatch(req: Request, server?: SocketPeer): Promise<Response>;
@@ -6584,8 +6721,26 @@ export function createApp(
   // The pictures ride the /static family, and so its `route` tag: they are
   // image assets like the cards beside them, and the tag budget has no room
   // for a family of their own.
+  const getReader = createReaderFactory(db);
+  // A notice is decided from the dated page's own answer: the same reader,
+  // the same leg parse, the same render path a visitor's tap lands on.
+  const noticeAnswer: NoticeDecider = async (q) => {
+    const cfg = AIRLINES[q.airline];
+    if (!cfg) return null;
+    const shown = await datedShown(
+      cfg,
+      getReader(cfg.code),
+      q.flightNumber,
+      q.depDate,
+      parseLegQuery(q.origin, null)
+    );
+    return shown ? shownNoticeLegs(shown.verdict, shown.dated, q.origin) : null;
+  };
+  const notices = noticeStore(db, noticeAnswer);
+  const notice = createNoticeHandler(notices, noticeFlight);
   const staticFamily: Handler = (ctx) =>
-    ctx.url.pathname === SHARE_TAP_PATH
+    notice(ctx) ??
+    (ctx.url.pathname === SHARE_TAP_PATH
       ? shareTap(ctx)
       : ctx.url.pathname === RECENT_TAP_PATH
         ? recentTap(ctx)
@@ -6593,8 +6748,7 @@ export function createApp(
           ? recentCheckAnswer(ctx)
           : ctx.url.pathname.startsWith("/static/share/")
             ? sharePicture(ctx)
-            : staticDir(ctx, archive);
-  const getReader = createReaderFactory(db);
+            : staticDir(ctx, archive));
   const verifiedCrawler = createCrawlerVerifier(opts.crawlerDns);
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
   const ipHits = new Map<string, number[]>();
@@ -6813,6 +6967,7 @@ export function createApp(
         : url.pathname.startsWith("/check-flight/") ||
             url.pathname.startsWith("/static/share/") ||
             url.pathname.startsWith(RECENT_PREFIX) ||
+            url.pathname.startsWith(NOTICE_PREFIX) ||
             url.pathname.startsWith("/cal/") ||
             url.pathname === "/badge.svg"
           ? "page"
@@ -6870,7 +7025,17 @@ export function createApp(
       });
     }
     const reader: ScopedReader = getReader(tenantScope(tenant));
-    const ctx: RequestContext = { req, url, ip, site, tenant, reader, getReader, onStarlinkIp };
+    const ctx: RequestContext = {
+      req,
+      url,
+      ip,
+      site,
+      tenant,
+      reader,
+      getReader,
+      onStarlinkIp,
+      noticeKey: notices.offerKey,
+    };
     // The surfaces that can start a live FR24 lookup keep a share of them per
     // caller, and a caller is what the limiter above counts: its meter and the
     // address. Local calls are unmetered there and keep no share here.
@@ -6942,5 +7107,5 @@ export function createApp(
     ]),
   ];
 
-  return { routes, routeTags, dispatch };
+  return { routes, routeTags, dispatch, noticeAnswer };
 }

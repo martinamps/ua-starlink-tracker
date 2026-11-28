@@ -285,6 +285,21 @@ hub's rows ask `/api/check-any-flight`, so they do appear in
 or list is in the beacon or the metric, and the list itself never leaves the
 browser.
 
+"Tell me if this changes" on a dated flight page (`src/database/flight-notice.ts`)
+rides the same family and tag with three addresses, and only while the meta
+row `ALL:flight_notice_enabled` is `1`; otherwise each falls through to the
+static directory and answers as it always did. `GET /static/notice/sw.js` is
+the notice's service worker at a stable path (its bundle also has the usual
+hashed name). `POST /static/notice/subscribe` and `/unsubscribe` answer only a
+`Sec-Fetch-Site: same-origin` request from a `client_class:browser` agent on a
+pinned airline host, for that host's own flight number and a date up to 330
+days out. They feed `flight_notice` (tags: `airline`, `action`): `subscribed`
+and `unsubscribed` are taps; `sent`, `gone` and `failed` are the sender job's
+posts to a push service (`gone` removed every subscription of that browser;
+`failed` is retried up to five times); `expired` counts a sender tick that
+removed subscriptions whose flight had left, under `airline:all`. No flight,
+date, endpoint, address or agent is in the metric, a span or a log.
+
 To add a route, add it to `routes` (or `prefixRoutes`) in
 `src/server/app.ts` — the metric tag follows automatically. If a change would
 push the table past the budget, group the new URLs behind a prefix family

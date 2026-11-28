@@ -91,7 +91,12 @@ import type { JobStampStore } from "../utils/job-runner";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { isAirportCode } from "../utils/outside-text";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
-import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
+import {
+  ASSIGNMENT_LOG_DDL,
+  departureLocalDate,
+  logFlightAssignments,
+  pruneAssignmentLog,
+} from "./assignment-log";
 import {
   BASELINE_RECHECK_DAYS,
   type CadenceGroup,
@@ -106,6 +111,7 @@ import {
 } from "./discovery-cadence";
 import { type FirstReadRule, type FirstReadTakeBackReason, firstReadDecision } from "./first-read";
 import { fleetRejectReason, recordFleetRejection } from "./fleet-admission";
+import { FLIGHT_NOTICE_DDL, noteAssignmentWrites } from "./flight-notice";
 import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
 import { type TailModNote, getSheetModNotes, replaceSheetModNotes } from "./sheet-mod-notes";
 import { readSourceState } from "./source-health";
@@ -847,6 +853,8 @@ export function setupTables(db: Database) {
   dropRedundantIndexes(db);
   runOnce(db, "backfill_alaska_skywest_operator", () => backfillAlaskaSkyWestOperator(db));
   db.exec(ASSIGNMENT_LOG_DDL);
+  // Browser notices for a watched flight and date (flight-notice.ts).
+  db.exec(FLIGHT_NOTICE_DDL);
   // When a lookup last returned the row's departure without its tail
   // (withdrawUnreturnedSightings); cleared when the tail is seen there again.
   addColumn(db, "flight_assignment_log", "withdrawn_at", "INTEGER");
@@ -2049,6 +2057,24 @@ export function updateFlights(db: Database, tailNumber: string, given: FlightWri
   const cfg = AIRLINES[airline];
   db.transaction(() => {
     archivePastDepartures(db, now, tailNumber);
+    // A flight taken off this plane changes its dated page as much as one
+    // put on, and only the second reaches the aircraft log's writer.
+    const dropped = db
+      .query(
+        "SELECT flight_number, departure_airport, departure_time FROM upcoming_flights WHERE tail_number = ?"
+      )
+      .all(tailNumber) as Array<{
+      flight_number: string;
+      departure_airport: string;
+      departure_time: number;
+    }>;
+    noteAssignmentWrites(
+      db,
+      dropped.map((f) => ({
+        flight_number: f.flight_number,
+        dep_date: departureLocalDate(f.departure_airport, f.departure_time),
+      }))
+    );
     db.query("DELETE FROM upcoming_flights WHERE tail_number = ?").run(tailNumber);
 
     if (valid.length > 0) {
