@@ -48,7 +48,7 @@ const DAY = 86400;
 const now = Math.floor(Date.now() / 1000);
 const isoDay = (sec: number) => new Date(sec * 1000).toISOString().slice(0, 10);
 const STAMP = new Date((now - HOUR) * 1000).toISOString();
-const SITE_CARD = /^\/static\/social-image[\w-]*\.webp$/;
+const SITE_CARD = /^\/static\/social-image[\w-]*\.webp(?:\?v=[0-9a-z]+)?$/;
 
 let db: Database;
 let app: ReturnType<typeof createApp>;

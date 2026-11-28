@@ -103,8 +103,10 @@ describe("og:image is tenant-branded", () => {
     test(`${host} serves ${img}`, async () => {
       const { status, text } = await bodyOf("/", host);
       expect(status).toBe(200);
-      expect(text).toContain(`property="og:image" content="https://${host}${img}"`);
-      expect(text).toContain(`name="twitter:image" content="https://${host}${img}"`);
+      // The card's content version rides the query (src/server/picture-version.ts).
+      const src = `https://${host}${img}`.replace(/[.?]/g, "\\$&");
+      expect(text).toMatch(new RegExp(`property="og:image" content="${src}\\?v=[0-9a-z]+"`));
+      expect(text).toMatch(new RegExp(`name="twitter:image" content="${src}\\?v=[0-9a-z]+"`));
     });
   }
 });
