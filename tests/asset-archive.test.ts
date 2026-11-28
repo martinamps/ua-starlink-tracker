@@ -4,8 +4,18 @@
  * touched. After a deploy that changed the picker, its old name has to keep
  * answering, or the open page finds no airports until it is reloaded.
  */
-import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
+import fs, {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/server/app";
@@ -127,5 +137,91 @@ describe("how long the archive keeps a build", () => {
     const archive = openAssetArchive(blocked);
     expect(() => archive.keep(href, "x")).not.toThrow();
     expect(archive.find(href)).toBeNull();
+  });
+});
+
+describe("what is on the volume can't steer the archive", () => {
+  const db = openSnapshot();
+  const href = "/static/evil.0link.js";
+
+  test("a link in the folder is never followed", async () => {
+    const dir = tempDir();
+    const outside = join(tempDir(), "plane-data.sqlite");
+    writeFileSync(outside, "SECRETDB");
+    symlinkSync(outside, join(dir, "evil.0link.js"));
+    const archive = openAssetArchive(dir);
+    expect(archive.find(href)).toBeNull();
+    const res = await createApp(db, { assetArchive: archive }).dispatch(req(href, HOST));
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain("SECRETDB");
+  });
+
+  test("keeping a name a link holds writes real bytes and leaves the target alone", () => {
+    const dir = tempDir();
+    const outside = join(tempDir(), "target.txt");
+    writeFileSync(outside, "untouched");
+    symlinkSync(outside, join(dir, "evil.0link.js"));
+    const archive = openAssetArchive(dir);
+    archive.keep(href, "real");
+    expect(lstatSync(join(dir, "evil.0link.js")).isFile()).toBe(true);
+    expect(readFileSync(join(dir, "evil.0link.js"), "utf8")).toBe("real");
+    expect(readFileSync(outside, "utf8")).toBe("untouched");
+    expect(archive.find(href)).not.toBeNull();
+  });
+
+  test("the prune skips links, and one that dangles doesn't stop it", () => {
+    const dir = tempDir();
+    const t0 = Date.UTC(2026, 10, 1);
+    const old = new Date(t0);
+    const outside = join(tempDir(), "old-target.txt");
+    writeFileSync(outside, "kept");
+    utimesSync(outside, old, old);
+    symlinkSync(join(dir, "gone"), join(dir, "a-dangling.0link.js"));
+    symlinkSync(outside, join(dir, "b-pointing.0link.js"));
+    writeFileSync(join(dir, "c-stale.0old.js"), "x");
+    utimesSync(join(dir, "c-stale.0old.js"), old, old);
+
+    openAssetArchive(dir, { now: () => t0 + 8 * DAY });
+    expect(readdirSync(dir).sort()).toEqual(["a-dangling.0link.js", "b-pointing.0link.js"]);
+    expect(readFileSync(outside, "utf8")).toBe("kept");
+  });
+});
+
+describe("a write that fails leaves nothing behind", () => {
+  const href = "/static/route-planner.0prevbuild6.js";
+
+  test("a full disk's half-written temp file is removed", () => {
+    const dir = tempDir();
+    const archive = openAssetArchive(dir);
+    const write = spyOn(fs, "writeFileSync").mockImplementation(((file: string) => {
+      fs.appendFileSync(file, "half");
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    }) as typeof fs.writeFileSync);
+    try {
+      expect(() => archive.keep(href, "whole file")).not.toThrow();
+    } finally {
+      write.mockRestore();
+    }
+    expect(readdirSync(dir)).toEqual([]);
+    expect(archive.find(href)).toBeNull();
+  });
+
+  test("temp names differ between writers sharing a process id", () => {
+    const tmps: string[] = [];
+    const write = spyOn(fs, "writeFileSync").mockImplementation(((file: string) => {
+      tmps.push(file);
+      throw new Error("stop before the rename");
+    }) as typeof fs.writeFileSync);
+    try {
+      openAssetArchive(tempDir()).keep(href, "x");
+      openAssetArchive(tempDir()).keep(href, "x");
+    } finally {
+      write.mockRestore();
+    }
+    const suffixes = tmps.map((t) => t.split(".").at(-2));
+    expect(suffixes).toHaveLength(2);
+    expect(suffixes[0]).not.toBe(suffixes[1]);
+    expect(suffixes).not.toContain(String(process.pid));
+    for (const t of tmps) expect(t).toMatch(/\.0prevbuild6\.js\.[0-9a-f]+\.tmp$/);
   });
 });

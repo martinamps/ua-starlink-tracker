@@ -5,9 +5,12 @@
  * puts the file back to DELETE after the migration switches it to WAL.
  */
 
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
-import { TEST_DB, openSnapshot } from "./helpers";
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { TEST_DB, openSnapshot, snapshotInMemory } from "./helpers";
 
 describe("test snapshot", () => {
   test("is in rollback-journal mode, so readers touch one file only", () => {
@@ -17,5 +20,22 @@ describe("test snapshot", () => {
     const sideFiles = ["-wal", "-shm"].filter((s) => existsSync(TEST_DB + s));
     db.close();
     expect({ journal_mode, sideFiles }).toEqual({ journal_mode: "delete", sideFiles: [] });
+  });
+
+  test("an in-memory copy works even from a file left in WAL", () => {
+    const dir = mkdtempSync(join(tmpdir(), "snapshot-wal-"));
+    try {
+      const file = join(dir, "wal.sqlite");
+      copyFileSync(TEST_DB, file);
+      const wal = new Database(file);
+      wal.exec("PRAGMA journal_mode = WAL");
+      wal.close();
+      const db = snapshotInMemory(file);
+      db.run("CREATE TABLE copy_is_writable (x)");
+      expect(db.query("SELECT count(*) AS n FROM meta").get()).toEqual({ n: expect.any(Number) });
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

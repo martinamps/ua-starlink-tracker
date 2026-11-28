@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 /**
  * The site's pages as a crawler that doesn't render, or a reader that ignores
  * layout, takes them: the markup with its tags dropped. Wherever two pieces
@@ -13,7 +13,7 @@ import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
-import { bodyOf, openSnapshot } from "./helpers";
+import { bodyOf, snapshotInMemory } from "./helpers";
 
 /**
  * Each place where one text node ends and the next begins with only tags
@@ -51,7 +51,7 @@ function joinedWords(html: string): string[] {
 
 /** The snapshot in memory, with every block's data. */
 function fullFleetDb(): Database {
-  const db = Database.deserialize(openSnapshot().serialize());
+  const db = snapshotInMemory();
   const now = Math.floor(Date.now() / 1000);
   const today = new Date().toISOString().slice(0, 10);
   const tails = (airline: string, starlink: boolean, n: number) =>
