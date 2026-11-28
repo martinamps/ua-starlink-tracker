@@ -5252,7 +5252,7 @@ const methodologyPage: Handler = (ctx) => {
   const coverageStart = [ctx.reader.getDailyInstalls()[0]?.day, anchors.at(-1)?.as_of_date]
     .filter((d): d is string => !!d)
     .sort()[0];
-  const modifiedTs = Date.parse(ctx.reader.getLastUpdatedRaw() ?? "");
+  const modified = stampedIso(ctx.reader.getLastUpdatedRaw());
   const datasetJsonLd = jsonLdBlock({
     "@context": "https://schema.org",
     "@type": "Dataset",
@@ -5261,8 +5261,13 @@ const methodologyPage: Handler = (ctx) => {
     url: `https://${host}/methodology`,
     creator: { "@type": "Organization", name: ctx.site.brand.title, url: `https://${host}/` },
     isAccessibleForFree: true,
-    ...(Number.isFinite(modifiedTs) ? { dateModified: new Date(modifiedTs).toISOString() } : {}),
+    ...(modified ? { dateModified: modified } : {}),
     ...(coverageStart ? { temporalCoverage: `${coverageStart}/..` } : {}),
+    variableMeasured: CSV_COLUMNS.map((c) => ({
+      "@type": "PropertyValue",
+      name: c,
+      description: CSV_COLUMN_MEANING[c],
+    })),
     distribution: [
       {
         "@type": "DataDownload",
@@ -5564,6 +5569,18 @@ const isStarlinkFreePage: Handler = (ctx) => {
 export const STARLINK_TAILS_CSV_PATH = "/data/starlink-tails.csv";
 
 const CSV_COLUMNS = ["TailNumber", "Aircraft", "fleet", "OperatedBy", "DateFound"] as const;
+
+/** The Dataset's variableMeasured, one line per CSV column, so the markup
+ * names exactly what the download holds. */
+const CSV_COLUMN_MEANING: Record<(typeof CSV_COLUMNS)[number], string> = {
+  TailNumber: "Aircraft registration (tail number).",
+  Aircraft: "Aircraft type as recorded for the tail.",
+  fleet:
+    "mainline for the airline's main fleet, or its label for the regional fleet (express on United, horizon on Alaska). The label names a fleet, not who flies the aircraft; the operator is in OperatedBy.",
+  OperatedBy: "The carrier that operates the aircraft.",
+  DateFound:
+    "Date (YYYY-MM-DD) the tail was first found with Starlink, by this tracker or a source it reads; not the install date. Empty when unknown.",
+};
 
 function csvField(value: string | null): string {
   const v = value ?? "";

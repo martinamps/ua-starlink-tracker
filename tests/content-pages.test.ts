@@ -366,6 +366,30 @@ describe("structured data blocks", () => {
     expect(text).toContain('"@type":"DataDownload"');
   });
 
+  test("Dataset variableMeasured names exactly the CSV's columns", async () => {
+    for (const site of Object.values(SITES).filter((s) => s.features.methodologyPage)) {
+      const host = site.canonicalHost;
+      const { text } = await getText("/methodology", host);
+      const block = [...text.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/gs)]
+        .map((m) => JSON.parse(m[1]))
+        .find((j) => j["@type"] === "Dataset");
+      expect(block, `${site.key} Dataset`).toBeDefined();
+      const csv = await getText("/data/starlink-tails.csv", host);
+      const header = csv.text.split("\r\n")[0].split(",");
+      const vars = block.variableMeasured as {
+        "@type": string;
+        name: string;
+        description: string;
+      }[];
+      expect(vars.map((v) => v.name)).toEqual(header);
+      for (const v of vars) {
+        expect(v["@type"]).toBe("PropertyValue");
+        expect(v.description.length).toBeGreaterThan(0);
+      }
+      expect(block.license).toBeUndefined();
+    }
+  });
+
   test("the declared distribution is crawlable and visible on the page", async () => {
     // Dataset Search drops (and flags) a distribution robots.txt blocks, and
     // requires the markup to describe content that is actually on the page.
