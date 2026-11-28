@@ -146,6 +146,7 @@ import {
   withLeg,
   withLegNote,
 } from "../api/check-flight-core";
+import { buildHubRouteBoard, hubRouteHasData } from "../api/hub-route-board";
 import { type LookupAsker, asLookupAsker } from "../api/lookup-budget";
 import { handleMcpRequest, unseenAirports } from "../api/mcp-server";
 import { QATAR_PUBLISHED_DAYS_FORWARD, qatarEquipmentName } from "../api/qatar-status";
@@ -214,6 +215,7 @@ import { breadcrumbJsonLd, faqJsonLd, homeFaqJsonLd, jsonLdBlock } from "../comp
 import FleetPage, { type FleetTypeLink } from "../components/fleet-page";
 import { weeklyInstalls } from "../components/home/rollout";
 import HowToCheckPage from "../components/how-to-check-page";
+import HubRouteBoardPage, { type AirportChoice } from "../components/hub-route-board-page";
 import InstallRatePage, { type AirlineInstallRate } from "../components/install-rate-page";
 import IsStarlinkFreePage, {
   freeAccessAnswer,
@@ -317,6 +319,7 @@ import { orList, placeCodeAirports } from "../utils/airport-aliases";
 import { toIata } from "../utils/airport-code";
 import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-places";
 import { currentAirportCode } from "../utils/airport-renames";
+import { AIRPORT_QUERY_MAX, resolveAirport } from "../utils/airport-search";
 import {
   airportLocalDate,
   airportTimezone,
@@ -1592,6 +1595,13 @@ const apiCompareRoute: Handler = ({ url, getReader, tenant }) => {
     origin,
     destination,
     results,
+    // The pair's flight-by-flight page, where one serves.
+    flights_page:
+      airportTimezone(origin) &&
+      airportTimezone(destination) &&
+      hubRouteHasData(getReader, origin, destination)
+        ? `/routes/${origin}-${destination}`
+        : null,
   });
 };
 
@@ -1776,7 +1786,7 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
 
 function recordRouteFlightsView(
   cfg: AirlineConfig,
-  surface: "api" | "page",
+  surface: "api" | "page" | "hub",
   board: RouteFlightBoard
 ): void {
   metrics.increment(COUNTERS.ROUTE_FLIGHTS_VIEW, {
@@ -5445,6 +5455,124 @@ const airportPage: Handler = (ctx) => {
   );
 };
 
+/** `/routes/SFO-HNL` → the pair; anything else → null. */
+export function parseHubRoutePath(
+  pathname: string
+): { origin: string; destination: string } | null {
+  const rest = pathname.slice("/routes/".length).replace(/\/+$/, "");
+  const parts = rest.split("-");
+  if (parts.length !== 2) return null;
+  const [origin, destination] = parts.map((p) => currentAirportCode(p.toUpperCase()));
+  if (!ROUTE_AIRPORT_RE.test(origin) || !ROUTE_AIRPORT_RE.test(destination)) return null;
+  if (origin === destination) return null;
+  return { origin, destination };
+}
+
+const hubRouteSearchMeta: PageMeta = {
+  siteTitle: "Starlink on Every Flight Between Two Airports",
+  siteDescription:
+    "Pick two airports and see each nonstop between them, across airlines, with its Starlink Wi-Fi odds.",
+  keywords: "starlink flights between airports, which flights have starlink wifi",
+  ogTitle: "Starlink on Every Flight Between Two Airports",
+  ogDescription: "Each nonstop between two airports, across airlines, with its Starlink odds.",
+  robotsMeta: "noindex, follow",
+};
+
+/**
+ * The hub's search for two airports: codes or names, as typed. Both settle to
+ * one airport each → the pair's page; otherwise the search again, with the
+ * airports to choose from. Never a page of its own to index.
+ */
+function hubRouteSearch(ctx: RequestContext): Response | Promise<Response> {
+  const q = ctx.url.searchParams;
+  const values = {
+    from: (q.get("from") ?? "").slice(0, AIRPORT_QUERY_MAX),
+    to: (q.get("to") ?? "").slice(0, AIRPORT_QUERY_MAX),
+    date: (q.get("date") ?? "").trim(),
+  };
+  if (!values.from.trim() && !values.to.trim())
+    return redirect(`https://${ctx.site.canonicalHost}/`);
+  const date = values.date && routeBoardDateOk(values.date) ? values.date : "";
+  const sides = (["from", "to"] as const).map((side) => ({
+    side,
+    typed: values[side].trim(),
+    found: resolveAirport(values[side]),
+  }));
+  const [from, to] = sides.map((s) => (s.found.kind === "code" ? s.found.code : null));
+  if (from && to && from !== to) {
+    return redirect(`/routes/${from}-${to}${date ? `?${new URLSearchParams({ date })}` : ""}`);
+  }
+  const choices: AirportChoice[] = sides
+    .filter((s) => s.found.kind !== "code")
+    .map((s) => ({
+      side: s.side,
+      typed: s.typed,
+      matches:
+        s.found.kind === "choose"
+          ? s.found.matches.map((m) => ({
+              ...m,
+              href: `/routes/?${new URLSearchParams({ ...values, date, [s.side]: m.code })}`,
+            }))
+          : [],
+    }));
+  return renderSubPage(ctx, HubRouteBoardPage, "/routes/", hubRouteSearchMeta, {
+    values: { ...values, date },
+    choices,
+  });
+}
+
+/** Hub /routes/{origin}-{destination}: each airline's nonstops on the pair, as one list. */
+const hubRoutePage: Handler = (ctx) => {
+  if (ctx.url.pathname === "/routes/") return hubRouteSearch(ctx);
+  const parsed = parseHubRoutePath(ctx.url.pathname);
+  if (!parsed || !airportTimezone(parsed.origin) || !airportTimezone(parsed.destination)) {
+    return notFound(ctx.site);
+  }
+  const { origin, destination } = parsed;
+  const canonicalPath = `/routes/${origin}-${destination}`;
+  if (ctx.url.pathname !== canonicalPath) {
+    return redirect(`https://${ctx.site.canonicalHost}${canonicalPath}${ctx.url.search}`, 301);
+  }
+  // Bounded by real data, like the airline route pages: a pair no airline we
+  // answer has flown is no page.
+  if (!hubRouteHasData(ctx.getReader, origin, destination)) return notFound(ctx.site);
+  const board = buildHubRouteBoard(ctx.getReader, origin, destination, {
+    date: ctx.url.searchParams.get("date"),
+  });
+  for (const a of board.airlines) {
+    const cfg = AIRLINES[a.code];
+    if (cfg) recordRouteFlightsView(cfg, "hub", a.board);
+  }
+  const pair = routePairLabel(origin, destination);
+  const names = board.airlines.filter((a) => a.board.flights.length > 0).map((a) => a.shortName);
+  const n = board.rows.length;
+  const description =
+    n > 0
+      ? `${fmt(n)} nonstop${n === 1 ? "" : "s"} from ${pair} on ${names.join(", ")}, each with its Starlink Wi-Fi odds and the plane when it is assigned.`
+      : `Nonstops from ${pair} across airlines, each with its Starlink Wi-Fi odds.`;
+  // Indexed on the airline route pages' rule: rows on the board, and both
+  // ends placed by hand.
+  const indexable = n > 0 && isHandPlacedAirportPair(origin, destination);
+  return renderSubPage(
+    ctx,
+    HubRouteBoardPage,
+    canonicalPath,
+    {
+      siteTitle: `${origin} to ${destination} Flights with Starlink, by Airline`,
+      siteDescription: description,
+      keywords: `${origin} to ${destination} starlink, ${origin} ${destination} flights starlink wifi`,
+      ogTitle: `Which ${pair} flights have Starlink?`,
+      ogDescription: description,
+      ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
+    },
+    {
+      board,
+      values: { from: origin, to: destination, date: board.date ?? "" },
+      reverseLinkable: hubRouteHasData(ctx.getReader, destination, origin),
+    }
+  );
+};
+
 const hubTimelinePage: Handler = (ctx) => {
   const airlines = hubTimeline(ctx);
   if (airlines.length === 0) return notFound(ctx.site);
@@ -6691,7 +6819,19 @@ export function createApp(
       ),
     ],
     ["/route-planner/", read(routePlannerPage, "routePlannerPage")],
-    ["/routes/", read(airportPage, "airportPages")],
+    // The hub's pair pages share the airline sites' /routes/ family (and its
+    // route tag): there it is /routes/{origin}-{destination}, the airlines'
+    // flights between two airports.
+    [
+      "/routes/",
+      read((ctx) =>
+        isHubSite(ctx)
+          ? hubRoutePage(ctx)
+          : ctx.site.features.airportPages
+            ? airportPage(ctx)
+            : notFound(ctx.site)
+      ),
+    ],
     ["/airlines/", read(airlineDetailPage, "airlinesPages")],
     ["/compare/", read(comparePage, "comparePages")],
     ["/static/", { handler: staticFamily }],
