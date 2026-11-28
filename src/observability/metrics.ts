@@ -843,6 +843,10 @@ export const COUNTERS = {
   // Sheet tab list drifted from the gids we know (utils.ts reconcileSheetTabs) —
   // tags: state (vanished_empty|vanished_listed|new), airline
   SHEET_TAB_DRIFT: "sheet.tab_drift",
+  // A United Express listing whose scheduled legs all name another regional
+  // carrier than the sheet's, so the legs' carrier is shown
+  // (database/operator-evidence.ts) — tags: fleet, airline
+  OPERATOR_FROM_FLIGHTS: "fleet.operator_from_flights",
   // A scheduled read of an outside source failed, counting "answered with
   // nothing usable" as a failure (utils/source-health.ts) — tags: source
   // (SourceId), kind (error|timeout|blocked|empty|refused|partial), airline
