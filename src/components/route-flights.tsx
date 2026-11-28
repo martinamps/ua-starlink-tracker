@@ -18,10 +18,7 @@ function FlightCell({ row, board }: { row: RouteFlightRow; board: RouteFlightBoa
   const marker = rowMarker(row, board);
   return (
     <Td className="pr-3">
-      <a
-        href={`/check-flight/${row.flight_number}`}
-        className="font-mono text-primary hover:text-accent transition-colors"
-      >
+      <a href={row.page} className="font-mono text-primary hover:text-accent transition-colors">
         {row.flight_number}
       </a>
       {row.departure_label && <span className="text-muted"> · {row.departure_label}</span>}

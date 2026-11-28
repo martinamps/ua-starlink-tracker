@@ -171,8 +171,12 @@ describe("/route-planner/{origin}/{destination}", () => {
         // The permalink router's own shape. `UA\d+` would accept UA63986, a
         // 5-digit number the router 404s — the shape check has to be the one
         // the router applies, or it cannot catch the link it was written for.
-        expect(fn, "non-marketing flight number linked").toMatch(CANONICAL_FLIGHT_PERMALINK);
-        expect((await get(`/check-flight/${fn}`, host)).status, `/check-flight/${fn}`).toBe(200);
+        // A number that also flies other pairs links its page scoped to this leg.
+        const [number, query] = fn.replace(/&amp;/g, "&").split("?");
+        expect(number, "non-marketing flight number linked").toMatch(CANONICAL_FLIGHT_PERMALINK);
+        if (query) expect(query).toMatch(/^origin=[A-Z]{3}&destination=[A-Z]{3}$/);
+        const path = `/check-flight/${number}${query ? `?${query}` : ""}`;
+        expect((await get(path, host)).status, path).toBe(200);
       }
     },
     60_000

@@ -7,6 +7,12 @@
  */
 import type { RouteFlightBoard } from "../api/route-flights";
 import {
+  allConfirmed,
+  shownAtLeastOne,
+  shownJoint,
+  shownLegProbability,
+} from "../components/itinerary-odds";
+import {
   flightLabel,
   formatDuration,
   monthDay,
@@ -37,6 +43,8 @@ interface Leg {
   probability: number;
   confidence: string;
   n_observations: number;
+  /** On a dated search: the leg's plane is assigned and verified Starlink. */
+  confirmed?: boolean;
   /** This host's answer page for the flight, dated when the search was. */
   page?: string;
 }
@@ -47,7 +55,9 @@ interface Itinerary {
   coverage: "full" | "partial";
   joint_probability: number;
   at_least_one_probability: number;
-  total_flight_hours?: number;
+  total_flight_hours?: number | null;
+  /** Σ leg odds × leg hours: with total_flight_hours, the figure the list is ranked by. */
+  expected_starlink_hours?: number | null;
   /** "same_day": each connection leaves after the previous leg usually lands. */
   schedule?: "same_day" | "unknown";
   connection_minutes?: Array<number | null>;
@@ -103,15 +113,21 @@ function legFlight(leg: Leg): string {
 }
 
 function renderLeg(leg: Leg): string {
-  const color = probColor(leg.probability);
+  const p = shownLegProbability(leg);
+  const color = probColor(p);
   const [from, to] = leg.route.split("-").map(esc);
-  const odds = `<div class="flex items-center gap-2">${probBars(leg.probability, color)}<span class="text-xs w-10 text-right tabular-nums" style="color:${color}">${flightLabel(leg.probability, leg.n_observations)}</span></div>`;
+  // An assigned verified plane reads as its flight page reads it: Yes.
+  const label = leg.confirmed ? "Yes" : flightLabel(leg.probability, leg.n_observations);
+  const odds = `<div class="flex items-center gap-2">${probBars(p, color)}<span class="text-xs w-10 text-right tabular-nums" style="color:${color}">${label}</span></div>`;
   if (leg.flight_number === "(any)") {
     return `<div class="flex items-center justify-between py-2 border-l-2 border-subtle pl-3 ml-1"><div class="text-sm"><div class="font-mono text-muted">${from} → ${to}</div><div class="text-xs text-muted">Any flight works for this leg</div></div>${odds}</div>`;
   }
   const conf = leg.confidence === "low" ? " · low confidence" : "";
   const checks = `${leg.n_observations} check${leg.n_observations === 1 ? "" : "s"}`;
-  return `<div class="flex items-center justify-between py-2 border-l-2 pl-3 ml-1" style="border-color:${color}"><div class="text-sm"><div class="font-mono text-secondary">${legFlight(leg)} <span class="text-muted">${from} → ${to}</span></div><div class="text-xs text-muted">Based on ${checks}${conf}</div></div>${odds}</div>`;
+  const basis = leg.confirmed
+    ? "Starlink plane assigned · planes can be swapped"
+    : `Based on ${checks}${conf}`;
+  return `<div class="flex items-center justify-between py-2 border-l-2 pl-3 ml-1" style="border-color:${color}"><div class="text-sm"><div class="font-mono text-secondary">${legFlight(leg)} <span class="text-muted">${from} → ${to}</span></div><div class="text-xs text-muted">${basis}</div></div>${odds}</div>`;
 }
 
 const TIMING_ROW = "text-xs text-muted pl-3 ml-1";
@@ -159,8 +175,8 @@ function legRows(it: Itinerary): string {
 function flightPath(legs: Leg[]): string {
   const parts = ['<div class="flight-path">'];
   legs.forEach((leg, i) => {
-    const color = probColor(leg.probability);
-    const live = isLikely(leg.probability);
+    const color = probColor(shownLegProbability(leg));
+    const live = isLikely(shownLegProbability(leg));
     if (i === 0) {
       parts.push(
         `<span class="flight-path__node flight-path__node--filled" style="color:${color}"></span>`
@@ -172,7 +188,7 @@ function flightPath(legs: Leg[]): string {
     const last = i === legs.length - 1;
     const nodeColor = last
       ? color
-      : live && isLikely(legs[i + 1].probability)
+      : live && isLikely(shownLegProbability(legs[i + 1]))
         ? LIKELY
         : "var(--color-neutral)";
     parts.push(
@@ -183,16 +199,33 @@ function flightPath(legs: Leg[]): string {
   return parts.join("");
 }
 
+/**
+ * The figure the list is ranked by: expected Starlink time against flying
+ * time. Options are ordered by that share (less a little per stop), so a
+ * short connection can rank above a nonstop with a higher headline.
+ */
+function starlinkTime(it: Itinerary): string {
+  const total = it.total_flight_hours;
+  const expected = it.expected_starlink_hours;
+  if (typeof total !== "number" || typeof expected !== "number" || total <= 0) return "";
+  return `<div class="text-xs text-muted mb-3">~${fmtHours(expected)} of ~${fmtHours(total)} flying expected on Starlink (${probLabel(expected / total)})</div>`;
+}
+
 function renderItinerary(it: Itinerary, rank: number): string {
   const { legs, via = [] } = it;
   const full = it.coverage === "full";
   const direct = via.length === 0;
   const origin = esc(legs[0].route.split("-")[0]);
   const dest = esc(legs[legs.length - 1].route.split("-")[1]);
-  const headerP = full ? it.joint_probability : it.at_least_one_probability;
+  // Read from the legs as shown, so a leg that says Yes counts as one.
+  const headerP = full ? shownJoint(legs) : shownAtLeastOne(legs);
   // A nonstop is one flight: its own number, a share until it has history.
   const headerPct =
-    legs.length === 1 ? flightLabel(headerP, legs[0].n_observations) : probLabel(headerP);
+    full && allConfirmed(legs)
+      ? "Yes"
+      : legs.length === 1
+        ? flightLabel(headerP, legs[0].n_observations)
+        : probLabel(headerP);
   const headerLabel = full ? (direct ? "Starlink" : "all legs") : "at least one leg";
   const headerColor = probColor(headerP);
   const flying =
@@ -201,7 +234,7 @@ function renderItinerary(it: Itinerary, rank: number): string {
     ? '<span class="text-xs text-accent">Nonstop</span>'
     : `<span class="text-xs text-muted">via <span class="font-mono">${via.map(esc).join("→")}</span> · ${via.length} stop${via.length > 1 ? "s" : ""}${flying}</span>`;
   const airports = `<span>${origin}</span>${via.map((v) => `<span class="text-center flex-1">${esc(v)}</span>`).join("")}${direct ? '<span class="flex-1"></span>' : ""}<span>${dest}</span>`;
-  return `<div class="itin-card bg-surface border border-subtle rounded-lg p-4 mb-3 hover:border-accent/50 transition-colors"><div class="flex items-center justify-between mb-3"><div class="flex items-center gap-3"><span class="text-xs text-muted tabular-nums">#${rank}</span>${badge}</div><div class="font-display text-right" style="color:${headerColor}">${headerPct} <span class="text-xs text-muted font-normal">${headerLabel}</span></div></div><div class="mb-3"><div class="flex items-center gap-2 text-xs font-mono text-muted mb-1">${airports}</div>${flightPath(legs)}</div><div class="space-y-1">${legRows(it)}</div></div>`;
+  return `<div class="itin-card bg-surface border border-subtle rounded-lg p-4 mb-3 hover:border-accent/50 transition-colors"><div class="flex items-center justify-between mb-3"><div class="flex items-center gap-3"><span class="text-xs text-muted tabular-nums">#${rank}</span>${badge}</div><div class="font-display text-right" style="color:${headerColor}">${headerPct} <span class="text-xs text-muted font-normal">${headerLabel}</span></div></div>${starlinkTime(it)}<div class="mb-3"><div class="flex items-center gap-2 text-xs font-mono text-muted mb-1">${airports}</div>${flightPath(legs)}</div><div class="space-y-1">${legRows(it)}</div></div>`;
 }
 
 /** The nonstop every connection is traded against: without it a 9h two-stop

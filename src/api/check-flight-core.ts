@@ -64,6 +64,7 @@ import {
   noModelConfidence,
   predictFlight,
   predictLeg,
+  predictLegOrFlight,
 } from "../scripts/starlink-predictor";
 import { airportCoords } from "../utils/airport-geo";
 import {
@@ -1330,7 +1331,13 @@ async function verdictFromRows(
     };
   }
 
-  const predict = deps.predict ?? predictFlight;
+  // Unscoped, the flight's own figure (predictLegOrFlight), as its page and
+  // the planner print it. A scoped leg is priced by resolveFlightVerdict.
+  const predict =
+    deps.predict ??
+    (leg
+      ? predictFlight
+      : (r: ScopedReader, fn: string) => predictLegOrFlight(r, fn, null, null, now));
   return {
     verdict: {
       kind: "prediction",

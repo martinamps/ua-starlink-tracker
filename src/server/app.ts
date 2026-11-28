@@ -294,7 +294,7 @@ import {
   joinSentences,
   planItinerary,
   planRoute,
-  predictFlight,
+  predictLegOrFlight,
   routeBaseline,
   storedUnreadAircraft,
   subfleetBreakdown,
@@ -1617,7 +1617,7 @@ const apiPredictFlight: Handler = ({ url, reader, getReader, tenant }) => {
       message: describeCarrierPrediction(cfg, answer),
     });
   }
-  const pred = predictFlight(carrier.reader, ensureAirlinePrefix(cfg, flightNumber));
+  const pred = predictLegOrFlight(carrier.reader, ensureAirlinePrefix(cfg, flightNumber));
   recordFlightLookup(
     "api_predict",
     pred.n_observations > 0 ? "predicted" : "no_data",
@@ -1635,16 +1635,23 @@ const apiPredictFlight: Handler = ({ url, reader, getReader, tenant }) => {
   });
 };
 
+/** The day a planner leg's page answers for: the day it was laid on, on a dated search. */
+function legDay(leg: { date?: string }, i: number, searched: string | null): string | null {
+  if (!searched) return null;
+  return leg.date ?? (i === 0 ? searched : null);
+}
+
 /**
  * Additive `page` on a planner leg: this host's answer page for the flight,
  * dated when the search was (the dated view holds the plane-swap answer and the
  * calendar watch). Only a flight this host's permalink handler owns, in the
  * spelling it serves without a redirect; anything else (the "(any)" positioning
  * leg, another carrier's prefix) gets no link rather than a 404 or a hop.
- * Only the first leg takes the searched day. The planner builds connections
- * from route history, not same-day schedules, and most later legs fly the next
- * day (58 of 78 live connections on 27 Nov), so a later leg links the undated
- * page, which points on to its next departure, rather than a wrong day's answer.
+ * A leg takes the day the planner laid it on (its origin-local `date`), so a
+ * later leg that flies the next day (58 of 78 live connections on 27 Nov)
+ * links that day's answer, not the searched day's. A leg the planner could not
+ * time has no day of its own: the first takes the searched day, a later one
+ * links the undated page, which points on to its next departure.
  */
 function legPagePath(
   cfg: AirlineConfig,
@@ -1743,7 +1750,7 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   }).map((it) => ({
     ...it,
     legs: it.legs.map((leg, i) => {
-      const page = legPagePath(cfg, leg.flight_number, i === 0 ? day : null, leg.route);
+      const page = legPagePath(cfg, leg.flight_number, legDay(leg, i, day), leg.route);
       return page ? { ...leg, page } : leg;
     }),
   }));
@@ -3645,7 +3652,7 @@ function buildFlightFacts(
     observedTotal: history.total,
     observedStarlink: history.starlink,
     observedSince: history.first_checked_at,
-    prediction: permalinkPrediction(reader, cfg, flightNumber),
+    prediction: permalinkPrediction(reader, cfg, flightNumber, leg),
     typeRule: permalinkTypeRule(reader, cfg, flightNumber),
     aircraftTypes: history.aircraft_types,
     lastStarlink: history.last_starlink
@@ -3728,16 +3735,18 @@ function flightAirportLinks(ctx: RequestContext, routes: FlightFacts["routes"]):
   );
 }
 
-/** The model's number for the permalink, so the page and the APIs quote one
- * figure. Best-effort: the page renders without it. */
+/** The flight's figure for the permalink, its asked leg's when the page is
+ * scoped to one, so the page, the planner and the APIs quote one figure.
+ * Best-effort: the page renders without it. */
 function permalinkPrediction(
   reader: ScopedReader,
   cfg: AirlineConfig,
-  flightNumber: string
+  flightNumber: string,
+  leg: LegQuery | undefined
 ): FlightFacts["prediction"] {
   if (!cfg.flightHistoryModel) return null;
   try {
-    const p = predictFlight(reader, flightNumber);
+    const p = predictLegOrFlight(reader, flightNumber, leg?.origin, leg?.destination);
     return {
       probability: p.probability,
       n_observations: p.n_observations,
@@ -3846,7 +3855,7 @@ function flightMetaAnswer(
   }
   try {
     if (cfg.flightHistoryModel) {
-      const pred = predictFlight(reader, flightNumber);
+      const pred = predictLegOrFlight(reader, flightNumber);
       if (pred.probability > 0 && (pred.n_observations > 0 || pred.confidence !== "low")) {
         return ` ${capitalize(flightShare(pred.probability, flightNumber))}.`;
       }

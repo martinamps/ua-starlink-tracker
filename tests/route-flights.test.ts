@@ -54,6 +54,7 @@ const FORECAST_DATE = isoDateDaysAgo(-20);
 
 const ROW_KEYS = [
   "flight_number",
+  "page",
   "typical_departure",
   "departure_label",
   "weekdays",
@@ -416,8 +417,8 @@ describe("board behavior (synthetic)", () => {
     expect(check.prediction.probability).toBeCloseTo(fromBoard ?? -1, 6);
   });
 
-  test("a planner leg links its own answer page, the first leg dated as searched", async () => {
-    type PlanLeg = { flight_number: string; route: string; page?: string };
+  test("a planner leg links its own answer page, on the day it flies", async () => {
+    type PlanLeg = { flight_number: string; route: string; page?: string; date?: string };
     const itinerariesOf = async (query: string) =>
       (
         (await jsonOf(sapp, `/api/plan-route?${query}`, UA)) as {
@@ -434,14 +435,19 @@ describe("board behavior (synthetic)", () => {
       leg.flight_number === "(any)"
         ? undefined
         : `/check-flight/${leg.flight_number}${onLeg(leg.route)}`;
-    // Only the first leg is known to fly that day: a later one often flies the
-    // next, so it links the flight's undated page.
+    // Each leg links the day the planner laid it on: the first the searched
+    // day, a later one its own, often the next. Untimed, a later leg has no day.
+    const dayOf = (leg: PlanLeg, i: number) => leg.date ?? (i === 0 ? date : null);
+    const datedPage = (leg: PlanLeg, i: number) =>
+      dayOf(leg, i)
+        ? `/check-flight/${leg.flight_number}/${dayOf(leg, i)}${onLeg(leg.route)}`
+        : undatedPage(leg);
     const expectDatedFirstLeg = (legs: PlanLeg[]) =>
       legs.forEach((leg, i) => {
         if (leg.flight_number === "(any)") expect(leg.page).toBeUndefined();
         else if (i === 0)
           expect(leg.page).toBe(`/check-flight/${leg.flight_number}/${date}${onLeg(leg.route)}`);
-        else expect(leg.page).toBe(undatedPage(leg));
+        else expect(leg.page).toBe(datedPage(leg, i));
       });
 
     const nonstop = await itinerariesOf(`origin=ORD&destination=IAD&date=${date}`);
@@ -453,16 +459,21 @@ describe("board behavior (synthetic)", () => {
     );
     expect(twoLeg?.legs.map((l) => l.page)).toEqual([
       `/check-flight/UA510/${date}${onLeg("BOS-PHL")}`,
-      `/check-flight/UA520${onLeg("PHL-CLT")}`,
+      `/check-flight/UA520/${twoLeg?.legs[1].date}${onLeg("PHL-CLT")}`,
     ]);
+    // The later leg is laid on a day of its own, and its link keeps it.
+    expect(twoLeg?.legs[1].date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
     const threeLeg = (await itinerariesOf(`origin=BOS&destination=MIA&date=${date}`)).find(
       (it) => it.legs.length === 3
     );
-    expect(threeLeg?.legs.map((l) => l.page)).toEqual([
-      `/check-flight/UA510/${date}${onLeg("BOS-PHL")}`,
-      `/check-flight/UA520${onLeg("PHL-CLT")}`,
-      `/check-flight/UA530${onLeg("CLT-MIA")}`,
+    expect(threeLeg?.legs.map((l) => l.page)).toEqual(
+      (threeLeg?.legs ?? []).map((l, i) => datedPage(l, i))
+    );
+    expect(threeLeg?.legs.map((l) => l.page?.split("?")[0].split("/")[2])).toEqual([
+      "UA510",
+      "UA520",
+      "UA530",
     ]);
 
     // Behind a positioning leg, the first real flight is a later leg too.
@@ -471,7 +482,7 @@ describe("board behavior (synthetic)", () => {
     );
     expect(behindPositioning?.legs.map((l) => l.page)).toEqual([
       undefined,
-      `/check-flight/UA100${onLeg("ORD-IAD")}`,
+      behindPositioning ? datedPage(behindPositioning.legs[1], 1) : undefined,
     ]);
 
     for (const query of [
@@ -623,8 +634,18 @@ describe("board behavior (synthetic)", () => {
   test("each board number links once from the board and once from the full list", async () => {
     const body = await (await page("/route-planner/SFO/ORD", UA, sapp)).text();
     expect(body.match(/All flight numbers on this route/g)?.length).toBe(1);
-    for (const fn of ["UA100", "UA5212", "UA777"]) {
-      expect(body.match(new RegExp(`href="/check-flight/${fn}"`, "g"))?.length, fn).toBe(2);
+    // UA100 also flies ORD-IAD, so its board row opens the page on this leg,
+    // where the page prints the row's figure.
+    const boardLink: Record<string, string> = {
+      UA100: "/check-flight/UA100?origin=SFO&amp;destination=ORD",
+      UA5212: "/check-flight/UA5212",
+      UA777: "/check-flight/UA777",
+    };
+    for (const [fn, href] of Object.entries(boardLink)) {
+      const links = [
+        ...body.matchAll(new RegExp(`href="(/check-flight/${fn}(?:\\?[^"]*)?)"`, "g")),
+      ];
+      expect(links.map((m) => m[1]).sort(), fn).toEqual([href, `/check-flight/${fn}`].sort());
     }
   });
 
