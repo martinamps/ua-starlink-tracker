@@ -98,8 +98,6 @@ interface Case {
   arr: string;
   seed: () => void;
   confirmed: boolean;
-  /** Where the flight check's stored answer differs, and why that is its fault. */
-  checkSays?: boolean;
 }
 
 const CASES: Case[] = [
@@ -156,10 +154,6 @@ const CASES: Case[] = [
       sighting("OO5415", "ORD", "FAR", plane("None"), 3600);
     },
     confirmed: false,
-    // getListedSightings keeps the newest tail per spelling, not per
-    // departure, so the flight check still answers from the older Starlink
-    // tail here. The planner keeps the newest across spellings and doesn't.
-    checkSays: true,
   },
   {
     name: "a schedule row for the number on the date",
@@ -240,7 +234,7 @@ describe("/api/plan-route agrees with the stored flight check", () => {
       const answer = JSON.parse(check.text) as { hasStarlink: boolean | null; confidence: string };
       const verifiedYes = answer.hasStarlink === true && answer.confidence === "verified";
       for (const l of legs) expect(l.confirmed).toBe(c.confirmed);
-      expect(verifiedYes).toBe(c.checkSays ?? c.confirmed);
+      expect(verifiedYes).toBe(c.confirmed);
     });
   }
 });
@@ -339,9 +333,6 @@ describe("Alaska: a newer tail read under the operator's spelling outranks a sig
         tailRead(other, [leg("SKW3999", "SEA", "PDX", DEP() + 3 * HOUR)], DEP() - 2 * HOUR);
       },
       confirmed: false,
-      // The flight check ranks rivals under the sighting's own spelling only,
-      // so it still answers verified Yes here; the planner stays on the safe side.
-      checkSays: true,
     },
   ];
 
