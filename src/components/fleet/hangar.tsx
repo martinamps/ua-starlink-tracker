@@ -120,13 +120,11 @@ function SpecCard({ id, name, spec }: { id: string; name: string; spec: Aircraft
       <div className="flex justify-between gap-4">
         <dt className="text-muted">{label}</dt>{" "}
         <dd className="text-secondary text-right tabular-nums">
-          {value}
-          {unit && (
-            <>
-              <TextGap />
-              <span className="text-muted ml-0.5">{unit}</span>
-            </>
-          )}
+          {/* One text node with a real space in it, not a margin: a copy of
+              the card read "76.3ft", and so does a reader's description when
+              the space stands in a node by itself. */}
+          {unit ? `${value} ` : value}
+          {unit && <span className="text-muted">{unit}</span>}
         </dd>
       </div>{" "}
     </>
@@ -278,7 +276,7 @@ export function HangarFloor({
           </>
         }
       />
-      <div className="fam-container gap-3">
+      <div className="fam-container">
         {hangarFamilies.map((fam) => (
           <Fragment key={fam.family}>
             <FamilyBlock
