@@ -539,6 +539,9 @@ export function getLoggedAircraft(
  * the schedule hasn't had the chance to hold it. Only the newest tail logged
  * on a departure counts, so a later sighting of another aircraft outranks it,
  * and so does a later lookup that returned the departure without this tail.
+ * The departure is the flight's, not one spelling's: a lookup logs the number
+ * asked (AS3448), while a tail read logs FR24's callsign, which stays SKW3448
+ * for SkyWest-for-Alaska, so a newer tail under any of `variants` outranks it.
  */
 export function getListedSightings(
   db: Database,
@@ -572,6 +575,11 @@ function listedSightings(
   const a = airlineIn(airlines, "l.airline");
   const listed = airlineIn(airlines, "sp.airline");
   const flights = variants ? `AND l.flight_number IN (${placeholders(variants)})` : "";
+  // Without variants (the planner's whole day) a rival must share the
+  // spelling; the planner then keeps the newest sighting per slot itself.
+  const rivalFlight = variants
+    ? `n.flight_number IN (${placeholders(variants)})`
+    : "n.flight_number = l.flight_number";
   const rows = db
     .query(
       `SELECT 0 AS id, l.tail_number, l.flight_number, l.departure_airport, l.arrival_airport,
@@ -590,7 +598,7 @@ function listedSightings(
          AND l.withdrawn_at IS NULL
          AND NOT EXISTS (
            SELECT 1 FROM flight_assignment_log n
-           WHERE n.airline = l.airline AND n.flight_number = l.flight_number
+           WHERE n.airline = l.airline AND ${rivalFlight}
              AND n.dep_date = l.dep_date AND n.departure_airport = l.departure_airport
              AND n.tail_number <> l.tail_number
              AND (n.last_seen > l.last_seen
@@ -599,7 +607,14 @@ function listedSightings(
            AND ${modHoldSql("sp.TailNumber", "sp.airline")})
        ORDER BY l.last_seen DESC`
     )
-    .all(...listed.params, ...a.params, ...(variants ?? []), start, end) as FlightAssignmentRow[];
+    .all(
+      ...listed.params,
+      ...a.params,
+      ...(variants ?? []),
+      start,
+      end,
+      ...(variants ?? [])
+    ) as FlightAssignmentRow[];
   return rows.filter(printable);
 }
 
