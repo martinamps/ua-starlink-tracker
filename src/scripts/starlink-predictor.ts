@@ -71,6 +71,7 @@ import { newestPerDeparture } from "../database/newest-row";
 import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
 import type { RouteFlightLeg } from "../database/route-flights";
 import { rowEvidence } from "../database/sql/equipped";
+import type { Flight } from "../types";
 import {
   airportCoords,
   airportDistanceMiles,
@@ -2432,11 +2433,37 @@ function confirmSightings(
     (k) => `${k.slot}|${k.row.departure_airport}`
   )) {
     if (rowEvidence(row) !== "verified") continue;
+    if (!newestOnDeparture(reader, date, row)) continue;
     out.set(
       edgeKey(slot, row.departure_airport, row.arrival_airport),
       row.fleet === "mainline" ? "mainline" : "express"
     );
   }
+}
+
+/**
+ * Whether the sighting's tail is still the newest logged on its departure
+ * under any of the flight's spellings. The whole-day read can only rule out a
+ * rival under the sighting's own spelling, and a tail read's row is never a
+ * sighting: a lookup logs AS3442, while a tail read keeps SkyWest-for-Alaska
+ * as SKW3442, so a newer tail there must still outrank the older sighting.
+ * Only a few verified sightings reach this a day, each one indexed read.
+ */
+function newestOnDeparture(
+  reader: ScopedReader,
+  date: string,
+  row: Pick<Flight, "airline" | "flight_number" | "departure_airport" | "tail_number">
+): boolean {
+  const cfg = AIRLINES[row.airline];
+  const digits = flightDigits(row.flight_number);
+  const variants =
+    cfg && digits >= 0
+      ? buildAirlineFlightNumberVariants(cfg, `${cfg.iata}${digits}`)
+      : [row.flight_number];
+  const newest = reader
+    .getLoggedAircraft(variants, date)
+    .find((a) => a.departure_airport === row.departure_airport);
+  return !newest || newest.tail_number === row.tail_number;
 }
 
 const edgeKey = (slot: string, dep: string, arr: string) => `${slot}|${dep}|${arr}`;
