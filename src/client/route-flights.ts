@@ -12,7 +12,7 @@ import {
   hasVerifiedRow,
   rowMarker,
 } from "../components/route-flights-copy";
-import { TABLE, TABLE_FRAME } from "../components/ui/box-classes";
+import { TABLE, TABLE_FRAME_EARLY } from "../components/ui/box-classes";
 import { pillStyle, toneColor } from "../components/ui/tone-classes";
 import { esc } from "./esc";
 
@@ -51,7 +51,7 @@ export function renderRouteFlights(board: RouteFlightBoard, footerAction = ""): 
   if (board.flights.length === 0) return "";
   const pagePath = `/route-planner/${encodeURIComponent(board.origin)}/${encodeURIComponent(board.destination)}`;
   const head = `<h2 class="font-display text-xl text-primary">Nonstop flights</h2><p class="mt-1 text-sm text-secondary text-pretty">${esc(boardDek(board))}</p>`;
-  const table = `<div class="${TABLE_FRAME}"><table class="${TABLE}"><thead><tr><th scope="col" class="${TH}">Flight</th><th scope="col" class="${TH} hidden sm:table-cell">Aircraft</th><th scope="col" class="${TH} text-right">Odds</th></tr></thead><tbody>${board.flights.map((r) => row(r, board)).join("")}</tbody></table></div><p class="mt-3 text-xs"><a href="${pagePath}" class="text-accent hover:underline">Route page →</a></p>`;
+  const table = `<div class="${TABLE_FRAME_EARLY}"><table class="${TABLE}"><thead><tr><th scope="col" class="${TH}">Flight</th><th scope="col" class="${TH} hidden sm:table-cell">Aircraft</th><th scope="col" class="${TH} text-right">Odds</th></tr></thead><tbody>${board.flights.map((r) => row(r, board)).join("")}</tbody></table></div><p class="mt-3 text-xs"><a href="${pagePath}" class="text-accent hover:underline">Route page →</a></p>`;
   const legend = hasVerifiedRow(board) ? ` ${esc(VERIFIED_LEGEND)}` : "";
   const action = footerAction ? ` ${footerAction}` : "";
   return `${head}<div class="bg-surface border border-subtle rounded-lg p-4 mt-4 mb-8">${table}<p class="mt-4 text-xs text-muted">${esc(board.note)}${legend}${action}</p></div>`;

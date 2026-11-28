@@ -6,7 +6,14 @@
 import React from "react";
 import { AIRLINES, SITES, type SiteConfig, liveAirlineSites } from "../airlines/registry";
 import { type ClientScript, clientScriptSrc } from "../client/bundle";
-import { EYEBROW_TEXT, PANEL_PAD, SURFACE, TABLE, TABLE_FRAME } from "./ui/box-classes";
+import {
+  EYEBROW_TEXT,
+  PANEL_PAD,
+  SURFACE,
+  TABLE,
+  TABLE_FRAME,
+  TABLE_FRAME_EARLY,
+} from "./ui/box-classes";
 import { fmt } from "./ui/format";
 import { SLASHED_AIRPORT_WORDS } from "./ui/slashed-airport-words";
 
@@ -474,14 +481,18 @@ const TD = "border-b border-subtle py-2 tabular-nums";
 
 /** A data table. In a column narrower than 15rem, which a phone gives at a
  * larger browser font, each row becomes a line of its cells that wraps, so
- * the table never pushes the page sideways; wider, it is a plain table. */
+ * the table never pushes the page sideways; wider, it is a plain table.
+ * `stackEarly` moves that to 17.5rem, for a table whose cells need more than
+ * 15rem side by side (a long airport name, a date and time, a bar), which a
+ * phone under about 350px wide gives at the default font. */
 export function DataTable({
   className = "",
+  stackEarly = false,
   children,
   ...rest
-}: React.TableHTMLAttributes<HTMLTableElement>) {
+}: React.TableHTMLAttributes<HTMLTableElement> & { stackEarly?: boolean }) {
   return (
-    <div className={TABLE_FRAME}>
+    <div className={stackEarly ? TABLE_FRAME_EARLY : TABLE_FRAME}>
       <table className={className ? `${TABLE} ${className}` : TABLE} {...rest}>
         {children}
       </table>

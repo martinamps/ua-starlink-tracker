@@ -53,7 +53,7 @@ function RankTable({
   airportHref?: AirportHref;
 }) {
   return (
-    <DataTable>
+    <DataTable stackEarly>
       <thead className={head ? "" : "sr-only"}>
         <tr>
           <Th>

@@ -9,4 +9,7 @@ export const PANEL_PAD = { md: "p-5", sm: "p-4 sm:p-5", none: "" } as const;
 /** A data table and the box around it that it measures itself against
  * (DataTable in layout.tsx; `.table-stack` in src/styles/tailwind.css). */
 export const TABLE_FRAME = "table-stack-frame";
+/** The frame of a table whose cells need more than 15rem side by side; it
+ * stacks below a 17.5rem column (`.table-stack-early`). */
+export const TABLE_FRAME_EARLY = "table-stack-frame table-stack-early";
 export const TABLE = "table-stack w-full text-sm";

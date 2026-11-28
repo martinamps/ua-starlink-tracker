@@ -94,7 +94,7 @@ export function RouteFlightsSection({
           </a>
         </p>
       ) : (
-        <DataTable data-history-src={historySrc}>
+        <DataTable stackEarly data-history-src={historySrc}>
           <thead>
             <tr>
               <Th>Flight</Th>
