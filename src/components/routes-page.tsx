@@ -89,7 +89,7 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
     );
   };
   return (
-    <DataTable>
+    <DataTable stackEarly>
       <thead>
         <tr>
           <Th>Route</Th>

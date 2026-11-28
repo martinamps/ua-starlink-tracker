@@ -716,6 +716,19 @@
 .table-stack-frame {
   container-type: inline-size;
 }
+/* A table whose cells need more than 15rem side by side (DataTable's
+   stackEarly) stacks below a 17.5rem column instead: at the default font a
+   phone under about 350px wide drew it past its panel's border, and on /routes
+   at 320px the page scrolled sideways. A container query measures the frame's
+   content box, so 2.5rem of padding makes the frame report 15rem when it is
+   17.5rem wide; the table then takes the padding back, and is as wide as the
+   frame either way. A 375px phone's column (18.8rem or more) keeps the table. */
+.table-stack-early {
+  padding-inline-end: 2.5rem;
+}
+.table-stack-early > .table-stack {
+  width: calc(100% + 2.5rem);
+}
 @container (width < 15rem) {
   .table-stack,
   .table-stack > tbody {
