@@ -211,6 +211,23 @@ describe("hub route search", () => {
     expect(d.headers.get("location")).toBe(`/routes/SFO-ORD?date=${date}`);
   });
 
+  test("a typed ICAO spelling goes to the IATA pair's page", async () => {
+    const k = await page("/routes/?from=ksfo&to=KORD");
+    expect(k.status).toBe(302);
+    expect(k.headers.get("location")).toBe("/routes/SFO-ORD");
+    const p = await page("/routes/?from=KSFO&to=phnl");
+    expect(p.headers.get("location")).toBe("/routes/SFO-HNL");
+  });
+
+  test("the same airport in both boxes says why", async () => {
+    const r = await page(`/routes/?from=${encodeURIComponent("San Francisco")}&to=sfo`);
+    expect(r.status).toBe(200);
+    const text = readableText(await r.text());
+    expect(text).toContain("Both boxes name the same airport (SFO)");
+    const k = readableText(await (await page("/routes/?from=KSFO&to=SFO")).text());
+    expect(k).toContain("same airport (SFO)");
+  });
+
   test("a bad date is dropped, not passed on", async () => {
     const d = await page("/routes/?from=SFO&to=ORD&date=2001-01-01");
     expect(d.headers.get("location")).toBe("/routes/SFO-ORD");

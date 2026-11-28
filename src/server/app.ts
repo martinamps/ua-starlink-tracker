@@ -5498,7 +5498,11 @@ function hubRouteSearch(ctx: RequestContext): Response | Promise<Response> {
     typed: values[side].trim(),
     found: resolveAirport(values[side]),
   }));
-  const [from, to] = sides.map((s) => (s.found.kind === "code" ? s.found.code : null));
+  // The box keeps a typed ICAO spelling (KSFO) for the plan address, but the
+  // board's path is IATA only.
+  const [from, to] = sides.map((s) =>
+    s.found.kind === "code" ? (normalizeAirportCode(s.found.code) ?? s.found.code) : null
+  );
   if (from && to && from !== to) {
     return redirect(`/routes/${from}-${to}${date ? `?${new URLSearchParams({ date })}` : ""}`);
   }
@@ -5518,6 +5522,7 @@ function hubRouteSearch(ctx: RequestContext): Response | Promise<Response> {
   return renderSubPage(ctx, HubRouteBoardPage, "/routes/", hubRouteSearchMeta, {
     values: { ...values, date },
     choices,
+    sameAirport: from && from === to ? from : undefined,
   });
 }
 

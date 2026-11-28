@@ -152,6 +152,7 @@ export default function HubRouteBoardPage({
   board,
   values,
   choices = [],
+  sameAirport,
   reverseLinkable = false,
   pageLinks,
   currentPath,
@@ -161,6 +162,8 @@ export default function HubRouteBoardPage({
   board?: HubRouteBoard;
   values: RouteSearchValues;
   choices?: AirportChoice[];
+  /** Both boxes settled to this one airport. */
+  sameAirport?: string;
   /** The way back has a page of its own. */
   reverseLinkable?: boolean;
   pageLinks?: Link[];
@@ -181,6 +184,12 @@ export default function HubRouteBoardPage({
 
       <section className="relative mx-auto mb-8 w-full max-w-3xl">
         <HubRouteSearchForm values={values} />
+        {sameAirport && (
+          <p className="mt-3 text-sm text-secondary">
+            Both boxes name the same airport ({sameAirport}). Pick a different airport for one of
+            them.
+          </p>
+        )}
         {choices.map((c) => (
           <p key={c.side} className="mt-3 text-sm text-secondary">
             {c.matches.length > 0 ? (
