@@ -3011,29 +3011,7 @@ export function planRoute(
     (it.expected_starlink_hours ?? 0) >= simplerBest + MULTI_STOP_MIN_GAIN_HOURS;
   const kept = enforceBudget ? itineraries.filter(worthTheStops) : itineraries;
 
-  // --- Ranking ---
-  // Primary: COVERAGE RATIO (eSL / totalH) minus a per-stop penalty. The ratio
-  // treats a 1h 92% direct and a 10h 90% multi-stop as equal quality; the
-  // penalty keeps a 96% 2-stop from outranking a 94% 1-stop that is hours shorter.
-  // Tiebreaks: fewer legs, then more expected Starlink hours.
-  const score = (it: Itinerary) =>
-    it.coverage_ratio === null ? null : it.coverage_ratio - STOP_PENALTY * it.via.length;
-  kept.sort((a, b) => {
-    if (a.coverage !== b.coverage) return a.coverage === "full" ? -1 : 1;
-
-    const aR = score(a);
-    const bR = score(b);
-    if (aR !== null && bR !== null) {
-      if (Math.abs(bR - aR) > 0.02) return bR - aR;
-    } else if (aR !== null) return -1;
-    else if (bR !== null) return 1;
-
-    if (a.legs.length !== b.legs.length) return a.legs.length - b.legs.length;
-
-    const aE = a.expected_starlink_hours ?? 0;
-    const bE = b.expected_starlink_hours ?? 0;
-    return bE - aE;
-  });
+  kept.sort(compareItineraries);
 
   // Guarantee: direct flight (if in graph) is always in results, regardless of
   // ratio rank. It's what users expect as the "baseline" option.
@@ -3114,6 +3092,61 @@ const MAX_CONNECTION_HOURS = 6;
 const FRONTIER_LIMIT = 600;
 const MULTI_STOP_MIN_GAIN_HOURS = 1.0;
 const STOP_PENALTY = 0.04;
+// Width of one ranking band: options whose scores share a band count as tied.
+const SCORE_BAND = 0.02;
+
+/**
+ * Rank score: coverage ratio minus a per-stop penalty. The ratio treats a 1h
+ * 92% direct and a 10h 90% multi-stop as equal quality; the penalty keeps a
+ * 96% 2-stop from outranking a 94% 1-stop that is hours shorter.
+ */
+const rankScore = (it: Itinerary) =>
+  it.coverage_ratio === null ? null : it.coverage_ratio - STOP_PENALTY * it.via.length;
+
+// The epsilon absorbs float error: 0.06 / 0.02 is 2.9999999999999996.
+function scoreBand(it: Itinerary): number | null {
+  const score = rankScore(it);
+  return score === null ? null : Math.floor(score / SCORE_BAND + 1e-9);
+}
+
+const itineraryKey = (it: Itinerary) =>
+  `${it.coverage} ${it.legs.map((leg) => `${leg.route}:${leg.flight_number}`).join(" ")}`;
+
+/**
+ * The planner's final order. Full coverage first, then score band, then fewer
+ * legs, then more expected Starlink hours, then the exact score, then the legs
+ * themselves. Every step is a key of the itinerary alone, so this is a total
+ * order: two options rank the same way whatever else was weighed. It replaces
+ * a pairwise "within 0.02 is tied" test, which is not transitive: with three
+ * near-equal options, which one came third depended on the rest of the pool.
+ * Two options more than one band apart keep the order their scores give.
+ */
+export function compareItineraries(a: Itinerary, b: Itinerary): number {
+  if (a.coverage !== b.coverage) return a.coverage === "full" ? -1 : 1;
+
+  const aB = scoreBand(a);
+  const bB = scoreBand(b);
+  if (aB !== bB) {
+    if (aB === null) return 1;
+    if (bB === null) return -1;
+    return bB - aB;
+  }
+
+  if (a.legs.length !== b.legs.length) return a.legs.length - b.legs.length;
+
+  const aE = a.expected_starlink_hours ?? 0;
+  const bE = b.expected_starlink_hours ?? 0;
+  if (aE !== bE) return bE - aE;
+
+  const aR = rankScore(a) ?? Number.NEGATIVE_INFINITY;
+  const bR = rankScore(b) ?? Number.NEGATIVE_INFINITY;
+  if (aR !== bR) return bR > aR ? 1 : -1;
+
+  const aK = itineraryKey(a);
+  const bK = itineraryKey(b);
+  return aK < bK ? -1 : aK > bK ? 1 : 0;
+}
+
 // Block-time estimate when no flight has been observed on a pair: cruise at
 // ~480 mph plus taxi/climb overhead.
 const CRUISE_MPH = 480;
