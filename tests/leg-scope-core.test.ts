@@ -122,6 +122,13 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
       addFlight(db, tail, "UA9001", from, utc(at), { arrivalAirport: to });
     }
 
+    // UA9003 out of West Palm Beach, stored under DJT (its code since 18 Aug
+    // 2026), and a stale FR24 row for the return still under PBI.
+    addPlane(db, "N3301", "Starlink");
+    addFlight(db, "N3301", "UA9003", "DJT", utc("2027-06-09T13:00:00Z"), { arrivalAirport: "EWR" });
+    negativeTail(db, "N3302");
+    addFlight(db, "N3302", "UA9003", "EWR", utc("2027-06-09T19:00:00Z"), { arrivalAirport: "PBI" });
+
     // QR702 on local 2027-03-06: DOH→CPH (01:00 AST), CPH→DOH (15:00 CET),
     // JFK→DOH (20:00 EST, next UTC day).
     addQatarRow(db, "QR702", utc("2027-03-05T22:00:00Z"), "Starlink", {
@@ -171,6 +178,25 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
         hasStarlink: false,
       },
     ]);
+  });
+
+  test("a leg asked under the retired PBI answers exactly as one under DJT", async () => {
+    const parsed = (o: string | null, d: string | null) => parseLegQuery(o, d).leg;
+    for (const [asked, current] of [
+      [parsed("PBI", null), parsed("DJT", null)],
+      [parsed("kpbi", "EWR"), parsed("DJT", "EWR")],
+      [parsed("EWR", "PBI"), parsed("EWR", "DJT")],
+    ] as const) {
+      expect(asked).toEqual(current);
+      expect(await ua("UA9003", asked)).toEqual(await ua("UA9003", current));
+    }
+    const out = await ua("UA9003", parsed("PBI", null));
+    expect(legOf(out)?.match).toBe("exact");
+    expect(out.kind).toBe("scheduled");
+    // The return row still carries PBI; a DJT ask meets it all the same.
+    const back = await ua("UA9003", parsed("EWR", "DJT"));
+    expect(back.kind).toBe("scheduled_no");
+    expect(legOf(back)?.match).toBe("exact");
   });
 
   test("DEN→DRO is a firm no instead of the sibling leg's yes", async () => {
@@ -554,6 +580,14 @@ describe("parseLegQuery / normalizeAirportCode", () => {
     expect(parseLegQuery(" sfo ", null)).toEqual({ leg: { origin: "SFO" } });
     expect(parseLegQuery("KSFO", "PHNL")).toEqual({ leg: { origin: "SFO", destination: "HNL" } });
     expect(normalizeAirportCode("PANC")).toBe("ANC");
+    expect(normalizeAirportCode("pbi")).toBe("DJT");
+    expect(normalizeAirportCode("KPBI")).toBe("DJT");
+    expect(parseLegQuery("PBI", "SFO")).toEqual({ leg: { origin: "DJT", destination: "SFO" } });
+    expect(parseLegQuery("PBI", "DJT").unscoped).toEqual({
+      reason: "same_airport",
+      origin: "DJT",
+      destination: "DJT",
+    });
     expect(normalizeAirportCode("PGUM")).toBe("GUM");
   });
 

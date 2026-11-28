@@ -67,6 +67,7 @@ import {
   predictLegOrFlight,
 } from "../scripts/starlink-predictor";
 import { airportCoords } from "../utils/airport-geo";
+import { currentAirportCode } from "../utils/airport-renames";
 import {
   AIRPORT_TZ,
   type DatedLeg,
@@ -1727,14 +1728,18 @@ export interface LegResolution {
  * Canonical IATA for a leg endpoint, or null. 4-letter K/P codes are the
  * US/Alaska/Hawaii/Pacific ICAO forms (KSFO, PANC, PHNL, PGUM) and are only
  * mapped when the result is an airport we know, so an arbitrary 4-letter
- * string can't become a real code. Request params, our rows and FR24
- * segments all pass through this, so both sides compare identically.
+ * string can't become a real code. A retired code reads as its successor
+ * (PBI is DJT), so an ask under either code meets rows stored under either.
+ * Request params, our rows and FR24 segments all pass through this, so both
+ * sides compare identically.
  */
 export function normalizeAirportCode(raw: string | null | undefined): string | null {
   if (typeof raw !== "string") return null;
   const code = raw.trim().toUpperCase();
-  if (/^[A-Z]{3}$/.test(code)) return code;
-  if (/^[KP][A-Z]{3}$/.test(code) && AIRPORT_TZ[code.slice(1)]) return code.slice(1);
+  if (/^[A-Z]{3}$/.test(code)) return currentAirportCode(code);
+  if (/^[KP][A-Z]{3}$/.test(code) && AIRPORT_TZ[code.slice(1)]) {
+    return currentAirportCode(code.slice(1));
+  }
   return null;
 }
 
