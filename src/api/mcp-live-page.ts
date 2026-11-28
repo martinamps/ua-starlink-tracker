@@ -21,6 +21,7 @@ import {
 import { type AirlineConfig, type SiteConfig, siteForAirline } from "../airlines/registry";
 import type { ScopedReader } from "../database/reader";
 import { ROUTE_AIRPORT_RE } from "../database/sql/fragments";
+import { routePlannerPath } from "../utils/airport-renames";
 import { airportTimezone, flightDateWindow, isRealIsoDate } from "../utils/airport-tz";
 
 const MCP_UTM_SOURCE = "mcp";
@@ -82,7 +83,7 @@ export function routeLivePage(
   if (!reader.routeHasData(origin, destination) || !reader.routeIsRecent(origin, destination)) {
     return null;
   }
-  return { kind: "route", url: pageUrl(site, `/route-planner/${origin}/${destination}`) };
+  return { kind: "route", url: pageUrl(site, routePlannerPath(origin, destination)) };
 }
 
 /**

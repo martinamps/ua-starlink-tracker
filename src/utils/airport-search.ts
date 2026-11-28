@@ -9,6 +9,7 @@
  */
 import { PLACE_ALIASES } from "./airport-aliases";
 import { AIRPORT_NAMES, airportPlaceName } from "./airport-names";
+import { currentAirportCode, formerAirportCodes, isRetiredAirportCode } from "./airport-renames";
 
 export interface AirportMatch {
   code: string;
@@ -17,6 +18,8 @@ export interface AirportMatch {
 }
 
 interface Row extends AirportMatch {
+  /** Codes it went by before (DJT's PBI): typed, they find it. */
+  former: string[];
   /**
    * The folded name in each spelling a visitor may type, for a whole-phrase
    * prefix ("new y" -> "new york"; "saint l" and "st l" -> "st louis").
@@ -61,7 +64,8 @@ function spellings(phrase: string): string[] {
 let rows: Row[] | null = null;
 function table(): Row[] {
   if (rows) return rows;
-  const codes = Object.keys(AIRPORT_NAMES);
+  // A retired code is no row of its own: its airport answers for it.
+  const codes = Object.keys(AIRPORT_NAMES).filter((code) => !isRetiredAirportCode(code));
   const sharing = new Map<string, string[]>();
   for (const code of codes) {
     const name = airportPlaceName(code) as string;
@@ -72,12 +76,18 @@ function table(): Row[] {
     const phrases = spellings(foldPlace(name));
     // "O'Hare" answers to "ohare" and to "hare".
     const apart = spellings(foldPlace(name.replace(/'/g, " ")));
-    // One field under two codes (West Palm Beach's DJT and PBI) would be two
-    // rows that read alike: each names the other.
+    // One field under two codes in use would be two rows that read alike:
+    // each names the other. A renamed one says what it was.
     const twins = (sharing.get(name) ?? []).filter((c) => c !== code);
+    const former = formerAirportCodes(code);
+    const note = [
+      ...(twins.length > 0 ? [`also ${twins.join(", ")}`] : []),
+      ...(former.length > 0 ? [`was ${former.join(", ")}`] : []),
+    ];
     return {
       code,
-      name: twins.length > 0 ? `${name} (also ${twins.join(", ")})` : name,
+      former,
+      name: note.length > 0 ? `${name} (${note.join("; ")})` : name,
       phrases,
       squashed: phrases.map((p) => p.replace(/ /g, "")),
       words: [...new Set([...phrases, ...apart].join(" ").split(" "))],
@@ -123,6 +133,12 @@ function tableCode(text: string): string | null {
   return null;
 }
 
+/** The table's code for this text, under the airport's code now: "PBI" is DJT. */
+function currentTableCode(text: string): string | null {
+  const code = tableCode(text);
+  return code ? currentAirportCode(code) : null;
+}
+
 /** Text this short is not closed up: "san d" must not find Sandusky. */
 const SQUASH_MIN = 6;
 
@@ -149,7 +165,7 @@ export function searchAirports(
   const q = foldPlace(query);
   if (!q) return { matches: [], total: 0 };
   const tokens = q.split(" ");
-  const exact = tableCode(query);
+  const exact = currentTableCode(query);
   const codePrefix = tokens.length === 1 && q.length <= 3 ? q.toUpperCase() : null;
   const squash = q.replace(/ /g, "");
   const closedUp = squash.length >= SQUASH_MIN ? squash : null;
@@ -169,7 +185,8 @@ export function searchAirports(
         row.words.some((w) => w.startsWith(closedUp)))
     )
       rank = 3;
-    else if (codePrefix && row.code.startsWith(codePrefix)) rank = 4;
+    else if (codePrefix && [row.code, ...row.former].some((c) => c.startsWith(codePrefix)))
+      rank = 4;
     if (rank >= 0) ranked.push({ rank, row });
   }
   const place = (code: string) => {
@@ -199,7 +216,8 @@ export type AirportResolution =
  * What a box's text means when the form is sent. A code is read first and
  * exactly as before names existed: three letters the table holds, or a K/P
  * ICAO spelling, go through untouched (the ICAO form as typed, since the API
- * reads it). Other text is a name: one match is that airport, several are a
+ * reads it), except a retired code, which goes as the airport's code now
+ * (PBI as DJT). Other text is a name: one match is that airport, several are a
  * choice, and a place's other name that covers several airports is always a
  * choice. Three letters that match nothing still go through as a code, since
  * the data may hold an airport this table lacks; the plan address refuses
@@ -211,6 +229,10 @@ export function resolveAirport(text: string, prefer: readonly string[] = []): Ai
   const typed = text.trim();
   const upper = typed.toUpperCase();
   const code = tableCode(typed);
+  if (code && isRetiredAirportCode(code)) {
+    const now = currentAirportCode(code);
+    return { kind: "code", code: now, name: table().find((r) => r.code === now)?.name ?? null };
+  }
   if (code) return { kind: "code", code: upper, name: airportPlaceName(code) };
   const { matches, total } = searchAirports(typed, 8, prefer);
   if (total === 1) return { kind: "code", code: matches[0].code, name: matches[0].name };
