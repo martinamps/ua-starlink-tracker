@@ -116,7 +116,6 @@ import {
   modHoldSql,
   rowEvidence,
   settledNegativeJoin,
-  verifiedEquippedSql,
 } from "./sql/equipped";
 
 import {
@@ -2181,8 +2180,7 @@ export function getFlightAssignments(
      ${settledNegativeJoin("_neg", "sp.TailNumber", "sp.airline")}
      WHERE uf.flight_number IN (${ph})
        AND uf.departure_time >= ? AND uf.departure_time < ?
-       AND NOT (sp.verified_wifi IS NULL AND _neg.tail_number IS NULL
-         AND ${modHoldSql("sp.TailNumber", "sp.airline")})`,
+       AND ${notModHeldSql("sp", "_neg")}`,
     airline,
     "uf",
     [...flightNumberVariants, startOfDay, endOfDay]
@@ -2370,33 +2368,51 @@ export function getServedRoutePairs(db: Database, airline?: AirlineFilter): Set<
   return pairs;
 }
 
-export interface ConfirmedEdge {
+/** A schedule row whose listed tail is not under a mod hold while still
+ * unverified; getFlightAssignments drops the rest, so they never answer. */
+function notModHeldSql(sp: string, neg: string): string {
+  return `NOT (${sp}.verified_wifi IS NULL AND ${neg}.tail_number IS NULL
+         AND ${modHoldSql(`${sp}.TailNumber`, `${sp}.airline`)})`;
+}
+
+export interface StarlinkEdgeRow {
   flight_number: string;
   departure_airport: string;
   arrival_airport: string;
   departure_time: number;
+  last_updated: number;
   fleet: string;
+  /** The evidence columns rowEvidence reads, as getFlightAssignments returns them. */
+  verified_wifi: string | null;
+  settled_negative: number;
 }
 
-/** Bounds are the WIDENED window (flightDateWindow queryStart/queryEnd) —
+/** Every schedule row on a listed tail, the rows getFlightAssignments reads,
+ * so a caller can keep each departure's newest row (newestPerDeparture) before
+ * asking rowEvidence whether it is verified: an older row on a verified tail
+ * is a swap.
+ * Bounds are the WIDENED window (flightDateWindow queryStart/queryEnd) —
  * callers must filter rows by the departure airport's local date. */
-export function getConfirmedStarlinkEdges(
+export function getStarlinkEdgeRows(
   db: Database,
   queryStart: number,
   queryEnd: number,
   airline?: AirlineFilter
-): ConfirmedEdge[] {
+): StarlinkEdgeRow[] {
   const q = withAirline(
-    `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport, uf.departure_time, sp.fleet
+    `SELECT uf.flight_number, uf.departure_airport, uf.arrival_airport, uf.departure_time,
+       uf.last_updated, sp.fleet, sp.verified_wifi,
+       CASE WHEN _neg.tail_number IS NOT NULL THEN 1 ELSE 0 END AS settled_negative
      FROM upcoming_flights uf
      JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-     WHERE ${verifiedEquippedSql("sp")}
-       AND uf.departure_time >= ? AND uf.departure_time < ?`,
+     ${settledNegativeJoin("_neg", "sp.TailNumber", "sp.airline")}
+     WHERE uf.departure_time >= ? AND uf.departure_time < ?
+       AND ${notModHeldSql("sp", "_neg")}`,
     airline,
     "uf",
     [queryStart, queryEnd]
   );
-  return db.query(q.sql).all(...q.params) as ConfirmedEdge[];
+  return db.query(q.sql).all(...q.params) as StarlinkEdgeRow[];
 }
 
 export interface SubfleetPenetration {

@@ -63,11 +63,14 @@ import type {
   FleetRosterEntry,
   GuideMark,
   VerificationObservation as Observation,
+  StarlinkEdgeRow,
   SubfleetPenetration,
   TypeProgress,
 } from "../database/database";
+import { newestPerDeparture } from "../database/newest-row";
 import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
 import type { RouteFlightLeg } from "../database/route-flights";
+import { rowEvidence } from "../database/sql/equipped";
 import {
   airportCoords,
   airportDistanceMiles,
@@ -2320,12 +2323,15 @@ interface EdgeOption {
 type RouteGraph = Map<string, Map<string, EdgeOption[]>>;
 
 /**
- * Same-day assignments on VERIFIED-Starlink tails (verified_wifi = 'Starlink',
- * not NULL — spreadsheet-listed-but-unverified planes don't get the confirmed
- * tier), keyed flight|dep|arr. Only valid for a date our upcoming_flights
- * snapshot covers; outside it the map is simply empty. The flight is its slot
- * key: one departure is stored as SKW5771 on one row and OO5771 on another,
- * and the graph's option for it may come from either.
+ * Same-day departures whose newest row is on a VERIFIED-Starlink tail
+ * (verified_wifi = 'Starlink', not NULL — spreadsheet-listed-but-unverified
+ * planes don't get the confirmed tier), keyed flight|dep|arr. Newest per
+ * departure as the flight check reads it: after a swap the old tail's row
+ * lingers until that tail is read again, and it must not confirm the leg.
+ * Only valid for a date our upcoming_flights snapshot covers; outside it the
+ * map is simply empty. The flight is its slot key: one departure is stored as
+ * SKW5771 on one row and OO5771 on another, and the graph's option for it may
+ * come from either.
  */
 function confirmedEdgesOn(reader: ScopedReader, date: string): Map<string, "express" | "mainline"> {
   const out = new Map<string, "express" | "mainline">();
@@ -2334,20 +2340,41 @@ function confirmedEdgesOn(reader: ScopedReader, date: string): Map<string, "expr
   // Match rows on the departure airport's LOCAL date over the widened bounds,
   // same as check-flight core — a strict UTC day window drops verified evening
   // departures (SFO 6pm = 01:00Z next day) and seeds the wrong day's tail.
-  for (const r of reader.getConfirmedStarlinkEdges(window.queryStart, window.queryEnd)) {
+  const rows = reader.getStarlinkEdgeRows(window.queryStart, window.queryEnd);
+  // Only a verified row on the date can confirm, so only its departure time's
+  // rows are keyed for the newest-row rule; the rest are never read.
+  const confirmable = new Set<StarlinkEdgeRow>();
+  const times = new Set<number>();
+  for (const r of rows) {
+    if (rowEvidence(r) !== "verified") continue;
     if (!matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)) {
       continue;
     }
+    confirmable.add(r);
+    times.add(r.departure_time);
+  }
+  const keyed = rows
+    .filter((r) => times.has(r.departure_time))
+    .map((row) => ({
+      row,
+      slot: slotFlightKey(row.flight_number, reader.scope) ?? row.flight_number,
+      departure_time: row.departure_time,
+      last_updated: row.last_updated,
+    }));
+  for (const { row, slot } of newestPerDeparture(keyed, (k) => `${k.slot}|${k.departure_time}`)) {
+    if (!confirmable.has(row)) continue;
     out.set(
-      slotEdgeKey(reader, r.flight_number, r.departure_airport, r.arrival_airport),
-      r.fleet === "mainline" ? "mainline" : "express"
+      edgeKey(slot, row.departure_airport, row.arrival_airport),
+      row.fleet === "mainline" ? "mainline" : "express"
     );
   }
   return out;
 }
 
+const edgeKey = (slot: string, dep: string, arr: string) => `${slot}|${dep}|${arr}`;
+
 const slotEdgeKey = (reader: ScopedReader, flight: string, dep: string, arr: string) =>
-  `${slotFlightKey(flight, reader.scope) ?? flight}|${dep}|${arr}`;
+  edgeKey(slotFlightKey(flight, reader.scope) ?? flight, dep, arr);
 
 const nextIsoDate = (date: string) =>
   new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
