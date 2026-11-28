@@ -44,3 +44,45 @@ export function flightAnswerKey(facts: FlightFacts): string {
     quiet: !!facts.notObservedSince,
   });
 }
+
+/**
+ * How much a key change matters to someone deciding on the flight, lower for
+ * more, or null when it doesn't change the answer at all:
+ * 0 the next plane flips between Starlink and not (yes or likely ↔ no);
+ * 1 the firm lead otherwise changes its word or Wi-Fi (verified ↔ likely, a
+ *   lead that appears or goes);
+ * 2 the usual answer or its band;
+ * 3 the quiet note alone.
+ * A change of leg or route alone is null: on a number that flies two legs a
+ * day the page opens on the other one every few hours, which moves the
+ * sitemap date (the title names the leg) but tells nobody anything new about
+ * Starlink. Keys that don't parse are null: never news by accident.
+ */
+export function answerTurn(before: string, after: string): 0 | 1 | 2 | 3 | null {
+  let was: AnswerKeyShape;
+  let is: AnswerKeyShape;
+  try {
+    was = JSON.parse(before);
+    is = JSON.parse(after);
+  } catch {
+    return null;
+  }
+  if (!was || !is || typeof was !== "object" || typeof is !== "object") return null;
+  const lead = (k: AnswerKeyShape) => (Array.isArray(k.firm) ? k.firm.slice(0, 2) : null);
+  const side = (k: AnswerKeyShape) => {
+    const word = lead(k)?.[0];
+    return word === "yes" || word === "likely" ? "starlink" : word === "no" ? "not" : null;
+  };
+  const [a, b] = [side(was), side(is)];
+  if (a && b && a !== b) return 0;
+  if (JSON.stringify(lead(was)) !== JSON.stringify(lead(is))) return 1;
+  if (JSON.stringify(was.usual ?? null) !== JSON.stringify(is.usual ?? null)) return 2;
+  if (Boolean(was.quiet) !== Boolean(is.quiet)) return 3;
+  return null;
+}
+
+interface AnswerKeyShape {
+  firm?: unknown[] | null;
+  usual?: unknown;
+  quiet?: unknown;
+}

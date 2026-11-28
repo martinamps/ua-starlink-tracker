@@ -26,7 +26,12 @@ import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetProgressJob } from "./src/scripts/fleet-progress";
 import { startFleetProgressTailsJob } from "./src/scripts/fleet-progress-tails";
 import { startFleetSync } from "./src/scripts/fleet-sync";
-import { activateIndexNow, ensureIndexNowKey, indexNowOn } from "./src/scripts/indexnow";
+import {
+  activateIndexNow,
+  announceFlightPages,
+  ensureIndexNowKey,
+  indexNowOn,
+} from "./src/scripts/indexnow";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
 import { startRouteBacktestJob } from "./src/scripts/route-backtest";
 import { startSecAnchorsJob } from "./src/scripts/sec-anchors";
@@ -170,7 +175,8 @@ if (JOBS_ENABLED) {
   // Each flight page's answer key, rebuilt with the page's own reads: the
   // sitemap dates a flight by when its key last changed, so the date moves
   // when the page says something new, not on every schedule refresh. A pass
-  // took ~17 s for 2,500 flights on a stand-in, in batches that yield.
+  // took ~17 s for 2,500 flights on a stand-in, in batches that yield. The
+  // pages whose answer turned go to IndexNow, capped (src/scripts/indexnow.ts).
   track(
     startJob({
       name: "flight_answer_watch",
@@ -178,7 +184,12 @@ if (JOBS_ENABLED) {
       initialDelayMs: 5 * 60 * 1000,
       run: async () => {
         for (const r of await app.recordFlightAnswers()) {
-          info(`Flight answers ${r.airline}: ${r.changed} changed of ${r.seen}`);
+          info(
+            `Flight answers ${r.airline}: ${r.changed} changed of ${r.seen}, ${r.turned.length} turned`
+          );
+          // Only answers that turned, never a first sighting or a new leg:
+          // a no-op unless the IndexNow submitter below is active.
+          if (r.turned.length > 0) await announceFlightPages(r.airline, r.turned);
         }
       },
     })

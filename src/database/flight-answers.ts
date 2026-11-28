@@ -30,15 +30,18 @@ export const FLIGHT_ANSWERS_DDL = `
 
 /**
  * Stores each flight's current answer key; returns how many keys differed
- * from the stored one (a first sighting is not a change). One transaction, so
- * a run cut short leaves either all of a batch or none of it.
+ * from the stored one (a first sighting is not a change), and the flights
+ * whose answer itself turned by `turnOf` (answerTurn: null for no turn,
+ * lower for more telling), most telling first: what IndexNow may be told. One transaction, so a run cut short leaves either all of a
+ * batch or none of it.
  */
 export function recordFlightAnswers(
   db: Database,
   airline: AirlineCode,
   answers: Array<{ flight_number: string; answer: string }>,
-  nowSec: number
-): { seen: number; changed: number } {
+  nowSec: number,
+  turnOf: (before: string, after: string) => number | null = () => null
+): { seen: number; changed: number; turned: string[] } {
   const stored = new Map(
     (
       db
@@ -58,6 +61,7 @@ export function recordFlightAnswers(
     "UPDATE flight_page_answers SET seen_at = ? WHERE airline = ? AND flight_number = ?"
   );
   let n = 0;
+  const turns: Array<{ flight_number: string; turn: number }> = [];
   db.transaction(() => {
     for (const { flight_number, answer } of answers) {
       const before = stored.get(flight_number);
@@ -65,10 +69,21 @@ export function recordFlightAnswers(
       else if (before !== answer) {
         changed.run(answer, nowSec, nowSec, airline, flight_number);
         n++;
+        const turn = turnOf(before, answer);
+        if (turn !== null) turns.push({ flight_number, turn });
       } else same.run(nowSec, airline, flight_number);
     }
   })();
-  return { seen: answers.length, changed: n };
+  // Within a rank, an order that changes every hour: a fixed one (by flight
+  // number) would put the same flights first under every capped send.
+  const hour = Math.floor(nowSec / 3600);
+  const spin = (fn: string) => {
+    let h = 2166136261 ^ hour;
+    for (let i = 0; i < fn.length; i++) h = Math.imul(h ^ fn.charCodeAt(i), 16777619);
+    return h >>> 0;
+  };
+  turns.sort((a, b) => a.turn - b.turn || spin(a.flight_number) - spin(b.flight_number));
+  return { seen: answers.length, changed: n, turned: turns.map((t) => t.flight_number) };
 }
 
 /** Last recorded answer change per flight number (unix sec); flights with

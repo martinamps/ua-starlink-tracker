@@ -3,11 +3,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { flightAnswerKey } from "../src/components/check-flight/answer-key";
+import { answerTurn, flightAnswerKey } from "../src/components/check-flight/answer-key";
 import type { AssignedDeparture, FlightFacts } from "../src/components/check-flight/types";
 import { getSitemapFlights } from "../src/database/database";
+import { recordFlightAnswers } from "../src/database/flight-answers";
 import { createApp } from "../src/server/app";
-import { TEST_DB } from "./helpers";
+import { TEST_DB, makeFreshDb } from "./helpers";
 
 const assigned: AssignedDeparture = {
   hasStarlink: true,
@@ -89,6 +90,101 @@ describe("a flight page's answer key", () => {
   });
 });
 
+describe("whether a changed key turned the answer", () => {
+  const base = flightAnswerKey(facts());
+  const key = (over: Partial<FlightFacts>) => flightAnswerKey(facts(over));
+
+  test("the next plane flipping between Starlink and not is the most telling", () => {
+    const no = key({ nextAssigned: { ...assigned, hasStarlink: false, wifi: "non-Starlink" } });
+    expect(answerTurn(base, no)).toBe(0);
+    expect(answerTurn(no, base)).toBe(0);
+  });
+
+  test("then the firm lead's other turns, the usual band, and the quiet note alone", () => {
+    const likely = key({ nextAssigned: { ...assigned, verified: false } });
+    const none = key({ nextAssigned: null });
+    const band = key({
+      prediction: { probability: 0.8, n_observations: 40, confidence: "medium" },
+    });
+    const quiet = key({ notObservedSince: 1_799_000_000 });
+    expect(answerTurn(base, likely)).toBe(1);
+    expect(answerTurn(base, none)).toBe(1);
+    expect(answerTurn(none, base)).toBe(1);
+    expect(answerTurn(base, band)).toBe(2);
+    expect(answerTurn(base, quiet)).toBe(3);
+    const ranks = [answerTurn(base, likely), answerTurn(base, band), answerTurn(base, quiet)];
+    expect(ranks).toEqual([...ranks].sort());
+  });
+
+  test("a new leg or route alone, or the same key, turns nothing", () => {
+    const leg = key({ nextAssigned: { ...assigned, origin: "DEN" } });
+    const route = key({ routes: [{ ...facts().routes[0], departure_airport: "LAX" }] });
+    expect(leg).not.toBe(base);
+    expect(answerTurn(base, leg)).toBeNull();
+    expect(answerTurn(base, route)).toBeNull();
+    expect(answerTurn(base, base)).toBeNull();
+  });
+
+  test("keys that are not keys never pass for news", () => {
+    for (const [a, b] of [
+      ["", base],
+      [base, "not json"],
+      ["null", base],
+      ["1", "2"],
+      ["{}", "{}"],
+    ]) {
+      expect(answerTurn(a, b)).toBeNull();
+    }
+  });
+});
+
+describe("recording which answers turned", () => {
+  const db = makeFreshDb();
+  afterAll(() => db.close());
+  const yes = flightAnswerKey(facts());
+  const no = flightAnswerKey(
+    facts({ nextAssigned: { ...assigned, hasStarlink: false, wifi: "non-Starlink" } })
+  );
+  const quiet = flightAnswerKey(facts({ notObservedSince: 1_799_000_000 }));
+  const leg = flightAnswerKey(facts({ nextAssigned: { ...assigned, origin: "DEN" } }));
+
+  test("a first sighting, the same answer or a new leg is not handed on; a turn is, most telling first", () => {
+    const first = recordFlightAnswers(
+      db,
+      "UA",
+      [
+        { flight_number: "UA1", answer: yes },
+        { flight_number: "UA2", answer: yes },
+        { flight_number: "UA3", answer: yes },
+        { flight_number: "UA4", answer: yes },
+      ],
+      1_800_000_000,
+      answerTurn
+    );
+    expect(first.turned).toEqual([]);
+    const next = recordFlightAnswers(
+      db,
+      "UA",
+      [
+        { flight_number: "UA1", answer: quiet },
+        { flight_number: "UA2", answer: no },
+        { flight_number: "UA3", answer: yes },
+        { flight_number: "UA4", answer: leg },
+      ],
+      1_800_003_600,
+      answerTurn
+    );
+    expect(next.changed).toBe(3);
+    expect(next.turned).toEqual(["UA2", "UA1"]);
+  });
+
+  test("without a rule for turns, nothing is handed on", () => {
+    const r = recordFlightAnswers(db, "UA", [{ flight_number: "UA2", answer: yes }], 1_800_007_200);
+    expect(r.changed).toBe(1);
+    expect(r.turned).toEqual([]);
+  });
+});
+
 describe("recording answers on a copy of the snapshot", () => {
   const dir = mkdtempSync(join(tmpdir(), "flight-answers-"));
   const path = join(dir, "db.sqlite");
@@ -109,6 +205,7 @@ describe("recording answers on a copy of the snapshot", () => {
     expect(ua?.changed).toBe(0);
     const second = await app.recordFlightAnswers();
     expect(second.find((r) => r.airline === "UA")?.changed).toBe(0);
+    for (const r of [...first, ...second]) expect(r.turned).toEqual([]);
     const after = getSitemapFlights(db, "UA").map((f) => [f.flight_number, f.changed_at]);
     expect(after).toEqual(before);
   });
