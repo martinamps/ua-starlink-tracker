@@ -1517,6 +1517,28 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     ],
   },
   {
+    slug: "jetblue",
+    name: "JetBlue Airways",
+    shortName: "JetBlue",
+    iata: "B6",
+    status: "not_starlink",
+    negative: "chose",
+    statusLabel: "Chose Amazon Leo",
+    headline: "Does JetBlue Have Starlink? No — It Chose Amazon Leo",
+    insteadOf: "Amazon Leo (LEO satellites) from 2027, upgrading its free Fly-Fi Wi-Fi",
+    summary: "JetBlue chose Amazon Leo to upgrade its free Fly-Fi Wi-Fi, starting in 2027.",
+    facts: [
+      {
+        fact: "JetBlue will be the first airline to use Amazon's low-Earth-orbit satellites (then called Project Kuiper), enhancing its free Fly-Fi service starting in 2027.",
+        asOf: "2025-09-04",
+        source: {
+          label: "Amazon announcement",
+          url: "https://www.aboutamazon.com/news/innovation-at-amazon/jetblue-amazon-project-kuiper-in-flight-wifi-partnership",
+        },
+      },
+    ],
+  },
+  {
     slug: "latam",
     name: "LATAM Airlines",
     shortName: "LATAM",
