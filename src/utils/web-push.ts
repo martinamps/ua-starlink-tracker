@@ -183,9 +183,23 @@ export async function sendPush(
   push: PushRequest,
   opts: { fetch?: typeof fetch; nowSec?: number; timeoutMs?: number } = {}
 ): Promise<PushResult> {
+  return (await sendPushStatus(keys, subject, push, opts)).result;
+}
+
+/**
+ * sendPush, with the push service's status beside the result: null when no
+ * answer came (a timeout, a refused connection). A caller that must tell a
+ * passing failure from a refusal reads it (isTransientPush).
+ */
+export async function sendPushStatus(
+  keys: VapidKeys,
+  subject: string,
+  push: PushRequest,
+  opts: { fetch?: typeof fetch; nowSec?: number; timeoutMs?: number } = {}
+): Promise<{ result: PushResult; status: number | null }> {
   const doFetch = opts.fetch ?? fetch;
   const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
-  if (!isPushEndpoint(push.endpoint)) return "gone";
+  if (!isPushEndpoint(push.endpoint)) return { result: "gone", status: null };
   try {
     const body = await encryptPayload(push.keys, enc.encode(JSON.stringify(push.payload)));
     const res = await doFetch(push.endpoint, {
@@ -202,9 +216,19 @@ export async function sendPush(
       },
       body,
     });
-    if (res.status === 404 || res.status === 410) return "gone";
-    return res.status >= 200 && res.status < 300 ? "sent" : "failed";
+    const result: PushResult =
+      res.status === 404 || res.status === 410
+        ? "gone"
+        : res.status >= 200 && res.status < 300
+          ? "sent"
+          : "failed";
+    return { result, status: res.status };
   } catch {
-    return "failed";
+    return { result: "failed", status: null };
   }
 }
+
+/** A failure worth one more try: no answer, the service's own trouble, or
+ * its "slow down". Any other 4xx is a refusal of this message or endpoint. */
+export const isTransientPush = (status: number | null): boolean =>
+  status === null || status === 429 || status >= 500;

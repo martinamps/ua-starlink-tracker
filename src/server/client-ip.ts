@@ -1,4 +1,4 @@
-import { PrefixSet, parseCidr } from "../utils/ip-prefix";
+import { PrefixSet, ipToBigint, parseCidr } from "../utils/ip-prefix";
 
 /**
  * The caller's address. Cloudflare sets cf-connecting-ip and refuses a request
@@ -94,4 +94,34 @@ export function cameThroughCloudflare(req: Request, server?: SocketPeer): boolea
   }
   const hop = req.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim();
   return hop ? CLOUDFLARE_RANGES.contains(bareAddress(hop)) : false;
+}
+
+/**
+ * The caller's address as nobody upstream of us can write it, for a cap that
+ * a forged header must not dodge. Through Cloudflare, cf-connecting-ip is
+ * Cloudflare's own word. Otherwise it is the hop that reached our proxy (the
+ * last x-forwarded-for entry, which the proxy writes) or, with no proxy, the
+ * socket peer: a direct caller can name any cf-connecting-ip it likes, but
+ * not the address it connects from. In-process dispatch (tests, IndexNow)
+ * has no socket and goes by the header.
+ */
+export function unforgeableIp(req: Request, server?: SocketPeer): string {
+  if (!server) return clientIp(req);
+  if (cameThroughCloudflare(req, server)) return clientIp(req);
+  const peer = server.requestIP(req)?.address;
+  if (peer === undefined) return "unknown";
+  const p = bareAddress(peer);
+  if (PRIVATE_RANGES.contains(p)) {
+    const hop = req.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim();
+    if (hop) return bareAddress(hop);
+  }
+  return p;
+}
+
+/** One cap bucket per caller: an IPv4 address, or an IPv6 /64, since one
+ * home or host is handed a whole /64 and can walk it. */
+export function capBucket(ip: string): string {
+  const parsed = ipToBigint(bareAddress(ip));
+  if (!parsed) return ip;
+  return parsed.v6 ? `v6:${(parsed.value >> 64n).toString(16)}` : bareAddress(ip);
 }

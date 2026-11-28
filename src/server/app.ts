@@ -354,7 +354,13 @@ import {
 
 import { type NoticeDecider, type NoticeLeg, noticeStore } from "../database/flight-notice";
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
-import { type SocketPeer, cameThroughCloudflare, clientIp, isLocalCaller } from "./client-ip";
+import {
+  type SocketPeer,
+  cameThroughCloudflare,
+  clientIp,
+  isLocalCaller,
+  unforgeableIp,
+} from "./client-ip";
 import { aircraftTypeParam, communityWireFields } from "./community-wire";
 import {
   type Database,
@@ -365,7 +371,7 @@ import {
   tenantScope,
 } from "./context";
 import { type CrawlerDns, createCrawlerVerifier } from "./crawler-verify";
-import { NOTICE_PREFIX, createNoticeHandler } from "./flight-notice";
+import { NOTICE_PREFIX, countNotice, createNoticeHandler } from "./flight-notice";
 import {
   PROBE_SNIPPET,
   StarlinkIpDetector,
@@ -6711,6 +6717,8 @@ export function createApp(
     crawlerDns?: CrawlerDns;
     sharePictures?: Partial<SharePictureLimits>;
     assetArchive?: AssetArchive | null;
+    /** The flight notice's push service, for a tap's confirmation (tests). */
+    noticePush?: { fetch?: typeof fetch; retryMs?: number };
   } = {}
 ): App {
   const archive = opts.assetArchive === undefined ? assetArchive : opts.assetArchive;
@@ -6736,7 +6744,10 @@ export function createApp(
     );
     return shown ? shownNoticeLegs(shown.verdict, shown.dated, q.origin) : null;
   };
-  const notices = noticeStore(db, noticeAnswer);
+  const notices = noticeStore(db, noticeAnswer, {
+    ...opts.noticePush,
+    onResult: countNotice,
+  });
   const notice = createNoticeHandler(notices, noticeFlight);
   const staticFamily: Handler = (ctx) =>
     notice(ctx) ??
@@ -7029,6 +7040,7 @@ export function createApp(
       req,
       url,
       ip,
+      peerIp: url.pathname.startsWith(NOTICE_PREFIX) ? unforgeableIp(req, server) : undefined,
       site,
       tenant,
       reader,

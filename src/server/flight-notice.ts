@@ -11,7 +11,9 @@
  * static directory exactly as before. Subscribing answers only a browser on
  * this host's own pages (fromOurPageInABrowser), for a flight page this host
  * serves. Nothing from the request but the push endpoint, its keys, the
- * flight, the date and the chosen leg is stored, logged or tagged.
+ * flight, the date and the chosen leg is stored, logged or tagged. A
+ * subscribe answers once its confirmation has gone to the browser (or
+ * failed), so the page's button says "on" only for a browser we reached.
  */
 import { clientScriptCode } from "../client/bundle";
 import { MAX_PER_ENDPOINT, type NoticeStore } from "../database/flight-notice";
@@ -23,6 +25,7 @@ import {
 } from "../observability/metrics";
 import { flightDateWindow } from "../utils/airport-tz";
 import { BASE_RESPONSE_HEADERS } from "../utils/constants";
+import { capBucket } from "./client-ip";
 import { type RequestContext, tenantConfig, tenantScope } from "./context";
 import { CACHE, json, methodNotAllowed, text } from "./respond";
 import { fromOurPageInABrowser } from "./share-tap";
@@ -36,8 +39,10 @@ const UNSUBSCRIBE_PATH = "/static/notice/unsubscribe";
 const MAX_BODY = 2048;
 /** The calendar feed's own horizon (flight-answer.ts WATCH_MAX_DAYS_OUT). */
 const MAX_DAYS_OUT = 330;
-/** New subscriptions one address may make in an hour, counted in memory
- * only: the address is never stored. */
+/** New subscriptions one address (an IPv6 /64) may make in an hour, counted
+ * in memory only: the address is never stored. The address is the one the
+ * caller can't write (ctx.peerIp): a cf-connecting-ip sent straight to the
+ * origin doesn't move it. */
 export const SUBSCRIBES_PER_ADDRESS = 20;
 const ADDRESS_WINDOW_MS = 3600 * 1000;
 
@@ -153,7 +158,7 @@ export function createNoticeHandler(
       if (store.unsubscribe(endpoint, pinned.code, fn, d)) countNotice(scope, "unsubscribed");
       return answer(true);
     }
-    if (overAddressCap(ctx.ip, Date.now())) {
+    if (overAddressCap(capBucket(ctx.peerIp ?? ctx.ip), Date.now())) {
       return json({ ok: false }, { status: 429, headers: noStore });
     }
     const keys = body?.keys as { p256dh?: unknown; auth?: unknown } | undefined;
@@ -169,12 +174,18 @@ export function createNoticeHandler(
       },
       Math.floor(Date.now() / 1000)
     );
-    if (result === "stored") {
-      countNotice(scope, "subscribed");
-      return answer(true);
+    // The page shows "on" only for ok: true, which here means the browser
+    // was already following this flight or its confirmation just went
+    // through. Every other answer leaves no row behind.
+    if (result === "confirmed" || result === "already") {
+      if (result === "confirmed") countNotice(scope, "subscribed");
+      return json({ ok: true, tested: result === "confirmed" }, { headers: noStore });
     }
     if (result === "full") {
       return json({ ok: false, limit: MAX_PER_ENDPOINT }, { status: 429, headers: noStore });
+    }
+    if (result === "unreachable") {
+      return json({ ok: false, retry: true }, { status: 503, headers: noStore });
     }
     return answer(false, result === "off" ? 404 : 400);
   }

@@ -15,6 +15,10 @@ export interface RequestContext {
   url: URL;
   /** Server-observed client IP (cf-connecting-ip). */
   ip: string;
+  /** The caller's address as no header of theirs can set it (client-ip.ts
+   * unforgeableIp), for caps a forger must not dodge. Set on the notice
+   * addresses only. */
+  peerIp?: string;
   site: SiteConfig;
   tenant: Tenant;
   reader: ScopedReader;

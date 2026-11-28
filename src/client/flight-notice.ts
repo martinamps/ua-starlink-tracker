@@ -75,17 +75,43 @@ function browserStore(): Store | null {
   }
 }
 
-async function post(path: string, body: unknown): Promise<boolean> {
+interface Answer {
+  ok: boolean;
+  /** The server sent this browser its test notice just now. */
+  tested?: boolean;
+  /** The browser's push service didn't answer; worth a try in a minute. */
+  retry?: boolean;
+}
+
+async function post(path: string, body: unknown): Promise<Answer> {
   try {
     const res = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return res.ok;
+    const got = (await res.json().catch(() => ({}))) as Answer;
+    return {
+      ok: res.ok && got.ok === true,
+      tested: got.tested === true,
+      retry: got.retry === true,
+    };
   } catch {
-    return false;
+    return { ok: false };
   }
+}
+
+/** What the status line says after a subscribe. The server answers only once
+ * the test notice went (or couldn't), so "on" here is a browser it reached. */
+export function subscribeNote(a: Answer): string | undefined {
+  if (a.ok) {
+    return a.tested
+      ? "On. We just sent a test notice to this browser. You'll get another if this flight's aircraft or Starlink answer changes."
+      : undefined;
+  }
+  return a.retry
+    ? "Your browser's notice service didn't answer just now. Try again in a minute, or use the calendar above."
+    : "That didn't work just now. Try again later, or use the calendar above.";
 }
 
 /** Draw the control's state and wire its button; safe to call again after
@@ -152,6 +178,7 @@ export function wireFlightNotice(flight: NoticeFlight): void {
         return;
       }
       await activeWorker(reg);
+      draw("Sending a test notice to this browser…");
       const sub =
         (await reg.pushManager.getSubscription()) ??
         (await reg.pushManager.subscribe({
@@ -159,15 +186,14 @@ export function wireFlightNotice(flight: NoticeFlight): void {
           applicationServerKey: urlKey(key),
         }));
       const json = sub.toJSON();
-      const ok = await post("/static/notice/subscribe", {
+      const answer = await post("/static/notice/subscribe", {
         endpoint: json.endpoint,
         keys: json.keys,
         ...flight,
       });
-      if (ok) setFollowed(store, flight, true);
-      draw(
-        ok ? undefined : "That didn't work just now. Try again later, or use the calendar above."
-      );
+      // Off unless the server kept it: a failed tap leaves no row there.
+      setFollowed(store, flight, answer.ok);
+      draw(subscribeNote(answer));
     } catch {
       draw("That didn't work in this browser. The calendar above still follows the flight.");
     } finally {

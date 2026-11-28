@@ -9,6 +9,7 @@ interface NoticeMessage {
   body?: string;
   url?: string;
   tag?: string;
+  quiet?: boolean;
 }
 
 interface PushLikeEvent extends Event {
@@ -46,13 +47,19 @@ scope.addEventListener("push", (event) => {
   try {
     msg = (e.data?.json() as NoticeMessage) ?? {};
   } catch {}
+  // The confirmation comes quietly: the person is looking at the page that
+  // asked for it. A real change alerts, also when it replaces a notice of
+  // the same flight still on screen (a tag alone would swap it in silently).
+  const quiet = msg.quiet === true;
   e.waitUntil(
     scope.registration.showNotification(msg.title || "Your flight changed", {
       body: msg.body ?? "",
       tag: msg.tag,
       icon: "/apple-touch-icon.png",
       data: { url: ownPage(msg.url) },
-    })
+      silent: quiet,
+      renotify: !quiet && !!msg.tag,
+    } as NotificationOptions & { renotify?: boolean })
   );
 });
 

@@ -9,7 +9,10 @@
  * lookup's resolved legs) queue one notice for a first assignment and one for
  * a swap, never a second for the same state; the sender posts each once,
  * encrypted for that browser; a departed flight's subscriptions go, and so
- * does every subscription of a browser the push service calls gone.
+ * does every subscription of a browser the push service calls gone. A tap is
+ * answered only once its confirmation went to the browser, and leaves no row
+ * when it didn't; the per-address cap goes by the address a caller can't
+ * write, not by a cf-connecting-ip sent straight to the origin.
  */
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -21,6 +24,7 @@ import {
   NOTICE_SWITCH_KEY,
   SWEEP_SEC,
   sendFlightNotices,
+  subscribeNotice,
 } from "../src/database/flight-notice";
 import { COUNTERS, metrics } from "../src/observability/metrics";
 import { createApp } from "../src/server/app";
@@ -48,10 +52,20 @@ const ENDPOINT = "https://fcm.googleapis.com/fcm/send/test-browser-1";
 
 let db: Database;
 let app: ReturnType<typeof createApp>;
+/** The push service a tap's confirmation goes to; each test may swap it. */
+let tapService: ReturnType<typeof pushService>;
 
 beforeEach(() => {
   db = makeFreshDb();
-  app = createApp(db, { assetArchive: null });
+  tapService = pushService();
+  app = createApp(db, {
+    assetArchive: null,
+    noticePush: {
+      fetch: ((url: string, init?: RequestInit) =>
+        tapService.fetch(url, init)) as unknown as typeof fetch,
+      retryMs: 0,
+    },
+  });
 });
 afterEach(() => db.close());
 
@@ -106,8 +120,11 @@ async function open(b: Browser, body: Uint8Array): Promise<Record<string, string
   return JSON.parse(new TextDecoder().decode(plain.slice(0, -1)));
 }
 
-/** A push service that records what it was sent and answers `status`. */
-function pushService(status = 201) {
+/** A push service that records what it was sent and answers `status`, or
+ * each of `status` in turn (the last one again after that); "drop" stands
+ * for no answer at all, as a timeout or refused connection. */
+function pushService(status: number | "drop" | Array<number | "drop"> = 201) {
+  const answers = Array.isArray(status) ? status : [status];
   const calls: Array<{ url: string; body: Uint8Array; headers: Record<string, string> }> = [];
   const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({
@@ -115,10 +132,15 @@ function pushService(status = 201) {
       body: new Uint8Array(init?.body as Uint8Array),
       headers: init?.headers as Record<string, string>,
     });
-    return new Response(null, { status });
+    const answer = answers[Math.min(calls.length - 1, answers.length - 1)];
+    if (answer === "drop") throw new DOMException("The operation timed out.", "TimeoutError");
+    return new Response(null, { status: answer });
   }) as unknown as typeof globalThis.fetch;
   return { calls, fetch };
 }
+
+/** A socket peer as Bun.serve reports it. */
+const peer = (address: string) => ({ requestIP: () => ({ address }) });
 
 const leg = (departure: number, from = "DEN", to = "SFO") => ({
   flight_number: FN,
@@ -141,15 +163,17 @@ function seedPlanes() {
 const subscribe = (
   b: Browser,
   extra: Record<string, unknown> = {},
-  headers = OUR_PAGE,
-  host = UA
+  headers: Record<string, string> = OUR_PAGE,
+  host = UA,
+  server?: ReturnType<typeof peer>
 ) =>
   app.dispatch(
     req("/static/notice/subscribe", host, {
       method: "POST",
       headers,
       body: JSON.stringify({ endpoint: ENDPOINT, keys: b.keys, f: FN, d: DATE, ...extra }),
-    })
+    }),
+    server
   );
 
 const subs = () =>
@@ -206,6 +230,8 @@ describe("with the switch off", () => {
     switchOn();
     expect((await subscribe(await browser())).status).toBe(200);
     switchOff();
+    // The tap made the key pair; with the switch off the sender makes none.
+    db.query("DELETE FROM flight_notice_keys").run();
     updateFlights(db, "N37502", [leg(DEP)]);
     expect(subs()[0].recheck).toBe(0);
     // Even a message left waiting while it was on stays unsent.
@@ -247,14 +273,16 @@ describe("with the switch on", () => {
     switchOn();
   });
 
-  /** Subscribe, and let the first tick deliver the confirmation. */
+  /** Subscribe: the tap's own request delivers the confirmation. */
   async function subscribed(b: Browser, extra: Record<string, unknown> = {}) {
-    expect((await subscribe(b, extra)).status).toBe(200);
-    const ok = pushService();
-    await sendFlightNotices(db, { fetch: ok.fetch, decide: app.noticeAnswer, nowSec: now });
-    expect(ok.calls.length).toBe(1);
-    const confirm = await open(b, ok.calls[0].body);
+    const before = tapService.calls.length;
+    const res = await subscribe(b, extra);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, tested: true });
+    expect(tapService.calls.length).toBe(before + 1);
+    const confirm = await open(b, tapService.calls[before].body);
     expect(confirm.title).toBe(`${extra.f ?? FN} on ${DATE}: notices on`);
+    expect(confirm.quiet).toBe(true);
   }
 
   test("subscribing stores the endpoint, keys, flight and date, and nothing about the visitor", async () => {
@@ -266,7 +294,7 @@ describe("with the switch on", () => {
       "cf-connecting-ip": "203.0.113.7",
     } as typeof OUR_PAGE);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, tested: true });
     const [row] = subs();
     expect(Object.keys(row).sort()).toEqual(
       [
@@ -293,12 +321,15 @@ describe("with the switch on", () => {
       airline: "UA",
       flight_number: FN,
       dep_date: DATE,
-      confirmed: 0,
+      confirmed: 1,
     });
     expect(JSON.stringify(row)).not.toContain("203.0.113.7");
     expect(JSON.stringify(row)).not.toContain("Mozilla");
     const tags = counted.mock.calls.filter(([n]) => n === COUNTERS.FLIGHT_NOTICE).map(([, t]) => t);
-    expect(tags).toEqual([{ airline: "united", action: "subscribed" }]);
+    expect(tags).toEqual([
+      { airline: "united", action: "sent" },
+      { airline: "united", action: "subscribed" },
+    ]);
     counted.mockRestore();
   });
 
@@ -337,35 +368,123 @@ describe("with the switch on", () => {
     expect(subs().length).toBe(MAX_PER_ENDPOINT);
   });
 
-  test("made-up endpoints can't fill the table: one address is capped, and a row that can't take its confirmation goes", async () => {
+  test("made-up endpoints can't fill the table: one address is capped, and a refused confirmation keeps no row", async () => {
     const b = await browser();
-    const from = (ip: string) => ({ ...OUR_PAGE, "cf-connecting-ip": ip }) as typeof OUR_PAGE;
+    const from = (ip: string) => ({ ...OUR_PAGE, "cf-connecting-ip": ip });
+    tapService = pushService(400);
     const statuses: number[] = [];
     for (let i = 0; i < 30; i++) {
       const endpoint = `https://fcm.googleapis.com/fcm/send/made-up-${i}`;
       statuses.push((await subscribe(b, { endpoint }, from("198.51.100.9"))).status);
     }
-    expect(statuses.filter((s) => s === 200).length).toBe(SUBSCRIBES_PER_ADDRESS);
+    expect(statuses.filter((s) => s === 400).length).toBe(SUBSCRIBES_PER_ADDRESS);
     expect(statuses.filter((s) => s === 429).length).toBe(30 - SUBSCRIBES_PER_ADDRESS);
-    // From many addresses they still never count against the table: the
-    // push service refuses each made-up endpoint's confirmation, and its row goes.
+    // Refused at the tap: nothing kept, whichever address it came from.
     for (let i = 0; i < 10; i++) {
       const endpoint = `https://fcm.googleapis.com/fcm/send/other-${i}`;
-      expect((await subscribe(b, { endpoint }, from(`198.51.100.${20 + i}`))).status).toBe(200);
-    }
-    expect(subs().every((s) => s.confirmed === 0)).toBe(true);
-    for (const status of [404, 400]) {
-      const refusing = pushService(status);
-      await sendFlightNotices(db, { fetch: refusing.fetch, decide: app.noticeAnswer, nowSec: now });
+      expect((await subscribe(b, { endpoint }, from(`198.51.100.${20 + i}`))).status).toBe(400);
     }
     expect(subs()).toEqual([]);
-    // An unconfirmed row that never hears back is gone within minutes, not at its flight.
-    await subscribe(b, {}, from("198.51.100.99"));
-    const fresh = subs()[0] as { expires_at: number; created_at: number };
-    expect(fresh.expires_at - fresh.created_at).toBeLessThanOrEqual(600);
     // A real browser still gets in afterwards.
+    tapService = pushService();
     await subscribed(b);
     expect(subs()[0].confirmed).toBe(1);
+  });
+
+  test("the address cap holds against a forged cf-connecting-ip sent straight to the origin", async () => {
+    const b = await browser();
+    tapService = pushService(400);
+    const tap = (i: number, server: ReturnType<typeof peer>, extra: Record<string, string> = {}) =>
+      subscribe(
+        b,
+        { endpoint: `https://fcm.googleapis.com/fcm/send/forged-${i}-${Math.random()}` },
+        { ...OUR_PAGE, "cf-connecting-ip": `203.0.113.${i % 250}`, ...extra },
+        UA,
+        server
+      ).then((r) => r.status);
+    const capped = (statuses: number[]) => statuses.filter((s) => s === 429).length;
+
+    // Straight to the origin from one machine, a new forged address each tap.
+    const direct: number[] = [];
+    for (let i = 0; i < 30; i++) direct.push(await tap(i, peer("192.0.2.44")));
+    expect(capped(direct)).toBe(30 - SUBSCRIBES_PER_ADDRESS);
+
+    // Through our own proxy: the hop it saw (the last x-forwarded-for entry)
+    // counts, not the forged header nor an x-forwarded-for the caller began.
+    const proxied: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      proxied.push(
+        await tap(i, peer("10.0.1.5"), { "x-forwarded-for": `198.18.${i}.1, 192.0.2.45` })
+      );
+    }
+    expect(capped(proxied)).toBe(30 - SUBSCRIBES_PER_ADDRESS);
+
+    // One IPv6 machine walking its /64 is one caller.
+    const walked: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      walked.push(await tap(i, peer(`2001:db8:5:7::${(i + 1).toString(16)}`)));
+    }
+    expect(capped(walked)).toBe(30 - SUBSCRIBES_PER_ADDRESS);
+
+    // Through Cloudflare, cf-connecting-ip is Cloudflare's word: different
+    // travellers behind the same edge are each their own caller.
+    const viaEdge: number[] = [];
+    for (let i = 0; i < 30; i++) viaEdge.push(await tap(i, peer("162.158.40.1")));
+    expect(capped(viaEdge)).toBe(0);
+    expect(subs()).toEqual([]);
+  });
+
+  test("a confirmation that fails for a passing reason is tried once more, and keeps no row if that fails too", async () => {
+    const b = await browser();
+    // No answer, twice: the page hears "try again", nothing is kept.
+    tapService = pushService("drop");
+    const dropped = await subscribe(b);
+    expect(dropped.status).toBe(503);
+    expect(await dropped.json()).toEqual({ ok: false, retry: true });
+    expect(tapService.calls.length).toBe(2);
+    expect(subs()).toEqual([]);
+    // The service's own trouble, then fine: one tap, kept and confirmed.
+    tapService = pushService([503, 201]);
+    const res = await subscribe(b);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, tested: true });
+    expect(tapService.calls.length).toBe(2);
+    expect(subs().map((s) => s.confirmed)).toEqual([1]);
+    // The same browser and flight again is no new confirmation.
+    const again = await subscribe(b);
+    expect(await again.json()).toEqual({ ok: true, tested: false });
+    expect(tapService.calls.length).toBe(2);
+    // A refusal is not retried; a 410 removes every row of that browser.
+    tapService = pushService(410);
+    expect((await subscribe(b, { f: "UA200" })).status).toBe(400);
+    expect(tapService.calls.length).toBe(1);
+    expect(subs()).toEqual([]);
+  });
+
+  test("an unconfirmed row (a process that died mid-tap) is never sent to, and goes within minutes", async () => {
+    const b = await browser();
+    expect(
+      subscribeNotice(
+        db,
+        { endpoint: ENDPOINT, keys: b.keys, airline: "UA", flightNumber: FN, depDate: DATE },
+        [],
+        now
+      )
+    ).toBe("stored");
+    const fresh = subs()[0] as { expires_at: number; created_at: number; confirmed: number };
+    expect(fresh.confirmed).toBe(0);
+    expect(fresh.expires_at - fresh.created_at).toBeLessThanOrEqual(600);
+    updateFlights(db, "N37502", [leg(DEP)]);
+    const service = pushService();
+    await sendFlightNotices(db, { fetch: service.fetch, decide: app.noticeAnswer, nowSec: now });
+    expect(service.calls).toEqual([]);
+    const tally = await sendFlightNotices(db, {
+      fetch: service.fetch,
+      decide: app.noticeAnswer,
+      nowSec: now + 601,
+    });
+    expect(tally.expired).toBe(1);
+    expect(subs()).toEqual([]);
   });
 
   test("first assignment, then a swap, each send one notice that says what the page says; the same plane again sends none", async () => {
@@ -386,6 +505,8 @@ describe("with the switch on", () => {
     expect(first.body).toContain("N37502");
     expect(first.body).toContain("It has Starlink.");
     expect(first.url).toBe(`/check-flight/${FN}/${DATE}`);
+    // A real change alerts, unlike the confirmation it replaces on screen.
+    expect(first.quiet).toBeUndefined();
     await expectAgrees(first);
 
     // The next refresh stores the same plane: no second notice, however often.

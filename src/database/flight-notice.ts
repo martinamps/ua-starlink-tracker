@@ -10,8 +10,10 @@
  * a subscription again when the aircraft log's writer touched its flight
  * (noteAssignmentWrites marks it), when our Starlink check read one of its
  * aircraft, and in any case every SWEEP_SEC. It decides right before it
- * sends, and a write never waits on the network. A new subscription is first
- * sent one confirmation: an endpoint that can't take it is removed.
+ * sends, and a write never waits on the network. A new subscription is sent
+ * its confirmation inside the tap's own request (confirmNotice), and the page
+ * is told how that went: a row is kept only once its push service took the
+ * confirmation, so the button never says "on" for a browser we can't reach.
  *
  * Off unless the meta row `ALL:flight_notice_enabled` is "1". It is read at
  * every step: with it off nothing is queued, nothing is sent, no key is made,
@@ -23,13 +25,16 @@ import { buildFlightLookupVariants } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
 import { toIata } from "../utils/airport-code";
 import { error as logError } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import {
   type BrowserKeys,
   type PushResult,
   type VapidKeys,
   generateVapidKeys,
   isPushEndpoint,
+  isTransientPush,
   sendPush,
+  sendPushStatus,
 } from "../utils/web-push";
 import { placeholders } from "./sql/fragments";
 
@@ -72,10 +77,15 @@ export const NOTICE_SWITCH_KEY = "ALL:flight_notice_enabled";
 export const MAX_PER_ENDPOINT = 10;
 export const MAX_PER_FLIGHT_DATE = 500;
 export const MAX_TOTAL = 20_000;
-/** Rows whose first push hasn't gone through: a made-up endpoint never gets
- * past this, and its row is gone within the life below. */
+/** Rows whose confirmation is in flight in a tap's request. A row lives
+ * unconfirmed only that long; the life below covers a process that dies
+ * mid-request. */
 export const UNCONFIRMED_TOTAL = 1_000;
 const UNCONFIRMED_LIFE_SEC = 600;
+/** A confirmation that fails for a passing reason is tried once more after this. */
+const CONFIRM_RETRY_MS = 1500;
+/** Each confirmation try waits at most this long: a person is watching the button. */
+const CONFIRM_TIMEOUT_MS = 5000;
 /** Every subscription is decided again at least this often, whatever wrote
  * the change (a sheet sync, the fleet's own reconcile). */
 export const SWEEP_SEC = 15 * 60;
@@ -204,6 +214,10 @@ export interface NoticePayload {
   body: string;
   url: string;
   tag: string;
+  /** Shown without sound or vibration: the confirmation, which arrives while
+   * the person is looking at the page. Every other notice alerts, also when
+   * it replaces one still on screen (notice-sw.ts). */
+  quiet?: boolean;
 }
 
 const pageUrl = (sub: Pick<SubscriptionRow, "flight_number" | "dep_date" | "origin">) =>
@@ -255,16 +269,24 @@ export function noticeFor(
   };
 }
 
-/** The one message a new subscription gets: proof the browser can be
- * reached. A made-up endpoint fails it and its row is removed. */
+/**
+ * The one message a new subscription gets, the moment the person taps. It is
+ * a visible notice by necessity: a page that subscribes must show a notice
+ * for every push (userVisibleOnly), Chrome otherwise shows its own "updated
+ * in the background" notice, and Safari drops a subscription after a few
+ * silent pushes. So it is made useful instead: it shows the person, while
+ * they are looking, that notices reach them and what one looks like, and it
+ * comes quietly. A made-up endpoint fails it and is never kept.
+ */
 export function confirmationFor(
   sub: Pick<SubscriptionRow, "flight_number" | "dep_date" | "origin">
 ): NoticePayload {
   return {
     title: `${sub.flight_number} on ${sub.dep_date}: notices on`,
-    body: "We'll tell you here if its plane or Starlink answer changes before it leaves.",
+    body: "This is how we'll tell you if its plane or Starlink answer changes before it leaves.",
     url: pageUrl(sub),
     tag: `${sub.flight_number}-${sub.dep_date}`,
+    quiet: true,
   };
 }
 
@@ -277,15 +299,30 @@ export interface NoticeSubscription {
   origin?: string | null;
 }
 
-export type SubscribeResult = "stored" | "off" | "invalid" | "full";
+/**
+ * stored: kept, its confirmation still to send. already: this browser was
+ * following this flight. confirmed: kept, and its confirmation went through.
+ * unreachable: its push service didn't answer, twice; nothing kept.
+ * refused: its push service refused the confirmation; nothing kept.
+ */
+export type SubscribeResult =
+  | "stored"
+  | "already"
+  | "confirmed"
+  | "unreachable"
+  | "refused"
+  | "off"
+  | "invalid"
+  | "full";
 
 const B64URL = /^[A-Za-z0-9_-]+$/;
 
 /**
  * Store one browser for one flight and date. `shown` is what the page answers
  * at the tap, so it counts as told: the first notice is for a change after
- * it. The row waits unconfirmed until its first push goes through; until
- * then it counts against UNCONFIRMED_TOTAL, not the table's cap.
+ * it. The row waits unconfirmed until confirmNotice's push goes through;
+ * until then it counts against UNCONFIRMED_TOTAL, not the table's cap, and
+ * the sender leaves it alone.
  */
 export function subscribeNotice(
   db: Database,
@@ -320,6 +357,12 @@ export function subscribeNotice(
       .get(sub.endpoint, sub.airline, sub.flightNumber, sub.depDate) as {
       confirmed: number;
     } | null;
+    if (held?.confirmed === 1) {
+      db.query(
+        "UPDATE flight_notice_subscriptions SET p256dh = ?, auth = ? WHERE endpoint = ? AND airline = ? AND flight_number = ? AND dep_date = ?"
+      ).run(p256dh, auth, sub.endpoint, sub.airline, sub.flightNumber, sub.depDate);
+      return "already";
+    }
     if (!held) {
       const count = (sql: string, ...p: Array<string | number>) =>
         (db.query(sql).get(...p) as { n: number }).n;
@@ -358,9 +401,7 @@ export function subscribeNotice(
       sub.depDate,
       origin,
       JSON.stringify(toldOf(shown)),
-      JSON.stringify(
-        confirmationFor({ flight_number: sub.flightNumber, dep_date: sub.depDate, origin })
-      ),
+      null,
       nowSec,
       Math.min(expires, nowSec + UNCONFIRMED_LIFE_SEC),
       nowSec
@@ -383,6 +424,82 @@ export function unsubscribeNotice(
       )
       .run(endpoint, airline, flightNumber, depDate).changes > 0
   );
+}
+
+export interface ConfirmOptions {
+  decide?: NoticeDecider;
+  nowSec?: number;
+  fetch?: typeof fetch;
+  retryMs?: number;
+  onResult?: (airline: string, result: PushResult) => void;
+}
+
+/**
+ * Send a just-stored subscription its confirmation, inside the tap's request,
+ * and settle the row by the answer: kept and confirmed when the push service
+ * took it; one more try after a passing failure (no answer, 5xx, 429); else
+ * removed, so no row is left that nobody confirmed and the page can show the
+ * button off. A 404 or 410 removes every row of that browser.
+ */
+export async function confirmNotice(
+  db: Database,
+  key: Pick<NoticeSubscription, "endpoint" | "airline" | "flightNumber" | "depDate">,
+  opts: ConfirmOptions = {}
+): Promise<SubscribeResult> {
+  const where = "endpoint = ? AND airline = ? AND flight_number = ? AND dep_date = ?";
+  const args = [key.endpoint, key.airline, key.flightNumber, key.depDate] as const;
+  const row = db
+    .query(
+      `SELECT id, endpoint, p256dh, auth, airline, flight_number, dep_date, origin, confirmed, expires_at
+       FROM flight_notice_subscriptions WHERE ${where}`
+    )
+    .get(...args) as SubscriptionRow | null;
+  if (!row) return "refused";
+  if (row.confirmed === 1) return "already";
+  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
+  if (!noticesEnabled(db)) {
+    db.query("DELETE FROM flight_notice_subscriptions WHERE id = ?").run(row.id);
+    return "off";
+  }
+  const keys = await ensureKeys(db, nowSec);
+  const payload = confirmationFor(row);
+  const attempt = async () => {
+    const out = await sendPushStatus(
+      keys,
+      VAPID_SUBJECT,
+      {
+        endpoint: row.endpoint,
+        keys: { p256dh: row.p256dh, auth: row.auth },
+        payload,
+        // Not worth delivering once the person has left the page.
+        ttlSec: 300,
+        topic: Bun.hash(payload.tag).toString(36).slice(0, 32),
+      },
+      { fetch: opts.fetch, nowSec, timeoutMs: CONFIRM_TIMEOUT_MS }
+    );
+    opts.onResult?.(row.airline, out.result);
+    return out;
+  };
+  let out = await attempt();
+  if (out.result === "failed" && isTransientPush(out.status)) {
+    await sleep(opts.retryMs ?? CONFIRM_RETRY_MS);
+    out = await attempt();
+  }
+  if (out.result === "sent") {
+    // Its real life: an hour past the departure the page names, else the
+    // date's end. What it was told stays what the page said at the tap.
+    const legs = opts.decide ? await opts.decide(queryOf(row)) : null;
+    db.query(
+      "UPDATE flight_notice_subscriptions SET confirmed = 1, pending = NULL, attempts = 0, expires_at = ? WHERE id = ?"
+    ).run(expiresAt(row.dep_date, legs ?? []), row.id);
+    return "confirmed";
+  }
+  if (out.result === "gone") {
+    db.query("DELETE FROM flight_notice_subscriptions WHERE endpoint = ?").run(row.endpoint);
+    return "refused";
+  }
+  db.query("DELETE FROM flight_notice_subscriptions WHERE id = ?").run(row.id);
+  return isTransientPush(out.status) ? "unreachable" : "refused";
 }
 
 /** One leg the aircraft log just wrote. */
@@ -458,7 +575,7 @@ export interface SendTally {
 }
 
 export interface SendOptions {
-  /** The page's answer. Without one nothing is decided, only confirmations go. */
+  /** The page's answer. Without one nothing is decided or sent. */
   decide?: NoticeDecider;
   nowSec?: number;
   fetch?: typeof fetch;
@@ -468,14 +585,13 @@ export interface SendOptions {
 }
 
 /**
- * The sender job's tick. Drops departed subscriptions; then, for each
- * subscription that is new, marked, holding an unsent message or not decided
- * for SWEEP_SEC: a new one is sent its confirmation, and every other one is
- * decided from the page's answer now and sent a message only where that
- * answer differs from what it was last told. A 404 or 410 from the push
- * service removes every subscription of that browser; any failure of a
- * confirmation removes that row. With the switch off it sends nothing and
- * makes no key.
+ * The sender job's tick. Drops departed subscriptions; then each confirmed
+ * subscription that is marked, holding an unsent message or not decided for
+ * SWEEP_SEC is decided from the page's answer now and sent a message only
+ * where that answer differs from what it was last told. An unconfirmed row
+ * belongs to the tap whose request is confirming it (confirmNotice). A 404
+ * or 410 from the push service removes every subscription of that browser.
+ * With the switch off it sends nothing and makes no key.
  */
 export async function sendFlightNotices(db: Database, opts: SendOptions = {}): Promise<SendTally> {
   const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
@@ -489,8 +605,8 @@ export async function sendFlightNotices(db: Database, opts: SendOptions = {}): P
       `SELECT id, endpoint, p256dh, auth, airline, flight_number, dep_date, origin, told, pending,
               attempts, confirmed, expires_at
        FROM flight_notice_subscriptions
-       WHERE confirmed = 0 OR recheck = 1 OR pending IS NOT NULL OR checked_at <= ?
-       ORDER BY confirmed, recheck DESC, checked_at, id LIMIT ?`
+       WHERE confirmed = 1 AND (recheck = 1 OR pending IS NOT NULL OR checked_at <= ?)
+       ORDER BY recheck DESC, checked_at, id LIMIT ?`
     )
     .all(nowSec - SWEEP_SEC, opts.limit ?? 200) as SubscriptionRow[];
   const decided = db.query(
@@ -499,30 +615,22 @@ export async function sendFlightNotices(db: Database, opts: SendOptions = {}): P
   for (const row of due) {
     // Read again at send time: the switch can go off mid-tick.
     if (!noticesEnabled(db)) break;
-    let payload: NoticePayload;
-    let toldAfter: Told | null = null;
-    if (row.confirmed === 0) {
-      if (!row.pending) continue;
-      payload = JSON.parse(row.pending) as NoticePayload;
-    } else {
-      if (!opts.decide) continue;
-      const legs = await opts.decide(queryOf(row));
-      if (!legs) {
-        decided.run(nowSec, null, row.expires_at, row.id);
-        continue;
-      }
-      const told = JSON.parse(row.told) as Told;
-      const notice = noticeFor(row, told, legs);
-      decided.run(
-        nowSec,
-        notice ? JSON.stringify(notice) : null,
-        expiresAt(row.dep_date, legs),
-        row.id
-      );
-      if (!notice) continue;
-      payload = notice;
-      toldAfter = { ...told, ...toldOf(legs) };
+    if (!opts.decide) continue;
+    const legs = await opts.decide(queryOf(row));
+    if (!legs) {
+      decided.run(nowSec, null, row.expires_at, row.id);
+      continue;
     }
+    const told = JSON.parse(row.told) as Told;
+    const payload = noticeFor(row, told, legs);
+    decided.run(
+      nowSec,
+      payload ? JSON.stringify(payload) : null,
+      expiresAt(row.dep_date, legs),
+      row.id
+    );
+    if (!payload) continue;
+    const toldAfter: Told = { ...told, ...toldOf(legs) };
     const result = await sendPush(
       keys,
       VAPID_SUBJECT,
@@ -539,17 +647,6 @@ export async function sendFlightNotices(db: Database, opts: SendOptions = {}): P
     opts.onResult?.(row.airline, result);
     if (result === "gone") {
       db.query("DELETE FROM flight_notice_subscriptions WHERE endpoint = ?").run(row.endpoint);
-    } else if (row.confirmed === 0) {
-      if (result === "sent") {
-        // Its real life: an hour past the departure the page names, else the
-        // date's end. What it was told stays what the page said at the tap.
-        const legs = opts.decide ? await opts.decide(queryOf(row)) : null;
-        db.query(
-          "UPDATE flight_notice_subscriptions SET confirmed = 1, pending = NULL, attempts = 0, expires_at = ? WHERE id = ?"
-        ).run(expiresAt(row.dep_date, legs ?? []), row.id);
-      } else {
-        db.query("DELETE FROM flight_notice_subscriptions WHERE id = ?").run(row.id);
-      }
     } else if (result === "sent") {
       db.query(
         "UPDATE flight_notice_subscriptions SET told = ?, pending = NULL, attempts = 0 WHERE id = ?"
@@ -577,7 +674,11 @@ export interface NoticeStore {
   unsubscribe(endpoint: string, airline: string, flightNumber: string, depDate: string): boolean;
 }
 
-export function noticeStore(db: Database, decide: NoticeDecider): NoticeStore {
+export function noticeStore(
+  db: Database,
+  decide: NoticeDecider,
+  confirm: Omit<ConfirmOptions, "decide" | "nowSec"> = {}
+): NoticeStore {
   return {
     enabled: () => noticesEnabled(db),
     offerKey: () => noticeOfferKey(db),
@@ -590,7 +691,8 @@ export function noticeStore(db: Database, decide: NoticeDecider): NoticeStore {
         depDate: sub.depDate,
         origin,
       });
-      return subscribeNotice(db, sub, shown ?? [], nowSec);
+      const stored = subscribeNotice(db, sub, shown ?? [], nowSec);
+      return stored === "stored" ? confirmNotice(db, sub, { ...confirm, decide, nowSec }) : stored;
     },
     unsubscribe: (endpoint, airline, fn, date) =>
       unsubscribeNotice(db, endpoint, airline, fn, date),
