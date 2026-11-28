@@ -64,6 +64,7 @@ import {
   getFlownAssignmentHistory,
   getHeldLegDays,
   getListedSightings,
+  getListedSightingsBetween,
   getLoggedAircraft,
   getSameDayStarlinkAlternatives,
   hasUnreadAircraft,
@@ -439,6 +440,9 @@ export interface ScopedReader {
     start: number,
     end: number
   ): FlightAssignmentRow[];
+  /** Those sightings for every flight departing in [start, end), on this
+   * scope's own airlines (the rows getStarlinkEdgeRows reads, no partners). */
+  getListedSightingsBetween(start: number, end: number): FlightAssignmentRow[];
   /** The airline's own dated count for one aircraft family; null on the hub
    * and wherever the stored chart has no usable line for it. */
   getAirlineTypeCount(family: string): AirlineTypeCount | null;
@@ -720,6 +724,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getLoggedAircraft: (v, d) => getLoggedAircraft(db, withOperatingPartners(airlines), v, d),
     getListedSightings: (v, s, e) =>
       getListedSightings(db, withOperatingPartners(airlines), v, s, e),
+    getListedSightingsBetween: (s, e) => getListedSightingsBetween(db, airlines, s, e),
     getAirlineTypeCount: (family) => (scope === "ALL" ? null : airlineTypeCount(db, scope, family)),
     getNamedOfType: (family) => (scope === "ALL" ? 0 : namedOfType(db, scope, family)),
     getTailStarlinkFlag: (tail, airline) => tailStarlinkFlag(db, tail, airline),
