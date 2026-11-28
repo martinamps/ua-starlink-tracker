@@ -186,8 +186,7 @@ export default function HubRouteBoardPage({
         <HubRouteSearchForm values={values} />
         {sameAirport && (
           <p className="mt-3 text-sm text-secondary">
-            Both boxes name the same airport ({sameAirport}). Pick a different airport for one of
-            them.
+            {`Both boxes name the same airport (${sameAirport}). Pick a different airport for one of them.`}
           </p>
         )}
         {choices.map((c) => (
