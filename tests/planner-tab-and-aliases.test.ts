@@ -163,11 +163,19 @@ describe("other spellings", () => {
     for (const m of searchAirports("san d", 50).matches) expect(m.name).not.toMatch(/^Sand/);
   });
 
-  test("one field under two codes is two rows that tell each other apart", () => {
+  test("a renamed airport is one row under its code now, and its old code finds it", () => {
     const rows = searchAirports("west palm beach").matches;
-    expect(rows.map((m) => m.code).sort()).toEqual(["DJT", "PBI"]);
-    expect(rows.find((m) => m.code === "DJT")?.name).toBe("West Palm Beach (also PBI)");
-    expect(rows.find((m) => m.code === "PBI")?.name).toBe("West Palm Beach (also DJT)");
+    expect(rows).toEqual([{ code: "DJT", name: "West Palm Beach (was PBI)" }]);
+    for (const typed of ["PBI", "pbi", " KPBI "]) {
+      expect(resolveAirport(typed), typed).toEqual({
+        kind: "code",
+        code: "DJT",
+        name: "West Palm Beach (was PBI)",
+      });
+    }
+    expect(searchAirports("pbi").matches[0]?.code).toBe("DJT");
+    expect(searchAirports("pb", 600).matches.map((m) => m.code)).toContain("DJT");
+    expect(searchAirports("pb", 600).matches.map((m) => m.code)).not.toContain("PBI");
     const labels = searchAirports("s", 600).matches.map((m) => m.name);
     expect(new Set(labels).size).toBe(labels.length);
   });

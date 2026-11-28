@@ -9,6 +9,7 @@ import {
   perDayLabel,
 } from "../api/airport-board";
 import { airportCity, airportPlaceName } from "../utils/airport-places";
+import { routePlannerPath } from "../utils/airport-renames";
 import type { Link } from "./layout";
 import {
   DataTable,
@@ -156,7 +157,7 @@ function NextDepartures({ board, tailPages }: { board: AirportBoard; tailPages: 
                 <a href={`/check-flight/${d.flight_number}`} className={FLIGHT_LINK}>
                   {d.flight_number}
                 </a>{" "}
-                <a href={`/route-planner/${airport}/${d.destination}`} className={ROW_LINK}>
+                <a href={routePlannerPath(airport, d.destination)} className={ROW_LINK}>
                   to {d.destination}
                 </a>
                 {d.aircraft && <div className="text-xs text-muted sm:hidden">{d.aircraft}</div>}
@@ -199,10 +200,7 @@ function DestinationRow({
     <li className="border-b border-subtle py-2.5 last:border-b-0">
       <div className="flex items-center gap-3 text-sm">
         {row.linkable ? (
-          <a
-            href={`/route-planner/${airport}/${row.destination}`}
-            className={`w-28 ${FLIGHT_LINK}`}
-          >
+          <a href={routePlannerPath(airport, row.destination)} className={`w-28 ${FLIGHT_LINK}`}>
             {label}
           </a>
         ) : (

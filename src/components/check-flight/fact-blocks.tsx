@@ -6,6 +6,7 @@ import React from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import type { SiteConfig } from "../../airlines/registry";
 import { airportWithCode, routePlaceNames } from "../../utils/airport-places";
+import { routePlannerPath } from "../../utils/airport-renames";
 import { airportTimezone } from "../../utils/airport-tz";
 import { Chip, LINK, Section, StatInline } from "../layout";
 import { countSentence, followSentence } from "../outlook-copy";
@@ -176,7 +177,7 @@ export function FlightFactBlocks({
                     </div>{" "}
                     {r.linkable ? (
                       <a
-                        href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
+                        href={routePlannerPath(r.departure_airport, r.arrival_airport)}
                         className="shrink-0 whitespace-nowrap text-accent hover:underline"
                       >
                         Plan this route

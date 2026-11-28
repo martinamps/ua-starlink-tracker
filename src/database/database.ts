@@ -118,6 +118,7 @@ import {
   settledNegativeJoin,
 } from "./sql/equipped";
 
+import { isRetiredAirportCode, routePlannerPath } from "../utils/airport-renames";
 import {
   type AirlineFilter,
   ROUTE_AIRPORT_RE,
@@ -2983,6 +2984,8 @@ export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] 
   const touch = (origin: string, destination: string, t: number | null) => {
     if (!isCleanAirportPair(origin, destination)) return;
     if (!isHandPlacedAirportPair(origin, destination)) return;
+    // A retired code's route (PBI-EWR) lives at its twin's address (DJT-EWR).
+    if (isRetiredAirportCode(origin) || isRetiredAirportCode(destination)) return;
     // Future timestamps are corrupt rows — treat as unknown, keep the route.
     const sane = t && t <= nowSec ? t : 0;
     const key = `${origin}-${destination}`;
@@ -3970,6 +3973,7 @@ export interface UnequippedAssignment {
   departure_airport: string;
   arrival_airport: string;
   departure_time: number;
+  arrival_time: number | null;
   last_updated: number;
   aircraft_type: string | null;
   mark: GuideMark | null;
@@ -3989,7 +3993,7 @@ export function getUnequippedAssignments(
   if (flightNumberVariants.length === 0) return [];
   const q = withAirline(
     `SELECT u.tail_number, u.flight_number, u.departure_airport, u.arrival_airport,
-            u.departure_time, u.last_updated, f.aircraft_type, g.mark, g.guide_updated
+            u.departure_time, u.arrival_time, u.last_updated, f.aircraft_type, g.mark, g.guide_updated
      FROM upcoming_flights u
      INNER JOIN united_fleet f ON f.tail_number = u.tail_number
      LEFT JOIN fleet_guide_tails g
@@ -8656,7 +8660,7 @@ function computeAircraftTypePages(
           origin,
           destination,
           departures,
-          href: servedRoutes.has(key) ? `/route-planner/${origin}/${destination}` : null,
+          href: servedRoutes.has(key) ? routePlannerPath(origin, destination) : null,
         };
       });
 
