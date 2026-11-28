@@ -542,6 +542,10 @@ describe("the list's markup", () => {
 
 let db: Database;
 let app: ReturnType<typeof createApp>;
+// 18:00 UTC on the UTC day two days out, and six hours on: mid-morning at
+// SFO, then evening at ORD, one local day whatever the hour or season.
+const UA403_SFO = Math.floor((now + 2 * DAY) / DAY) * DAY + 18 * HOUR;
+const UA403_ORD = UA403_SFO + 6 * HOUR;
 
 beforeAll(() => {
   db = makeFreshDb();
@@ -559,9 +563,10 @@ beforeAll(() => {
     verifiedAt: now - DAY,
   });
   addFlight(db, "N4VIA", "UA500", "IAH", now + 2 * DAY, { arrivalAirport: "EWR" });
-  // Two legs on two planes: a yes for one leg only.
-  addFlight(db, "N37529", "UA403", "SFO", now + 2 * DAY, { arrivalAirport: "ORD" });
-  addFlight(db, "N4VIA", "UA403", "ORD", now + 2 * DAY + 6 * HOUR, { arrivalAirport: "FLL" });
+  // Two legs on two planes: a yes for one leg only. Both depart on one local
+  // day at any hour the suite runs: a page holds a leg to its own airport's day.
+  addFlight(db, "N37529", "UA403", "SFO", UA403_SFO, { arrivalAirport: "ORD" });
+  addFlight(db, "N4VIA", "UA403", "ORD", UA403_ORD, { arrivalAirport: "FLL" });
   addPlane(db, "N644AS", "Starlink", { airline: "AS", aircraft: "737-700" });
   addFleet(db, "N644AS", "confirmed", {
     airline: "AS",
@@ -575,9 +580,9 @@ beforeAll(() => {
 const get = (host: string, path: string, headers: Record<string, string> = OUR_PAGE) =>
   app.dispatch(req(path, host, { headers }));
 const pageHtml = async (host: string, path: string) => (await get(host, path, {})).text();
-/** The flight's local date for a departure seeded at now + 2 days. */
-const dateAt = (zone: string) =>
-  new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(new Date((now + 2 * DAY) * 1000));
+/** The local date at `zone` of a departure, by default one seeded at now + 2 days. */
+const dateAt = (zone: string, departure = now + 2 * DAY) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(new Date(departure * 1000));
 const plain = (html: string) =>
   html
     .replace(/<[^>]+>/g, "")
@@ -588,18 +593,18 @@ const cardHeadline = (html: string) =>
   plain(html.match(/id="flight-answer"[^>]*>.*?<h2[^>]*>(.*?)<\/h2>/s)?.[1] ?? "");
 
 describe("a row's answer", () => {
-  const flights: Array<[string, string, string, string, string]> = [
-    [UA, "UA1932", "America/Denver", "", "yes"],
-    [UA, "UA500", "America/Chicago", "", "no"],
-    [UA, "UA403", "America/Los_Angeles", "", "partial"],
-    [UA, "UA403", "America/Chicago", "?origin=ORD&destination=FLL", "no"],
-    [AS, "AS12", "America/Los_Angeles", "", "yes"],
+  const flights: Array<[string, string, string, string, string, number]> = [
+    [UA, "UA1932", "America/Denver", "", "yes", now + 2 * DAY],
+    [UA, "UA500", "America/Chicago", "", "no", now + 2 * DAY],
+    [UA, "UA403", "America/Los_Angeles", "", "partial", UA403_SFO],
+    [UA, "UA403", "America/Chicago", "?origin=ORD&destination=FLL", "no", UA403_ORD],
+    [AS, "AS12", "America/Los_Angeles", "", "yes", now + 2 * DAY],
   ];
 
   test.each(flights)(
     "%s %s%s is the flight page's own headline, word for word",
-    async (host, fn, zone, leg, tone) => {
-      const date = dateAt(zone);
+    async (host, fn, zone, leg, tone, departure) => {
+      const date = dateAt(zone, departure);
       const res = await get(host, `${RECENT_PREFIX}${fn}/${date}${leg}`);
       expect(res.status).toBe(200);
       const answer = (await res.json()) as RowAnswer;
@@ -624,7 +629,7 @@ describe("a row's answer", () => {
 
   test("a yes for some legs names its own aircraft, and a no names the one assigned", async () => {
     const partial = (await (
-      await get(UA, `${RECENT_PREFIX}UA403/${dateAt("America/Los_Angeles")}`)
+      await get(UA, `${RECENT_PREFIX}UA403/${dateAt("America/Los_Angeles", UA403_SFO)}`)
     ).json()) as RowAnswer;
     expect(partial).toMatchObject({ tone: "partial", firm: true, tails: ["N37529"] });
     expect(partial.headline).toContain("not on ORD → FLL");

@@ -3563,14 +3563,65 @@ export function getFleetEntryByTail(
   } | null;
 }
 
+/** Airlines whose listed tails are polled on their own slow lap. */
+function slowLapAirlines(): AirlineConfig[] {
+  return enabledAirlines().filter((a) => (a.flightPollLapHours ?? 0) > 0);
+}
+
+/** The main updater queue, stalest first. Slow-lap airlines are left out:
+ * getSlowLapTailDue hands their tails out one at a time. */
 export function getStarlinkTailsByCheckAge(db: Database): string[] {
+  const slow = slowLapAirlines().map((a) => a.code);
+  const skip = slow.length ? `AND airline NOT IN (${placeholders(slow)})` : "";
   return (
     db
       .query(
-        "SELECT TailNumber FROM starlink_planes WHERE TailNumber IS NOT NULL ORDER BY last_flight_check ASC"
+        `SELECT TailNumber FROM starlink_planes WHERE TailNumber IS NOT NULL ${skip} ORDER BY last_flight_check ASC`
       )
-      .all() as { TailNumber: string }[]
+      .all(...slow) as { TailNumber: string }[]
   ).map((r) => r.TailNumber);
+}
+
+/**
+ * The stalest listed tail of a slow-lap airline, when two things hold: that
+ * tail's own last poll is a lap old, and the airline's newest poll is a slot
+ * old (the lap divided by its tail count), less one updater tick.
+ *
+ * The first keeps the lap at its length: a slot alone waits for the next tick
+ * every time, and 136 such waits made a 24 h lap run 24.7 h. The second
+ * spreads the tails over the lap, after a deploy and after an outage alike,
+ * so they are never polled as one block: as a block they held every other
+ * airline's refresh for an hour a lap and left their own freshness gauge
+ * silent for the rest. The tick taken off the slot lets a tail whose turn has
+ * come go at its own tick, not one later.
+ *
+ * Both are read from the table, so a restart changes nothing. A stamp ahead
+ * of the clock (a clock set back, a bad write) is not counted as the newest
+ * poll: counted, it would hold the whole airline until the clock passed it.
+ * The tail that carries it waits, as it would in the main queue.
+ */
+export function getSlowLapTailDue(db: Database, now = unixNow(), tickSec = 0): string | null {
+  for (const a of slowLapAirlines()) {
+    const lapSec = (a.flightPollLapHours as number) * 3600;
+    const q = db
+      .query(
+        `SELECT COUNT(*) AS n,
+                MAX(CASE WHEN COALESCE(last_flight_check, 0) <= ?1
+                         THEN COALESCE(last_flight_check, 0) ELSE 0 END) AS newest
+         FROM starlink_planes WHERE airline = ?2 AND TailNumber IS NOT NULL`
+      )
+      .get(now, a.code) as { n: number; newest: number | null };
+    if (q.n === 0 || now - (q.newest ?? 0) < lapSec / q.n - tickSec) continue;
+    const row = db
+      .query(
+        `SELECT TailNumber, COALESCE(last_flight_check, 0) AS at
+         FROM starlink_planes WHERE airline = ? AND TailNumber IS NOT NULL
+         ORDER BY at ASC, TailNumber LIMIT 1`
+      )
+      .get(a.code) as { TailNumber: string; at: number } | null;
+    if (row && now - row.at >= lapSec) return row.TailNumber;
+  }
+  return null;
 }
 
 export function updateLastFlightCheck(db: Database, tailNumber: string, success = true) {

@@ -80,11 +80,16 @@ beforeAll(() => {
   addFlight(db, "N1VER", "UA101", "DEN", now + 30 * HOUR, { arrivalAirport: "ORD" });
   // Past the 48 hours: not this window's.
   addFlight(db, "N1VER", "UA102", "DEN", now + 60 * HOUR, { arrivalAirport: "ORD" });
-  for (let d = 1; d < AIRPORT_HISTORY_DAYS; d++) {
-    addFlown("N1VER", "UA100", "DEN", "ORD", d);
-    addFlown("N2LIST", "UA200", "DEN", "SFO", d);
+  // Each day's flown legs sit 4 and 1 hours before this clock time, so the
+  // newest set left within the last few hours. Denver's local today then holds
+  // two Starlink departures at any hour, which the /routes ranking needs: until
+  // 19:00 local both scheduled ones above, until 21:00 UA100 and the UA210 that
+  // left an hour ago, and after that the three that left today.
+  for (let d = 0; d < AIRPORT_HISTORY_DAYS - 1; d++) {
+    addFlown("N1VER", "UA100", "DEN", "ORD", d, -4);
+    addFlown("N2LIST", "UA200", "DEN", "SFO", d, -4);
     // Later that day: one plane leaves one airport at one time once.
-    addFlown("N2LIST", "UA210", "DEN", "YYZ", d, 4);
+    addFlown("N2LIST", "UA210", "DEN", "YYZ", d, -1);
   }
   // Logged for a plane that never left on it (swapped away): not flown.
   logFlightAssignments(
