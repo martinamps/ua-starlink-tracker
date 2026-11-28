@@ -114,8 +114,18 @@ describe("the flight's own date holds all its legs", () => {
     expect(legsOf(body)).toEqual(["GUM-PNI", "PNI-TKK", "TKK-GUM"]);
   });
 
-  test("a later leg asked on the flight's date is that leg", async () => {
+  test("a later leg asked on the flight's date is not answered from the next local day", async () => {
+    // A ticket prints PNI → TKK under the date it departs Pohnpei. On D that is
+    // the previous night's flight, which we don't hold, so this run's 00:45
+    // departure of the next day must not answer it.
     const body = await api("UA176", D, "&origin=PNI&destination=TKK");
+    expect(body.leg).toMatchObject({ match: "unmatched" });
+    expect(body.hasStarlink).not.toBe(true);
+    expect(legsOf(body)).toEqual([]);
+  });
+
+  test("the same leg asked on its own local date is that leg", async () => {
+    const body = await api("UA176", NEXT, "&origin=PNI&destination=TKK");
     expect(body.leg).toMatchObject({ match: "exact" });
     expect(legsOf(body)).toEqual(["PNI-TKK"]);
   });
