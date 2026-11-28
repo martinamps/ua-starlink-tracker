@@ -391,8 +391,12 @@ export async function fetchAllSheets(
           aircraft.TailNumber = tailNumber;
         }
 
-        // Get the "Operated By" field if it exists, otherwise use "United Airlines"
-        aircraft.OperatedBy = aircraft["Operated By"] || "United Airlines";
+        // The sheet spells SkyWest two ways ("Skywest dba UAX", "SkyWest dba
+        // UAX"); store one so every surface and the CSV agree.
+        aircraft.OperatedBy = (aircraft["Operated By"] || "United Airlines").replace(
+          /^Skywest\b/,
+          "SkyWest"
+        );
 
         // Don't overwrite DateFound - let database preserve existing dates
 
