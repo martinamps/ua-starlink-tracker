@@ -18,6 +18,7 @@
  * serving, however long it ran. About 200 KB per deploy that changes
  * everything, so a busy week stays within tens of MB.
  */
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ASSET_ARCHIVE_DIR } from "../utils/constants";
@@ -42,6 +43,14 @@ export interface AssetArchive {
   find(pathname: string): { file: string; contentType: string } | null;
 }
 
+function isPlainFile(file: string): boolean {
+  try {
+    return fs.lstatSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
 export function openAssetArchive(
   dir: string,
   opts: { keepMs?: number; now?: () => number } = {}
@@ -56,12 +65,18 @@ export function openAssetArchive(
     fs.utimesSync(file, t, t);
   };
 
+  // lstat throughout: a link placed in the folder is never followed, served or
+  // pruned through, and one that dangles doesn't stop the prune.
   try {
     fs.mkdirSync(dir, { recursive: true });
     for (const name of fs.readdirSync(dir)) {
       const file = path.join(dir, name);
-      const stat = fs.statSync(file);
-      if (stat.isFile() && now() - stat.mtimeMs > keepMs) fs.rmSync(file, { force: true });
+      try {
+        const stat = fs.lstatSync(file);
+        if (stat.isFile() && now() - stat.mtimeMs > keepMs) fs.rmSync(file, { force: true });
+      } catch (err) {
+        logError(`Asset archive could not prune ${file}`, err);
+      }
     }
   } catch (err) {
     logError(`Asset archive at ${dir} could not be pruned`, err);
@@ -72,11 +87,21 @@ export function openAssetArchive(
       if (!FINGERPRINTED_ASSET.test(href)) return;
       const file = path.join(dir, path.basename(href));
       try {
-        if (!fs.existsSync(file)) {
-          // Written whole then renamed, so a reader never sees half a file.
-          const tmp = `${file}.${process.pid}.tmp`;
-          fs.writeFileSync(tmp, body);
-          fs.renameSync(tmp, file);
+        if (!isPlainFile(file)) {
+          // Written whole then renamed, so a reader never sees half a file. The
+          // suffix is random, not the pid: that is 7 in every container. The
+          // rename also replaces a link sitting at the name with real bytes.
+          const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+          try {
+            fs.writeFileSync(tmp, body);
+            fs.renameSync(tmp, file);
+          } catch (err) {
+            // A full disk leaves part of the file written; don't hold that space.
+            try {
+              fs.rmSync(tmp, { force: true });
+            } catch {}
+            throw err;
+          }
         }
         stamp(file);
         current.add(file);
@@ -101,11 +126,7 @@ export function openAssetArchive(
       const file = path.join(dir, name);
       const contentType = TYPES[path.extname(name).slice(1)];
       if (!contentType) return null;
-      try {
-        return fs.statSync(file).isFile() ? { file, contentType } : null;
-      } catch {
-        return null;
-      }
+      return isPlainFile(file) ? { file, contentType } : null;
     },
   };
 }

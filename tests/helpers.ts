@@ -27,6 +27,22 @@ export function openSnapshot(): Database {
   return new Database(TEST_DB, { readonly: true });
 }
 
+/**
+ * A writable in-memory copy of the snapshot. The copy's header is set to the
+ * rollback journal first: bytes 18 and 19 record WAL when the file was ever
+ * left in WAL (openDatabase switches whatever it opens), and an in-memory
+ * database with that header fails every statement with "unable to open
+ * database file".
+ */
+export function snapshotInMemory(file = TEST_DB): Database {
+  const src = file === TEST_DB ? openSnapshot() : new Database(file, { readonly: true });
+  const bytes = src.serialize();
+  src.close();
+  bytes[18] = 1;
+  bytes[19] = 1;
+  return Database.deserialize(bytes);
+}
+
 let snapshotDdl: string[] | undefined;
 
 function loadSnapshotDdl(): string[] {
