@@ -700,7 +700,9 @@ export function detourBoundMiles(directMiles: number): number {
 
 // ISO country for every non-US code in AIRPORT_COORDS; a mapped code with no
 // entry is US (territories included). Explicit rather than inferred from a
-// "Y" prefix, which would misfile YKM (Yakima, WA).
+// "Y" prefix, which would misfile YKM (Yakima, WA). A foreign airport placed
+// without a line here is silently domestic: tests/airport-country.test.ts
+// holds each code against the register's country and its own zone.
 // biome-ignore format: grouped by region keeps the table diffable
 export const AIRPORT_COUNTRY: Record<string, string> = {
   YEG: "CA", YHZ: "CA", YLW: "CA", YOW: "CA", YQB: "CA", YQG: "CA", YUL: "CA", YVR: "CA",
@@ -750,6 +752,10 @@ export const AIRPORT_COUNTRY: Record<string, string> = {
   ABV: "NG", BRI: "IT", BSL: "FR", CAG: "IT", CMF: "FR", CTA: "IT", DBV: "HR", FAO: "PT", HER: "GR",
   IBZ: "ES", JMK: "GR", JTR: "GR", MLH: "FR", OLB: "IT", PMO: "IT", POP: "DO", RAI: "CV", SID: "CV",
   SPU: "HR", ZNZ: "TZ",
+  // Placed with a point and a zone but no line here, so each read as US until
+  // tests/airport-country.test.ts compared this table with the register.
+  BDA: "BM", CEB: "PH", ESB: "TR", FAB: "GB", KHH: "TW", KTI: "KH", NGO: "JP", STN: "GB",
+  SVO: "RU", TGZ: "MX", XPL: "HN",
 };
 
 /**
