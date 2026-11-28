@@ -69,11 +69,15 @@ import {
 import { airportCoords } from "../utils/airport-geo";
 import {
   AIRPORT_TZ,
+  type DatedLeg,
   type FlightDateWindow,
+  THROUGH_SPAN_SEC,
   airportLocalDate,
   airportTimezone,
   flightDateWindow,
+  legsOnFlightDate,
   matchesLocalDate,
+  throughLegsOnFlightDate,
 } from "../utils/airport-tz";
 import {
   type FallbackSegment,
@@ -766,7 +770,14 @@ export async function resolveFlightVerdict(
   if (cfg.code === "QR") return resolveQatarLeg(reader, normalized, date, window, now, asked);
   if (cfg.statementRule) return statementVerdict(cfg, reader, normalized, date, window, now, asked);
 
-  const { rows, unequipped } = assignmentRowsOn(cfg, reader, normalized, date, window, asked);
+  const { rows, unequipped, journey } = assignmentRowsOn(
+    cfg,
+    reader,
+    normalized,
+    date,
+    window,
+    asked
+  );
   // Community carriers hold their unequipped tails in the schedule already.
   let deps = asked;
   if (asked.lookupTail === null && asked.storedSightings && !cfg.communitySource) {
@@ -815,10 +826,36 @@ export async function resolveFlightVerdict(
     );
     return { ...verdict, leg: unscopedResolution(ambiguousLeg(leg)) };
   };
-  const sel = selectLeg(rows, rowDeparture, rowArrival, leg);
+  // A leg asked for is the one departing on that local date at its origin, the
+  // date a ticket prints for it. A through flight's leg past midnight still
+  // tells a whole-journey ask apart from its first hop, but never answers one:
+  // the same pair departing that local date may be the earlier night's, on
+  // another plane, and not stored at all.
+  const ownDay = (r: { departure_airport: string; departure_time: number }) =>
+    matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
+  const onOwnDay = <T extends { departure_airport: string; departure_time: number }>(
+    s: LegSelection<T>
+  ): LegSelection<T> => {
+    if (s.match !== "exact" && s.match !== "origin") return s;
+    const items = s.items.filter(ownDay);
+    return items.length > 0 ? { items, match: s.match } : { items: [], match: null };
+  };
+  const sel = onOwnDay(selectLeg(rows, rowDeparture, rowArrival, leg));
   // Community carriers also hold rows for unequipped tails; they scope the same way.
-  const unequippedSel = selectLeg(unequipped, rowDeparture, rowArrival, leg);
-  if (sel.match === "ambiguous" || unequippedSel.match === "ambiguous") return unscopedAnswer();
+  const unequippedSel = onOwnDay(selectLeg(unequipped, rowDeparture, rowArrival, leg));
+  const journeySel = selectLeg(
+    journey,
+    (r) => normalizeAirportCode(r.departure_airport),
+    (r) => normalizeAirportCode(r.arrival_airport),
+    leg
+  );
+  if (
+    sel.match === "ambiguous" ||
+    unequippedSel.match === "ambiguous" ||
+    journeySel.match === "ambiguous"
+  ) {
+    return unscopedAnswer();
+  }
   const scoped = await verdictFromRows(
     cfg,
     reader,
@@ -890,18 +927,47 @@ function assignmentRowsOn(
   date: string,
   window: FlightDateWindow,
   deps: Pick<ResolveDeps, "lookupTail">
-): { rows: FlightAssignmentRow[]; unequipped: UnequippedAssignment[] } {
+): {
+  rows: FlightAssignmentRow[];
+  unequipped: UnequippedAssignment[];
+  /** Every leg a through flight flies on the date, both nights' where two are held. */
+  journey: DatedLeg[];
+} {
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
+  const fetchEnd = window.queryEnd + THROUGH_SPAN_SEC;
 
   // Query is last_updated DESC, so dedupe by departure_time keeps the
-  // most-recent row after an aircraft swap; then keep only rows whose
-  // departure-airport local date matches the queried date.
+  // most-recent row after an aircraft swap; then keep only the rows that fly
+  // on the queried date (legsOnFlightDate: its local date at the departure
+  // airport, or a through flight's later legs past local midnight).
   const seen = new Set<number>();
-  const onDate = (r: { departure_airport: string; departure_time: number }) =>
-    matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
-  const unequipped = cfg.communitySource
-    ? reader.getUnequippedAssignments(variants, window.queryStart, window.queryEnd).filter(onDate)
-    : [];
+  // Every carrier's unequipped rows can claim a pair for its own local date
+  // (the earlier night of a daily through flight); only a community carrier's
+  // are read for the answer.
+  const unequippedHeld = reader.getUnequippedAssignments(variants, window.queryStart, fetchEnd);
+  const unequippedAll = cfg.communitySource ? unequippedHeld : [];
+  const scheduledAll = reader
+    .getFlightAssignments(variants, window.queryStart, fetchEnd)
+    .filter((r) => {
+      if (seen.has(r.departure_time)) return false;
+      seen.add(r.departure_time);
+      return true;
+    });
+  const onDate = legsOnFlightDate<DatedLeg>(
+    date,
+    [...scheduledAll, ...unequippedAll],
+    window.start,
+    window.end,
+    unequippedHeld
+  );
+  const unequipped = unequippedAll.filter((u) => onDate.has(u));
+  // Both nights' legs, for telling a whole-journey ask from its first hop.
+  const throughOn = throughLegsOnFlightDate<DatedLeg>(
+    date,
+    [...scheduledAll, ...unequippedAll],
+    window.start,
+    window.end
+  );
   // Only community carriers poll non-★ tails, so only they can hold a newer
   // non-★ row that supersedes a ★ row for the same departure (a swap).
   const supersededAt = new Map<number, number>();
@@ -911,23 +977,24 @@ function assignmentRowsOn(
       Math.max(u.last_updated, supersededAt.get(u.departure_time) ?? 0)
     );
   }
-  const scheduled = reader
-    .getFlightAssignments(variants, window.queryStart, window.queryEnd)
-    .filter((r) => {
-      if (seen.has(r.departure_time)) return false;
-      seen.add(r.departure_time);
-      return true;
-    })
-    .filter(onDate)
+  const scheduled = scheduledAll
+    .filter((r) => onDate.has(r))
     .filter((r) => r.last_updated >= (supersededAt.get(r.departure_time) ?? 0));
   // An answer made with no live lookup (the hub, a page's first paint) reads
   // what an earlier lookup stored: a listed tail it named after our last read
   // of that tail's schedule is on the flight as far as we know.
-  const rows =
-    scheduled.length === 0 && deps.lookupTail === null
-      ? reader.getListedSightings(variants, window.queryStart, window.queryEnd).filter(onDate)
-      : scheduled;
-  return { rows, unequipped };
+  const sightings = () => {
+    const all = reader.getListedSightings(variants, window.queryStart, fetchEnd);
+    const on = legsOnFlightDate<DatedLeg>(date, all, window.start, window.end, [
+      ...scheduledAll,
+      ...unequippedHeld,
+    ]);
+    return all.filter((r) => on.has(r));
+  };
+  const rows = scheduled.length === 0 && deps.lookupTail === null ? sightings() : scheduled;
+  const journey =
+    rows === scheduled ? [...scheduledAll, ...unequippedAll].filter((r) => throughOn.has(r)) : rows;
+  return { rows, unequipped, journey };
 }
 
 /**
@@ -968,11 +1035,18 @@ export function flightDayLegs(
   // Roster tails off the Starlink list, where the carrier's schedule holds
   // them: the answer reads these for a community-source carrier only, but a
   // leg they fly exists for any carrier.
-  const unequipped = reader
-    .getUnequippedAssignments(variants, window.queryStart, window.queryEnd)
-    .filter((u) =>
-      matchesLocalDate(date, u.departure_airport, u.departure_time, window.start, window.end)
-    );
+  const unequippedAll = reader.getUnequippedAssignments(
+    variants,
+    window.queryStart,
+    window.queryEnd + THROUGH_SPAN_SEC
+  );
+  const unequippedOn = legsOnFlightDate<DatedLeg>(
+    date,
+    [...rows, ...unequippedAll],
+    window.start,
+    window.end
+  );
+  const unequipped = unequippedAll.filter((u) => unequippedOn.has(u));
   for (const r of [...rows].sort((a, b) => a.departure_time - b.departure_time)) {
     add(r.departure_airport, r.arrival_airport, {
       departure_time: r.departure_time,
