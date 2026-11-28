@@ -45,7 +45,7 @@ import {
   rememberRead,
   writeRecent,
 } from "../src/client/recent-checks";
-import { labelPhrase } from "../src/components/ui/format";
+import { flightLabel, labelPhrase, probTier } from "../src/components/ui/format";
 import { COUNTERS, metrics, normalizeRecentAction } from "../src/observability/metrics";
 import { createApp } from "../src/server/app";
 import { RECENT_PREFIX, RECENT_TAP_PATH } from "../src/server/recent-checks";
@@ -323,6 +323,29 @@ describe("the change note", () => {
     );
     expect(changeNote(odds("likely", ">99%"), odds("likely", "88%"), WHEN)).toBe(
       "Changed since you checked on Nov 25: the odds were over 99%."
+    );
+  });
+
+  test("a tier that flips while the printed figure stays is no change", () => {
+    // An unseen flight (n=0) prints a floored share; its tier rounds.
+    const unseen = (p: number) => odds(probTier(p), flightLabel(p, 0));
+    for (const [was, now] of [
+      [0.695, 0.692],
+      [0.699, 0.691],
+      [0.397, 0.392],
+      [0.3999, 0.39],
+    ]) {
+      expect(unseen(was).tone).not.toBe(unseen(now).tone);
+      expect(unseen(was).odds).toBe(unseen(now).odds);
+      expect(changeNote(unseen(was), unseen(now), WHEN)).toBeNull();
+      expect(changeNote(unseen(now), unseen(was), WHEN)).toBeNull();
+    }
+    // A figure that did move across the cut still says so.
+    expect(changeNote(unseen(0.701), unseen(0.692), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the odds were about 70%."
+    );
+    expect(changeNote(unseen(0.401), unseen(0.392), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the odds were about 40%."
     );
   });
 

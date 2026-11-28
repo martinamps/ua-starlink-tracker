@@ -15,7 +15,8 @@
  * the flight's own page (on the hub, its form), and says what moved in plain
  * words: an aircraft newly assigned, a different aircraft, a firm answer that
  * moved, or a forecast whose odds moved by ODDS_STEP points or across a
- * likely / maybe / unlikely cut. Smaller drift, and a firm answer that is
+ * likely / maybe / unlikely cut. Smaller drift, a printed figure that did not
+ * change (its tier can still flip at a cut), and a firm answer that is
  * missing today (a lookup that failed reads the same), get no note. The note
  * stays until the flight is checked again, so it reads the same on every return.
  *
@@ -346,6 +347,10 @@ const planes = (tails: string[]) => tails.join(" and ");
 /** What a forecast said before, when it moved enough to say so; else null. */
 function forecastWas(prev: Seen, now: Seen): string | null {
   if (prev.odds && now.odds) {
+    // The row shows the figure; its tier is only a colour. An unseen flight's
+    // figure floors while its tier rounds, so near a cut the tier can flip
+    // with the figure the same: nothing the reader sees moved.
+    if (prev.odds === now.odds) return null;
     const moved =
       prev.tone !== now.tone || Math.abs(oddsValue(prev.odds) - oddsValue(now.odds)) >= ODDS_STEP;
     return moved ? `the odds were ${labelPhrase(prev.odds)}` : null;
