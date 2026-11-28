@@ -100,7 +100,7 @@ export const FACT_TAIL_RESERVE = 20;
 export const FACT_WAITING_MAX_PAGES = 60;
 
 /** Flight pages one site may submit in any 24 hours, on a ledger of their
- * own. A stand-in seeded from the live feed turned ~300 United answers a day
+ * own. A stand-in seeded from the live feed turned 314-352 United answers a day
  * (production lists about twice its flights), while Bingbot fetches ~320
  * United flight pages a day: each address sent counts against the engine's
  * crawl of the site, so this asks for at most a third more. Past it the rest
