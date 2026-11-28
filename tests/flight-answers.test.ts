@@ -102,14 +102,11 @@ describe("whether a changed key turned the answer", () => {
 
   test("then the firm lead's other turns, the usual band, and the quiet note alone", () => {
     const likely = key({ nextAssigned: { ...assigned, verified: false } });
-    const none = key({ nextAssigned: null });
     const band = key({
       prediction: { probability: 0.8, n_observations: 40, confidence: "medium" },
     });
     const quiet = key({ notObservedSince: 1_799_000_000 });
     expect(answerTurn(base, likely)).toBe(1);
-    expect(answerTurn(base, none)).toBe(1);
-    expect(answerTurn(none, base)).toBe(1);
     expect(answerTurn(base, band)).toBe(2);
     expect(answerTurn(base, quiet)).toBe(3);
     const ranks = [answerTurn(base, likely), answerTurn(base, band), answerTurn(base, quiet)];
@@ -123,6 +120,38 @@ describe("whether a changed key turned the answer", () => {
     expect(answerTurn(base, leg)).toBeNull();
     expect(answerTurn(base, route)).toBeNull();
     expect(answerTurn(base, base)).toBeNull();
+  });
+
+  test("a word that changes with the leg is rotation, not a turn", () => {
+    const otherLeg = { ...assigned, origin: "DEN", destination: "SFO" };
+    const likelyThere = key({ nextAssigned: { ...otherLeg, verified: false } });
+    const noThere = key({
+      nextAssigned: { ...otherLeg, hasStarlink: false, wifi: "non-Starlink" },
+    });
+    expect(answerTurn(base, likelyThere)).toBeNull();
+    expect(answerTurn(likelyThere, base)).toBeNull();
+    expect(answerTurn(base, noThere)).toBeNull();
+    expect(answerTurn(noThere, base)).toBeNull();
+  });
+
+  test("a firm lead that appears or goes is no turn", () => {
+    const none = key({ nextAssigned: null });
+    const no = key({ nextAssigned: { ...assigned, hasStarlink: false, wifi: "non-Starlink" } });
+    for (const firm of [base, no]) {
+      expect(answerTurn(firm, none)).toBeNull();
+      expect(answerTurn(none, firm)).toBeNull();
+    }
+  });
+
+  test("the usual band and the quiet note still count when the leg or lead moves too", () => {
+    const band: Partial<FlightFacts> = {
+      prediction: { probability: 0.8, n_observations: 40, confidence: "medium" },
+    };
+    const quiet: Partial<FlightFacts> = { notObservedSince: 1_799_000_000 };
+    const legBand = key({ ...band, nextAssigned: { ...assigned, origin: "DEN", verified: false } });
+    expect(answerTurn(base, legBand)).toBe(2);
+    expect(answerTurn(base, key({ ...band, nextAssigned: null }))).toBe(2);
+    expect(answerTurn(base, key({ ...quiet, nextAssigned: null }))).toBe(3);
   });
 
   test("keys that are not keys never pass for news", () => {

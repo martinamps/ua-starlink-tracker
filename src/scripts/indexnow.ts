@@ -18,11 +18,11 @@
  * with what was last recorded and queues the pages of what differs. The
  * first pass only records, so a deploy of this feature announces nothing.
  *
- * A flight page whose answer to a traveller turned (yes ↔ no, the usual
- * answer's band, the quiet note: answerTurn in check-flight/answer-key.ts) is
- * news for that page alone. The hourly answer watcher hands those over; a
- * first sighting, a new plane with the same answer or a leg rotation never
- * reaches here. They go out in one small batch per pass, under a daily cap of
+ * A flight page whose answer to a traveller turned (yes ↔ no on the same
+ * leg, the usual answer's band, the quiet note: answerTurn in
+ * check-flight/answer-key.ts) is news for that page alone. The hourly answer
+ * watcher hands those over; a first sighting, a new plane with the same
+ * answer, a leg rotation or a lead that appears or goes never reaches here. They go out in one small batch per pass, under a daily cap of
  * their own, at most once a day per page, so tails and facts keep all of
  * theirs.
  *
