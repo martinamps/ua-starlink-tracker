@@ -12,7 +12,8 @@ import { OBSERVED_WIFI_SOURCES } from "../src/airlines/registry";
 import { logFlightAssignments } from "../src/database/assignment-log";
 import {
   addDiscoveredStarlinkPlane,
-  backfillAlaskaSkyWestOperator,
+  alaskaOperatorFromTail,
+  backfillAlaskaRegionalOperators,
   computeWifiConsensus,
   demoteRetrofittedNegatives,
   getFirstFlights,
@@ -613,27 +614,59 @@ describe("homepage list", () => {
   });
 });
 
-describe("Alaska SkyWest operator backfill", () => {
-  test("N…SY tails read SkyWest; other Alaska tails untouched; rerun is a no-op", () => {
+describe("Alaska regional operator by registration block", () => {
+  const plane = (db: Database, tail: string, op: string) =>
+    db
+      .query(
+        `INSERT INTO starlink_planes (aircraft, wifi, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+         VALUES ('Embraer E175LR', 'Starlink', NULL, ?, ?, 'horizon', NULL, 'AS')`
+      )
+      .run(tail, op);
+  const operators = (db: Database) =>
+    db.query("SELECT TailNumber AS t, OperatedBy AS o FROM starlink_planes ORDER BY t").all() as {
+      t: string;
+      o: string;
+    }[];
+
+  test("N…SY reads SkyWest, N…QX Horizon, any other tail claims no operator", () => {
+    expect(alaskaOperatorFromTail("N171SY")).toBe("SkyWest Airlines");
+    expect(alaskaOperatorFromTail("N670QX")).toBe("Horizon Air");
+    expect(alaskaOperatorFromTail("N839AK")).toBeNull();
+  });
+
+  test("backfill relabels mislabelled regional tails only; rerun is a no-op", () => {
     const db = makeSyntheticDb();
-    const plane = (tail: string, op: string) =>
-      db
-        .query(
-          `INSERT INTO starlink_planes (aircraft, wifi, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
-           VALUES ('Embraer E175LR', 'Starlink', NULL, ?, ?, 'horizon', NULL, 'AS')`
-        )
-        .run(tail, op);
-    plane("N171SY", "Horizon Air");
-    plane("N650QX", "Horizon Air");
-    expect(backfillAlaskaSkyWestOperator(db)).toBe(1);
-    expect(backfillAlaskaSkyWestOperator(db)).toBe(0);
-    const ops = db
-      .query("SELECT TailNumber AS t, OperatedBy AS o FROM starlink_planes ORDER BY t")
-      .all() as { t: string; o: string }[];
-    expect(ops).toEqual([
-      { t: "N171SY", o: "SkyWest Airlines" },
-      { t: "N650QX", o: "Horizon Air" },
-    ]);
+    plane(db, "N171SY", "Horizon Air");
+    plane(db, "N670QX", "Alaska Airlines");
+    plane(db, "N650QX", "Horizon Air");
+    plane(db, "N839AK", "Alaska Airlines");
+    expect(backfillAlaskaRegionalOperators(db)).toBeGreaterThan(0);
+    expect(backfillAlaskaRegionalOperators(db)).toBe(0);
+    for (const { t, o } of operators(db)) {
+      expect(o).toBe(alaskaOperatorFromTail(t) ?? "Alaska Airlines");
+    }
+    db.close();
+  });
+
+  test("a type-rule listing takes the tail's operator, not the airline's name", () => {
+    const db = makeSyntheticDb();
+    for (const tail of ["N673QX", "N199SY", "N850AK"]) {
+      addDiscoveredStarlinkPlane(
+        db,
+        tail,
+        "Embraer E175LR",
+        "Starlink",
+        "Alaska Airlines",
+        "horizon",
+        {
+          airline: "AS",
+          evidence: "type_rule",
+        }
+      );
+    }
+    for (const { t, o } of operators(db)) {
+      expect(o).toBe(alaskaOperatorFromTail(t) ?? "Alaska Airlines");
+    }
     db.close();
   });
 });
@@ -648,7 +681,7 @@ describe("migrate", () => {
     migrate(db);
     const analyzed = meta(db, "schema:analyzed_indexes");
     expect(analyzed).toContain("idx_upf_route");
-    expect(meta(db, "schema:backfill_alaska_skywest_operator")).not.toBeNull();
+    expect(meta(db, "schema:backfill_alaska_regional_operators")).not.toBeNull();
     expect(meta(db, "schema:namespace_meta_keys")).not.toBeNull();
 
     db.query(

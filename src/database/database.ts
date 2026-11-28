@@ -862,7 +862,7 @@ export function setupTables(db: Database) {
   migrateMultiAirline(db);
   ensureIndexes(db);
   dropRedundantIndexes(db);
-  runOnce(db, "backfill_alaska_skywest_operator", () => backfillAlaskaSkyWestOperator(db));
+  runOnce(db, "backfill_alaska_regional_operators", () => backfillAlaskaRegionalOperators(db));
   db.exec(ASSIGNMENT_LOG_DDL);
   db.exec(FLIGHT_ANSWERS_DDL);
   // When a lookup last returned the row's departure without its tail
@@ -922,24 +922,50 @@ function migrateFirstFlightsKey(db: Database): void {
 }
 
 /**
- * Alaska's SkyWest-operated E175s (N…SY) were seeded from the Horizon roster
- * page and kept OperatedBy 'Horizon Air'. The SY suffix is SkyWest's
- * registration block, so the label follows the tail. Runs once (migrate);
- * addDiscoveredStarlinkPlane applies the same rule to new listings.
+ * Alaska's regional E175s are flown by Horizon (registrations N…QX) and
+ * SkyWest (N…SY); each carrier registers in its own suffix block, so the tail
+ * names its operator. FR24's as-asa page doesn't, and the type-rule settles
+ * passed the airline's own name, so new Horizon deliveries were listed as
+ * "Alaska Airlines" (N670QX–N672QX) and the hourly fleet sync copied that
+ * label into united_fleet. Null for any other tail: no operator is claimed
+ * where the registration can't show it.
  */
-const ALASKA_SKYWEST_OPERATOR = "SkyWest Airlines";
+const ALASKA_OPERATOR_BY_SUFFIX: ReadonlyArray<{ glob: string; re: RegExp; name: string }> = [
+  { glob: "N*SY", re: /^N.*SY$/, name: "SkyWest Airlines" },
+  { glob: "N*QX", re: /^N.*QX$/, name: "Horizon Air" },
+];
 
-export function backfillAlaskaSkyWestOperator(db: Database): number {
-  if (!tableExists(db, "starlink_planes")) return 0;
-  const res = db
-    .query(
-      `UPDATE starlink_planes SET OperatedBy = ?1
-       WHERE airline = 'AS' AND TailNumber GLOB 'N*SY'
-         AND (OperatedBy IS NULL OR OperatedBy <> ?1)`
-    )
-    .run(ALASKA_SKYWEST_OPERATOR);
-  if (res.changes > 0) info(`Backfilled OperatedBy on ${res.changes} Alaska SkyWest tails`);
-  return res.changes;
+export function alaskaOperatorFromTail(tail: string): string | null {
+  return ALASKA_OPERATOR_BY_SUFFIX.find((o) => o.re.test(tail))?.name ?? null;
+}
+
+/** Relabels listed and rostered Alaska tails whose registration block names
+ * another operator. Runs once per rule set (migrate); addDiscoveredStarlinkPlane
+ * applies the same rule to new listings. */
+export function backfillAlaskaRegionalOperators(db: Database): number {
+  let changes = 0;
+  for (const { glob, name } of ALASKA_OPERATOR_BY_SUFFIX) {
+    if (tableExists(db, "starlink_planes")) {
+      changes += db
+        .query(
+          `UPDATE starlink_planes SET OperatedBy = ?1
+           WHERE airline = 'AS' AND TailNumber GLOB ?2
+             AND (OperatedBy IS NULL OR OperatedBy <> ?1)`
+        )
+        .run(name, glob).changes;
+    }
+    if (tableExists(db, "united_fleet")) {
+      changes += db
+        .query(
+          `UPDATE united_fleet SET operated_by = ?1
+           WHERE airline = 'AS' AND tail_number GLOB ?2
+             AND (operated_by IS NULL OR operated_by <> ?1)`
+        )
+        .run(name, glob).changes;
+    }
+  }
+  if (changes > 0) info(`Backfilled operator on ${changes} Alaska regional tail rows`);
+  return changes;
 }
 
 function hasColumn(db: Database, table: string, column: string): boolean {
@@ -6481,9 +6507,8 @@ export function addDiscoveredStarlinkPlane(
     gid,
     typeRule ? null : (opts.dateFound ?? today),
     tailNumber,
-    opts.airline === "AS" && /^N.*SY$/.test(tailNumber)
-      ? ALASKA_SKYWEST_OPERATOR
-      : operatedBy || (AIRLINES[opts.airline]?.name ?? opts.airline),
+    (opts.airline === "AS" ? alaskaOperatorFromTail(tailNumber) : null) ??
+      (operatedBy || (AIRLINES[opts.airline]?.name ?? opts.airline)),
     fleet,
     unverified ? null : wifiProvider,
     unverified ? null : unixNow(),
