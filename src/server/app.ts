@@ -2825,6 +2825,14 @@ function reportedInstallsFor({ site, reader }: RequestContext): ReportedInstall[
   return site.scope === "UA" ? reader.getReportedInstalls(REPORTED_LIMIT) : [];
 }
 
+/** The page's panel, unlike the feed, keeps a listing however old: while the
+ * sheet still lists the tail and we still don't count it, a reader looking for
+ * it should find it, with the day we first saw it. A feed entry is news, so the
+ * feed keeps the log's age cap. Undefined where no sheet exists to disagree. */
+function reportedPanelFor({ site, reader }: RequestContext): ReportedInstall[] | undefined {
+  return site.scope === "UA" ? reader.getListedNotCounted() : undefined;
+}
+
 const feedXml: Handler = (ctx) => {
   const { site, reader } = ctx;
   // Same gate as the page it syndicates, and as every link to it: with no
@@ -2952,7 +2960,7 @@ const newlyEquippedPage: Handler = (ctx) => {
       };
   return renderSubPage(ctx, NewlyEquippedPage, "/newly-equipped", meta, {
     installs,
-    reported: reportedInstallsFor(ctx),
+    reported: reportedPanelFor(ctx),
     airlines: ctx.reader.getPerAirlineStats(),
     firstFlights: firstFlightsFor(ctx.reader, installs),
   });

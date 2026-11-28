@@ -139,16 +139,48 @@ describe("/newly-equipped", () => {
 
   test("excluded rows appear nowhere on the page", async () => {
     const { text } = await bodyOf(app, "/newly-equipped", UA);
-    for (const tail of ["N30001", "N30002", "N30003", "N30004", "N30005"]) {
+    for (const tail of ["N30001", "N30004", "N30005"]) {
       expect(text).not.toContain(`id="${tail}"`);
     }
   });
 
-  test("the section is absent when nothing is reported", async () => {
+  test("a listing the sheet still keeps stays on the panel past the feed's age cap", async () => {
+    const { text } = await bodyOf(app, "/newly-equipped", UA);
+    const reportedHtml = text.slice(text.indexOf("Reported, not yet confirmed"));
+    for (const tail of ["N30002", "N30003"]) {
+      expect(reportedHtml).toContain(`id="${tail}"`);
+    }
+    const old = reportedHtml.slice(reportedHtml.indexOf('id="N30002"'));
+    expect(old.slice(0, old.indexOf("Not confirmed"))).toContain("First seen ");
+  });
+
+  test("the panel's rows are /api/mismatches' own list", async () => {
+    const { text } = await bodyOf(app, "/newly-equipped", UA);
+    const reportedHtml = text.slice(text.indexOf("Reported, not yet confirmed"));
+    const api = await jsonOf(app, "/api/mismatches", UA);
+    const listed = (api.listed_not_counted as { tail_number: string }[]).map((r) => r.tail_number);
+    expect(listed.length).toBeGreaterThan(0);
+    const shown = [...reportedHtml.matchAll(/id="(N[0-9A-Z]+)"/g)].map((m) => m[1]);
+    expect(new Set(shown)).toEqual(new Set(listed));
+  });
+
+  test("a listing the sheet drops leaves the panel", async () => {
+    const dropped = makeSyntheticDb();
+    seed(dropped, "N30002", { verified: "Viasat", found: daysAgo(REPORTED_MAX_AGE_DAYS + 5) });
+    dropped.query("DELETE FROM starlink_planes WHERE TailNumber = 'N30002'").run();
+    const { text } = await bodyOf(createApp(dropped), "/newly-equipped", UA);
+    expect(text).not.toContain('id="N30002"');
+    dropped.close();
+  });
+
+  test("with nothing reported the panel says so plainly", async () => {
     const clean = makeSyntheticDb();
     seed(clean, "N10001", { verified: "Starlink", found: daysAgo(4) });
     const { text } = await bodyOf(createApp(clean), "/newly-equipped", UA);
-    expect(text).not.toContain("Reported, not yet confirmed");
+    const reportedHtml = text.slice(text.indexOf("Reported, not yet confirmed"));
+    expect(text).toContain("Reported, not yet confirmed");
+    expect(reportedHtml).toContain("None right now.");
+    expect(reportedHtml).not.toContain("not in our count");
     clean.close();
   });
 

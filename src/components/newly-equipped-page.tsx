@@ -125,9 +125,11 @@ function ReportedRow({
         <TailName site={site} row={row} tone="text-secondary" />
         <span className="text-xs text-secondary">{aircraftName(row.Aircraft)}</span>
         {operator && <span className="text-xs text-muted hidden sm:inline">{operator}</span>}
-        <span className="text-xs text-muted tabular-nums ml-auto">
-          First seen {shortDate(row.DateFound.slice(0, 10))}
-        </span>
+        {row.DateFound ? (
+          <span className="text-xs text-muted tabular-nums ml-auto">
+            First seen {shortDate(row.DateFound.slice(0, 10))}
+          </span>
+        ) : null}
       </div>
       <div className="text-xs text-muted mt-1">
         Not confirmed: {reportedClause(row)}
@@ -143,7 +145,7 @@ function ReportedRow({
 export default function NewlyEquippedPage({
   site,
   installs,
-  reported = [],
+  reported,
   airlines,
   firstFlights,
   pageLinks,
@@ -216,28 +218,40 @@ export default function NewlyEquippedPage({
         </div>
       </section>
 
-      {reported.length > 0 && (
+      {reported && (
         <section className={SECTION}>
           <div className={PANEL}>
             <div className={EYEBROW}>Reported, not yet confirmed</div>
-            <p className="text-sm text-muted mb-3">
-              The community fleet sheet lists these aircraft with Starlink, but our own check of the
-              airline's site has not confirmed them: it reads something else, or has not read the
-              plane since the listing. They are not in our count. An airline's site can take several
-              days to show a new install; each one moves to the list above when our check agrees.
-            </p>
-            {reported.map((r) => (
-              <ReportedRow
-                site={site}
-                key={r.TailNumber}
-                row={r}
-                airlineName={airlines.find((a) => a.code === r.airline)?.name ?? r.airline}
-              />
-            ))}
-            <p className="text-xs text-muted mt-4">
-              Dates are when we first saw the listing on the sheet, which can be later than the day
-              it was added.
-            </p>
+            {reported.length === 0 ? (
+              <p className="text-sm text-muted">
+                None right now. When the community fleet sheet lists an aircraft with Starlink
+                before our own check of the airline's site confirms it, it shows here until our
+                check agrees.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-muted mb-3">
+                  The community fleet sheet lists these aircraft with Starlink, but our own check of
+                  the airline's site has not confirmed them: it reads something else, or has not
+                  read the plane since the listing. They are not in our count. An airline's site can
+                  take several days to show a new install; each one moves to the list above when our
+                  check agrees.
+                </p>
+                {reported.map((r) => (
+                  <ReportedRow
+                    site={site}
+                    key={r.TailNumber}
+                    row={r}
+                    airlineName={airlines.find((a) => a.code === r.airline)?.name ?? r.airline}
+                  />
+                ))}
+                <p className="text-xs text-muted mt-4">
+                  Dates are when we first saw the listing on the sheet, which can be later than the
+                  day it was added. A listing stays here for as long as the sheet keeps it and our
+                  check has not agreed.
+                </p>
+              </>
+            )}
           </div>
         </section>
       )}
