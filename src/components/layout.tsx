@@ -21,6 +21,9 @@ export interface Link {
   label: string;
 }
 
+/** The hub home's flight-check panel: the menu's "Check a flight" lands on it. */
+export const HUB_CHECK_ANCHOR = "check";
+
 /** Inline prose link. */
 export const LINK = "text-accent hover:underline";
 
@@ -32,12 +35,18 @@ export function primaryNavLinks(site: SiteConfig): Link[] {
   const f = site.features;
   return [
     ...(f.checkFlightPage ? [{ href: "/check-flight", label: "Check a flight" }] : []),
+    // The hub has no flight page: its check is the home page's first panel.
+    ...(!f.checkFlightPage && site.scope === "ALL"
+      ? [{ href: `/#${HUB_CHECK_ANCHOR}`, label: "Check a flight" }]
+      : []),
     ...(f.routePlannerPage ? [{ href: "/route-planner", label: "Route planner" }] : []),
     ...(f.airlinesPages ? [{ href: "/airlines", label: "Airlines" }] : []),
     ...(f.fleetPage ? [{ href: "/fleet", label: "Fleet" }] : []),
     ...(f.routesPage ? [{ href: "/routes", label: "Live routes" }] : []),
     ...(f.timelinePage ? [{ href: "/timeline", label: "Timeline" }] : []),
-    ...(f.mcpPage ? [{ href: "/mcp", label: "MCP" }] : []),
+    ...(f.chromeExtension ? [{ href: "/chrome", label: "Extension" }] : []),
+    // The page sets the tracker up in Claude and other AI assistants; "MCP" named the protocol.
+    ...(f.mcpPage ? [{ href: "/mcp", label: "AI assistants" }] : []),
   ];
 }
 

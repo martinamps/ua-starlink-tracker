@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { zonedDeparture } from "../src/components/ui/format";
+import { formatPillTime, zonedDeparture } from "../src/components/ui/format";
 import { createApp } from "../src/server/app";
 import { AIRPORT_TZ } from "../src/utils/airport-tz";
 import { addFleet, addFlight, addPlane, makeSyntheticDb, req } from "./helpers";
@@ -356,35 +356,37 @@ describe("the pill states a departure the permalink page agrees with", () => {
     process.env.TZ = originalTz;
   });
 
-  test("the pill names its zone and matches /check-flight/{fn}", async () => {
+  // [number, from, to, ...clock]: the clock is "SAT 8:35 AM MST".
+  const clockOf = (p: Pill) => p.visibleWords.slice(3).join(" ");
+
+  test("the pill tells the departure airport's time, zone named, as /check-flight/{fn} does", async () => {
     const app = createApp(seedDb());
     const pills = pillsOf(await app.dispatch(req("/", UA_HOST)).then((r) => r.text()));
     const linked = pills.filter((p) => p.href.startsWith("/check-flight/"));
     expect(linked.length).toBeGreaterThan(0);
 
     for (const p of linked) {
-      // Visible text and accessible name read the same clock —
-      // an unlabeled time reads as the viewer's own zone to everyone.
-      const stamped = p.visibleWords.join(" ").match(/([A-Z]{3}) (\d{2}:\d{2}) UTC$/);
-      expect(stamped).not.toBeNull();
-      expect(p.ariaLabel).toContain(`departs ${stamped?.[1]} ${stamped?.[2]} UTC`);
-
-      // The permalink reads the departure airport's own clock (the date the
-      // checker answers for); it must be the same instant the pill names.
-      const epoch = Object.values(seedFlightTimes).find(
-        (t) => new Date(t * 1000).toISOString().slice(11, 16) === stamped?.[2]
-      );
+      const zone = AIRPORT_TZ[p.visibleWords[1]];
+      expect(zone).toBeDefined();
+      const clock = clockOf(p);
+      // Visible text and accessible name read the same clock, and name its
+      // zone: an unlabeled time reads as the viewer's own zone to everyone.
+      expect(clock).toMatch(/^[A-Z]{3} \d{1,2}:\d{2} [AP]M \S+$/);
+      expect(p.ariaLabel).toContain(`departs ${clock}`);
+      const epoch = Object.values(seedFlightTimes).find((t) => formatPillTime(t, zone) === clock);
       expect(epoch).toBeDefined();
+
+      // The permalink states the same instant on the same airport's clock.
       const page = (await app.dispatch(req(p.href, UA_HOST)).then((r) => r.text())).replace(
         /<!-- -->/g,
         ""
       );
       const onPage = page.match(/([A-Z]{3}) → [A-Z]{3}<span[^>]*> · ([^<]+)<\/span>/);
       expect(onPage).not.toBeNull();
-      const zone = AIRPORT_TZ[onPage?.[1] as string];
-      expect(zone).toBeDefined();
+      expect(onPage?.[1]).toBe(p.visibleWords[1]);
       const local = zonedDeparture(epoch as number, zone).full;
       expect(onPage?.[2]).toBe(local);
+      expect(local.endsWith(clock.split(" ").slice(1).join(" "))).toBe(true);
     }
   });
 
@@ -392,17 +394,21 @@ describe("the pill states a departure the permalink page agrees with", () => {
     const app = createApp(seedDb());
     const html = await app.dispatch(req("/", UA_HOST)).then((r) => r.text());
     const pill = pillFor(pillsOf(html), "UA123");
+    expect(pill).toBeDefined();
     // Reading day and time in different zones is the subtler half of the bug:
     // the hour can look right while the weekday belongs to a neighbouring day.
-    const stamped = pill?.visibleWords.join(" ").match(/([A-Z]{3}) (\d{2}:\d{2}) UTC$/);
-    expect(stamped).not.toBeNull();
-    const departure = seedFlightTimes.UA123;
-    expect(stamped?.[1]).toBe(
-      new Date(departure * 1000)
-        .toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })
-        .toUpperCase()
-    );
-    expect(stamped?.[2]).toBe(new Date(departure * 1000).toISOString().slice(11, 16));
+    const zone = AIRPORT_TZ[pill?.visibleWords[1] as string];
+    const departure = new Date(seedFlightTimes.UA123 * 1000);
+    const weekday = departure
+      .toLocaleDateString("en-US", { weekday: "short", timeZone: zone })
+      .toUpperCase();
+    const time = departure.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: zone,
+      timeZoneName: "short",
+    });
+    expect(clockOf(pill as Pill)).toBe(`${weekday} ${time}`.replace(/\u202f/g, " "));
   });
 });
 

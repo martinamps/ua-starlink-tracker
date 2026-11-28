@@ -16,7 +16,12 @@
  */
 import { Fragment, type ReactNode } from "react";
 import { flightInputRules } from "../airlines/flight-number";
-import { type SiteConfig, liveAirlineSites, siteAirline } from "../airlines/registry";
+import {
+  type SiteConfig,
+  hubLookupAirlines,
+  liveAirlineSites,
+  siteAirline,
+} from "../airlines/registry";
 import { RETIRED_CODE_NOTES } from "../airlines/untracked-airline";
 import { ClientScriptTag, buttonClass } from "./layout";
 
@@ -85,6 +90,10 @@ export function FlightSearchForm({
   // which number to use instead.
   const numberNotes =
     mode === "check-any" && answer === "tracked" ? JSON.stringify(RETIRED_CODE_NOTES) : undefined;
+  // The airlines /api/check-any-flight answers, by name: its "not tracked"
+  // error lists them by code, which the page writes out.
+  const trackedAirlines =
+    mode === "check-any" ? JSON.stringify(hubLookupAirlines().map((a) => a.shortName)) : undefined;
   return (
     <>
       <form
@@ -97,6 +106,7 @@ export function FlightSearchForm({
         data-answer={mode === "check-any" ? answer : undefined}
         data-check-pages={checkPages}
         data-number-notes={numberNotes}
+        data-tracked-airlines={trackedAirlines}
         data-prefill-date={prefillDate ? "" : undefined}
         className={`flex flex-col gap-3 sm:flex-row sm:items-end ${className}`}
       >

@@ -5,6 +5,7 @@ import {
   Chip,
   ClientScriptTag,
   Eyebrow,
+  HUB_CHECK_ANCHOR,
   LINK,
   Panel,
   SECTION_WIDE,
@@ -181,6 +182,27 @@ function RouteComparePanel() {
 const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: HeroProps) => {
   return (
     <div className={`${SECTION_WIDE} space-y-6`}>
+      {/* First: most visitors come to ask about one flight, and on a phone the
+          rollout list below it is two screens tall. The menu links here. */}
+      <Panel
+        pad="sm"
+        as="section"
+        id={HUB_CHECK_ANCHOR}
+        className="mx-auto w-full max-w-xl scroll-mt-4"
+      >
+        <Eyebrow as="h2" className="mb-2 text-center">
+          Does your flight have Starlink?
+        </Eyebrow>
+        <FlightSearchForm
+          site={site}
+          id="hub-check-flight"
+          mode="check-any"
+          placeholder="UA1736, AS118, QR1…"
+          prefillDate
+          hideLabels
+          withScript={false}
+        />
+      </Panel>
       <section>
         <SectionTitle>Where each tracked rollout stands</SectionTitle>
         <Panel className="mt-4">
@@ -193,18 +215,6 @@ const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: 
         </p>
       </section>{" "}
       <TrackerLinks /> <RouteComparePanel />
-      <Panel pad="sm">
-        <Eyebrow className="mb-2">Check a flight</Eyebrow>
-        <FlightSearchForm
-          site={site}
-          id="hub-check-flight"
-          mode="check-any"
-          placeholder="UA1736, AS118, QR1…"
-          prefillDate
-          hideLabels
-          withScript={false}
-        />
-      </Panel>
       <RecentInstallsFeed items={recentInstalls} airlines={perAirlineStats} />
       <HubLinkGrid links={hubLinks} />
       <ClientScriptTag name="hub" />
@@ -326,8 +336,8 @@ export const content: AirlineContent = {
       q: "How do I check if my flight has Starlink?",
       a: () => (
         <p>
-          Enter the flight number and date in the flight check above; it covers every airline we
-          track. For United flights,{" "}
+          Enter the flight number and date in the flight check at the top of this page; it covers
+          every airline we track. For United flights,{" "}
           <a href={UNITED_URL} className={LINK}>
             {UNITED_HOST}
           </a>{" "}

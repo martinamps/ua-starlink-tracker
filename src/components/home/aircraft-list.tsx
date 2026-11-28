@@ -24,6 +24,7 @@ import { AIRLINES, type AirlineConfig } from "../../airlines/registry";
 import { FILTER_ACTIVE, FILTER_BUTTON, FILTER_INACTIVE } from "../../client/aircraft-list";
 import type { Aircraft, Flight } from "../../types";
 import { toIata } from "../../utils/airport-code";
+import { airportTimezone } from "../../utils/airport-tz";
 import { Panel, SECTION_WIDE, SectionTitle, SkipLink, SkipTarget } from "../layout";
 import { fmt, formatPillTime } from "../ui/format";
 
@@ -138,10 +139,9 @@ function FlightPills({
         // operating callsign OO4757): the one the permalink is filed under, and
         // the one the list's search index holds.
         const number = rowMarketingNumber(rowAirline, flight.flight_number);
-        // departure_time is a UTC epoch; the clock is pinned to UTC and named,
-        // 24-hour like /check-flight/{fn}, so the two read as one clock. From md
-        // up the column header names the zone, so the pill drops it.
-        const clock = formatPillTime(flight.departure_time);
+        // The departure airport's own clock, zone named, as /check-flight/{fn}
+        // states it, so a pill matches the booking and the page it links to.
+        const clock = formatPillTime(flight.departure_time, airportTimezone(dep));
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: a tail can fly one number twice
           <Fragment key={idx}>
@@ -151,17 +151,14 @@ function FlightPills({
               // The label speaks the visible words as a sentence ("STL to EWR"
               // rather than an arrow) and keeps every one of them, so speech
               // input can name the pill by what it shows (WCAG 2.5.3).
-              aria-label={`Flight ${number}, ${dep} to ${arr}, departs ${clock} UTC`}
+              aria-label={`Flight ${number}, ${dep} to ${arr}, departs ${clock}`}
               className={`flight-pill ${visibility}`}
             >
               {/* A bare <b>: ~1,000 pills a page, styled once under .flight-pill. */}
               <b>{number}</b> <span className="text-accent font-medium">{dep}</span>{" "}
               <span className="text-muted">→</span>{" "}
               <span className="text-accent font-medium">{arr}</span>{" "}
-              <span className="text-muted text-[10px]">
-                {clock}
-                <span className="md:hidden"> UTC</span>
-              </span>
+              <span className="text-muted text-[10px]">{clock}</span>
             </a>{" "}
           </Fragment>
         );
@@ -385,7 +382,7 @@ export function AircraftList({
       <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-2.5 border-b border-subtle bg-surface-elevated/50 text-xs font-mono text-muted uppercase tracking-widest">
         <div className="col-span-2">Aircraft</div> <div className="col-span-2">Type</div>{" "}
         <div className="col-span-2">Operator</div>{" "}
-        <div className="col-span-6">Upcoming flights (UTC)</div>
+        <div className="col-span-6">Upcoming flights (local times)</div>
       </div>{" "}
       <div className="overflow-auto" style={{ maxHeight: "65vh" }}>
         {aircraft.length === 0 ? (

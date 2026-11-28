@@ -236,13 +236,16 @@ export function dateRuns(text: string): Array<{ text: string; date: boolean }> {
 /** "Sep 2026" for a YYYY-MM month key. */
 export const monthYear = (month: string) => utc(`${month}-01`, { month: "short", year: "numeric" });
 
-/** "MON 14:30", always UTC: the homepage pill clock, 24-hour like the
- * permalink page. The caller names the zone. */
-export function formatPillTime(epochSec: number): string {
+/** "SAT 8:35 AM MST": the homepage pill clock, at the departure airport like
+ * the flight page's own time (zonedDeparture). A null zone reads UTC, named. */
+export function formatPillTime(epochSec: number, zone: string | null | undefined): string {
+  const tz = zone ?? "UTC";
   const d = new Date(epochSec * 1000);
-  const day = formatter("UTC", { weekday: "short" }).format(d).toUpperCase();
-  const hhmm = formatter("UTC", { hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
-  return `${day} ${hhmm}`;
+  const day = formatter(tz, { weekday: "short" }).format(d).toUpperCase();
+  const time = formatter(tz, { hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(
+    d
+  );
+  return `${day} ${time}`;
 }
 
 /**

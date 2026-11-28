@@ -215,7 +215,7 @@ describe("home, flight, route and tail pages read as plain text with every word 
           'id="aircraft-search"',
           "flight-pill",
           "expand-flights",
-          "Upcoming flights (UTC)",
+          "Upcoming flights (local times)",
           "Starlink departures by airport",
           "Popular routes",
           "Popular flights",
