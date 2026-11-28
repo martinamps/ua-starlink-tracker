@@ -24,10 +24,14 @@ const ENTRIES = [
   "route-board",
   "routes-map",
   "mcp",
+  // The flight-change notice's service worker: also served at a stable path
+  // (server/flight-notice.ts), since a worker's address is its identity.
+  "notice-sw",
 ] as const;
 export type ClientScript = (typeof ENTRIES)[number];
 
 const srcByName = new Map<ClientScript, string>();
+const codeByName = new Map<ClientScript, string>();
 const responses = new Map<string, Response>();
 
 async function buildAll(): Promise<void> {
@@ -48,6 +52,7 @@ async function buildAll(): Promise<void> {
     const code = await out.text();
     const href = `/static/${name}.${Bun.hash(code).toString(36)}.js`;
     srcByName.set(name, href);
+    codeByName.set(name, code);
     assetArchive?.keep(href, code);
     responses.set(
       href,
@@ -72,4 +77,9 @@ export function clientScriptSrc(name: ClientScript): string | null {
 /** The bundle served at `pathname`, or null. Tenant-agnostic like other static assets. */
 export function clientScriptResponse(pathname: string): Response | null {
   return responses.get(pathname)?.clone() ?? null;
+}
+
+/** A bundle's code, for the one script served at a stable path (the notice worker). */
+export function clientScriptCode(name: ClientScript): string | null {
+  return codeByName.get(name) ?? null;
 }

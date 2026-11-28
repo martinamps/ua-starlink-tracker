@@ -15,6 +15,7 @@ import {
   refreshSheetOwnedFleetMeta,
   warmAircraftTypePages,
 } from "./src/database/database";
+import { sendFlightNotices } from "./src/database/flight-notice";
 import { startSourceHealthJob } from "./src/database/source-health";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
 import { startAlaskaTrackerJob } from "./src/scripts/alaska-tracker";
@@ -35,6 +36,7 @@ import { startGeofeedJob } from "./src/scripts/starlink-geofeed";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import { createApp } from "./src/server/app";
+import { countNotice } from "./src/server/flight-notice";
 import { passengerVerifyEnabled } from "./src/server/passenger-detect";
 import {
   DEDUPE_KEY_SWEEP_INTERVAL_SEC,
@@ -140,6 +142,21 @@ if (JOBS_ENABLED) {
   // one Slack notice when a source passes its quiet threshold, one when it
   // returns (the freshness gauges above have no memory and no voice).
   track(startSourceHealthJob(db));
+
+  // "Tell me if this changes": posts notices the aircraft log's writer left
+  // waiting. Sends nothing unless meta ALL:flight_notice_enabled is "1".
+  // A tick with the switch off only drops departed subscriptions.
+  track(
+    startJob({
+      name: "flight_notice_sender",
+      intervalMs: 30 * 1000,
+      initialDelayMs: 30 * 1000,
+      run: async () => {
+        const tally = await sendFlightNotices(db, { onResult: countNotice });
+        if (tally.expired > 0) countNotice("ALL", "expired");
+      },
+    })
+  );
 
   track(
     startJob({

@@ -23,6 +23,7 @@ import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
 import { isRegistration } from "../utils/outside-text";
 import type { FlightAssignmentRow } from "./database";
+import { type AssignmentWrite, noteAssignmentWrites } from "./flight-notice";
 import {
   equippedSql,
   modHoldSql,
@@ -177,15 +178,18 @@ export function logFlightAssignments(
       last_seen = MAX(last_seen, excluded.last_seen),
       withdrawn_at = CASE WHEN withdrawn_at > excluded.last_seen THEN withdrawn_at END
   `);
+  const written: AssignmentWrite[] = [];
   for (const f of flights) {
     if (!f.flight_number || !f.departure_airport) continue;
     const flightNumber = cfg
       ? ensureAirlinePrefix(cfg, f.flight_number)
       : f.flight_number.trim().toUpperCase();
+    const depDate = departureLocalDate(f.departure_airport, f.departure_time);
+    written.push({ flight_number: flightNumber, dep_date: depDate });
     upsert.run(
       airline,
       flightNumber,
-      departureLocalDate(f.departure_airport, f.departure_time),
+      depDate,
       f.departure_airport,
       f.arrival_airport || null,
       tailNumber,
@@ -196,6 +200,8 @@ export function logFlightAssignments(
       now
     );
   }
+  // Swaps and first assignments are decided here, where they are stored.
+  noteAssignmentWrites(db, written);
 }
 
 export interface ResolvedLeg {

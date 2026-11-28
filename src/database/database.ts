@@ -106,6 +106,7 @@ import {
 } from "./discovery-cadence";
 import { type FirstReadRule, type FirstReadTakeBackReason, firstReadDecision } from "./first-read";
 import { fleetRejectReason, recordFleetRejection } from "./fleet-admission";
+import { FLIGHT_NOTICE_DDL } from "./flight-notice";
 import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
 import { type TailModNote, getSheetModNotes, replaceSheetModNotes } from "./sheet-mod-notes";
 import { readSourceState } from "./source-health";
@@ -847,6 +848,8 @@ export function setupTables(db: Database) {
   dropRedundantIndexes(db);
   runOnce(db, "backfill_alaska_skywest_operator", () => backfillAlaskaSkyWestOperator(db));
   db.exec(ASSIGNMENT_LOG_DDL);
+  // Browser notices for a watched flight and date (flight-notice.ts).
+  db.exec(FLIGHT_NOTICE_DDL);
   // When a lookup last returned the row's departure without its tail
   // (withdrawUnreturnedSightings); cleared when the tail is seen there again.
   addColumn(db, "flight_assignment_log", "withdrawn_at", "INTEGER");

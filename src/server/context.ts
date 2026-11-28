@@ -22,6 +22,9 @@ export interface RequestContext {
   getReader: (scope: Scope) => ScopedReader;
   /** Server-observed: `ip` is in the Starlink geofeed. */
   onStarlinkIp: boolean;
+  /** The flight-change notice's public key while its switch is on, else
+   * null (database/flight-notice.ts). Absent where no app built the context. */
+  noticeKey?: () => string | null;
 }
 
 export function tenantScope(tenant: Tenant): Scope {

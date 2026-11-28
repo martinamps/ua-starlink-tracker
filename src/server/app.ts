@@ -352,6 +352,7 @@ import {
   xml,
 } from "./respond";
 
+import { noticeStore } from "../database/flight-notice";
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { type SocketPeer, cameThroughCloudflare, clientIp, isLocalCaller } from "./client-ip";
 import { aircraftTypeParam, communityWireFields } from "./community-wire";
@@ -364,6 +365,7 @@ import {
   tenantScope,
 } from "./context";
 import { type CrawlerDns, createCrawlerVerifier } from "./crawler-verify";
+import { NOTICE_PREFIX, createNoticeHandler } from "./flight-notice";
 import {
   PROBE_SNIPPET,
   StarlinkIpDetector,
@@ -4358,7 +4360,13 @@ const checkFlightPage: Handler = async (ctx) => {
             }
           : unknown,
         // noindex but follow: hand the crawler somewhere real to go.
-        { popular: reader.getPopularFlights(), noindex: true, dated, unknownFlight: fn }
+        {
+          popular: reader.getPopularFlights(),
+          noindex: true,
+          dated,
+          unknownFlight: fn,
+          noticeKey: pageNoticeKey(ctx, dated),
+        }
       );
     }
     const facts = buildFlightFacts(reader, cfg, fn, variants, legParse.leg, datedAnswerLegs(dated));
@@ -4379,6 +4387,7 @@ const checkFlightPage: Handler = async (ctx) => {
             : null,
         },
         dated,
+        noticeKey: pageNoticeKey(ctx, dated),
       }
     );
   }
@@ -4449,6 +4458,21 @@ const recentCheckAnswer: Handler = async (ctx) => {
     { cache: CACHE.noStore, headers: { ...BASE_RESPONSE_HEADERS, "X-Robots-Tag": "noindex" } }
   );
 };
+
+/** A flight-change notice's flight: this pinned host's own number, in its
+ * permalink spelling, on a real date; null for anything else. */
+const noticeFlight = (ctx: RequestContext, f: string, d: string): string | null => {
+  const pinned = tenantConfig(ctx.tenant);
+  if (!pinned || !/^[A-Z0-9]{2,10}$/.test(f)) return null;
+  const parsed = parseCheckFlightPath(`/check-flight/${f}/${d}`);
+  if (parsed.kind !== "flight" || parsed.fn !== f || parsed.date !== d) return null;
+  return permalinkCarrier(pinned, parsed.fn) ? parsed.fn : null;
+};
+
+/** The notice control's key for a dated page on a pinned host; undefined
+ * while the switch is off, so the page is the one it always was. */
+const pageNoticeKey = (ctx: RequestContext, dated: DatedAnswer | undefined) =>
+  dated && tenantConfig(ctx.tenant) ? (ctx.noticeKey?.() ?? undefined) : undefined;
 
 /** `/route-planner/SFO/EWR` → `{ origin, destination }`; anything else → null. */
 export function parseRoutePath(pathname: string): { origin: string; destination: string } | null {
@@ -6584,8 +6608,11 @@ export function createApp(
   // The pictures ride the /static family, and so its `route` tag: they are
   // image assets like the cards beside them, and the tag budget has no room
   // for a family of their own.
+  const notices = noticeStore(db);
+  const notice = createNoticeHandler(notices, noticeFlight);
   const staticFamily: Handler = (ctx) =>
-    ctx.url.pathname === SHARE_TAP_PATH
+    notice(ctx) ??
+    (ctx.url.pathname === SHARE_TAP_PATH
       ? shareTap(ctx)
       : ctx.url.pathname === RECENT_TAP_PATH
         ? recentTap(ctx)
@@ -6593,7 +6620,7 @@ export function createApp(
           ? recentCheckAnswer(ctx)
           : ctx.url.pathname.startsWith("/static/share/")
             ? sharePicture(ctx)
-            : staticDir(ctx, archive);
+            : staticDir(ctx, archive));
   const getReader = createReaderFactory(db);
   const verifiedCrawler = createCrawlerVerifier(opts.crawlerDns);
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
@@ -6813,6 +6840,7 @@ export function createApp(
         : url.pathname.startsWith("/check-flight/") ||
             url.pathname.startsWith("/static/share/") ||
             url.pathname.startsWith(RECENT_PREFIX) ||
+            url.pathname.startsWith(NOTICE_PREFIX) ||
             url.pathname.startsWith("/cal/") ||
             url.pathname === "/badge.svg"
           ? "page"
@@ -6870,7 +6898,17 @@ export function createApp(
       });
     }
     const reader: ScopedReader = getReader(tenantScope(tenant));
-    const ctx: RequestContext = { req, url, ip, site, tenant, reader, getReader, onStarlinkIp };
+    const ctx: RequestContext = {
+      req,
+      url,
+      ip,
+      site,
+      tenant,
+      reader,
+      getReader,
+      onStarlinkIp,
+      noticeKey: notices.offerKey,
+    };
     // The surfaces that can start a live FR24 lookup keep a share of them per
     // caller, and a caller is what the limiter above counts: its meter and the
     // address. Local calls are unmetered there and keep no share here.
