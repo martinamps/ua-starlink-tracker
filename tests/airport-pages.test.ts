@@ -490,3 +490,14 @@ describe("links into the family", () => {
 function visibleText(html: string): string {
   return html.replace(/<(script|style)[\s\S]*?<\/\1>/g, " ").replace(/<[^>]+>/g, " ");
 }
+
+describe("the departures board's controls read as links", () => {
+  test("each plane links to its own page, and every link on the board is drawn as one", async () => {
+    const html = await app.dispatch(req("/routes/DEN", UA)).then((r) => r.text());
+    const board = sectionOf(html, "Next Starlink departures");
+    expect(board).toContain('href="/fleet/N1VER"');
+    const links = [...board.matchAll(/<a\b[^>]*>/g)].map((m) => m[0]);
+    expect(links.length).toBeGreaterThan(0);
+    for (const tag of links) expect(tag).toContain("text-accent");
+  });
+});

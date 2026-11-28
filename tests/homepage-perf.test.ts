@@ -37,23 +37,35 @@ afterEach(() => {
 });
 
 describe("pill time formatting", () => {
-  test("a known epoch formats as weekday + 24h, in UTC", () => {
-    expect(formatPillTime(Date.UTC(2026, 8, 19, 6, 40) / 1000)).toBe("SAT 06:40");
-    expect(formatPillTime(Date.UTC(2026, 8, 20, 0, 5) / 1000)).toBe("SUN 00:05");
+  test("a known epoch formats as weekday + clock at the departure airport, zone named", () => {
+    expect(formatPillTime(Date.UTC(2026, 8, 19, 6, 40) / 1000, "America/Denver")).toBe(
+      "SAT 12:40 AM MDT"
+    );
+    // Local midnight is still the UTC evening before: the weekday follows the zone.
+    expect(formatPillTime(Date.UTC(2026, 8, 20, 5, 5) / 1000, "America/Chicago")).toBe(
+      "SUN 12:05 AM CDT"
+    );
+    expect(formatPillTime(Date.UTC(2026, 11, 20, 0, 5) / 1000, "America/Los_Angeles")).toBe(
+      "SAT 4:05 PM PST"
+    );
   });
 
-  test("output matches the toLocale*String spelling it replaced", () => {
+  test("no zone reads UTC, and says so", () => {
+    expect(formatPillTime(Date.UTC(2026, 8, 20, 0, 5) / 1000, undefined)).toBe("SUN 12:05 AM UTC");
+  });
+
+  test("output matches the toLocale*String spelling at the same zone", () => {
     for (let t = 1_780_000_000; t < 1_780_000_000 + 7 * 86400; t += 3917) {
       const d = new Date(t * 1000);
       const legacy = `${d
-        .toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })
+        .toLocaleDateString("en-US", { weekday: "short", timeZone: "America/New_York" })
         .toUpperCase()} ${d.toLocaleTimeString("en-US", {
-        hour: "2-digit",
+        hour: "numeric",
         minute: "2-digit",
-        hour12: false,
-        timeZone: "UTC",
+        timeZone: "America/New_York",
+        timeZoneName: "short",
       })}`;
-      expect(formatPillTime(t)).toBe(legacy);
+      expect(formatPillTime(t, "America/New_York")).toBe(legacy);
     }
   });
 

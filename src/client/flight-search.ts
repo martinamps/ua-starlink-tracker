@@ -8,7 +8,7 @@ import {
   canonicalFlightFor,
   canonicalFlightInput,
 } from "../airlines/flight-input";
-import { probLabel, shareLabel } from "../components/ui/format";
+import { longDate, probLabel, shareLabel, shortDate } from "../components/ui/format";
 import { esc } from "./esc";
 import { shareControlHtml } from "./share";
 
@@ -101,11 +101,59 @@ export function airlineInfoHtml(info: AirlineInfo): string {
 const fleetFigure = (d: CheckAnyBody) =>
   d.confidence === "type" || /No history for \S+ yet/.test(d.reason ?? "");
 
-export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
+type Rewrite = (match: string, ...groups: string[]) => string;
+
+/**
+ * The API's sentences in a traveller's words, for this page only: the API
+ * keeps its own, which the goldens pin byte for byte. Each rule names one
+ * sentence the server writes (tests/hub-plain-words.test.ts holds it to the
+ * server's text), and a date left in machine form is written out. The label
+ * and the airline's name lead the sentence, so the rules don't repeat them.
+ */
+const PLAIN_WORDS: Array<[RegExp, Rewrite]> = [
+  [
+    /No per-flight prediction model exists for .+? — Starlink status is determined by aircraft type, not flight-number history\./,
+    () => "We can't answer by flight number: it depends on the aircraft type.",
+  ],
+  [
+    /Starlink on .+? is determined by aircraft type — /,
+    () => "Which aircraft type flies it decides. ",
+  ],
+  [/: Starlink \(rollout complete\)/g, () => ": all have Starlink"],
+  [/: mid-installation/g, () => ": being fitted now"],
+  [
+    /No aircraft schedule is on file for this flight on (\d{4}-\d{2}-\d{2}) yet; aircraft are assigned about two days before departure/,
+    (_, date) =>
+      `We don't know yet which plane flies it on ${longDate(date) ?? date}: airlines assign planes about two days before departure`,
+  ],
+  [/\b\d{4}-\d{2}-\d{2}\b/g, (date) => shortDate(date)],
+];
+
+export function plainWords(sentence: string): string {
+  return PLAIN_WORDS.reduce((text, [rule, to]) => text.replace(rule, to), sentence);
+}
+
+const andList = (names: string[]) =>
+  names.length <= 1
+    ? names.join("")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+/** The API's "Airline not tracked. Tracked: UA, HA…" in words: which airline,
+ * when the API names it, and the tracked ones by name, not by code. */
+function plainError(d: CheckAnyBody, tracked: string[]): string {
+  const error = d.error ?? "";
+  if (!error.startsWith("Airline not tracked.") || tracked.length === 0) return error;
+  const ours = `We check flights on ${andList(tracked)}.`;
+  return d.airline_info
+    ? `We don't check ${d.airline_info.airline} flights. ${ours}`
+    : `That isn't a flight of an airline we check. ${ours}`;
+}
+
+export function checkAnyHtml(d: CheckAnyBody, community: boolean, tracked: string[] = []): string {
   if (d.error) {
-    return `<span class="text-warn">${esc(d.error)}</span>${d.airline_info ? airlineInfoHtml(d.airline_info) : ""}`;
+    return `<span class="text-warn">${esc(plainError(d, tracked))}</span>${d.airline_info ? airlineInfoHtml(d.airline_info) : ""}`;
   }
-  const sentence = esc(d.reason || d.message || "");
+  const sentence = esc(plainWords(d.reason || d.message || ""));
   if (community) {
     return `${d.hasStarlink === true ? '<span class="text-success">Starlink (listed, not yet verified)</span> · ' : ""}${sentence}`;
   }
@@ -114,7 +162,7 @@ export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
     const reason = d.reason ?? "";
     const lead = SAID_BY_LABEL.find((l) => reason.startsWith(l)) ?? "";
     const rest = reason.slice(lead.length);
-    return `<span class="${stated[1]}">${stated[0]}</span> · ${esc(d.airline || "")} · ${esc(rest)} (${sourceLink(d.airline_statement.source)})`;
+    return `<span class="${stated[1]}">${stated[0]}</span> · ${esc(d.airline || "")} · ${esc(plainWords(rest))} (${sourceLink(d.airline_statement.source)})`;
   }
   const p = typeof d.probability === "number" ? d.probability : null;
   const [label, cls] =
@@ -221,6 +269,12 @@ function wireCheckAny(form: HTMLFormElement, onChecked?: OnChecked): void {
   } catch {
     // No notes; the answer itself still prints.
   }
+  let tracked: string[] = [];
+  try {
+    tracked = JSON.parse(form.dataset.trackedAirlines ?? "[]");
+  } catch {
+    // The API's own words print instead.
+  }
   const number = form.querySelector('input[name="flight_number"]') as HTMLInputElement | null;
   const button = form.querySelector('button[type="submit"]') as HTMLButtonElement | null;
   // The route fields, and the aircraft-type field, belong to the airline that
@@ -270,7 +324,7 @@ function wireCheckAny(form: HTMLFormElement, onChecked?: OnChecked): void {
         route.show(byType ? null : code);
         type.show(byType ? code : null);
         out.innerHTML =
-          checkAnyHtml(d, community) +
+          checkAnyHtml(d, community, tracked) +
           (d.error ? shapeHint(typed, example) : numberNoteHtml(notes, typed)) +
           checkPageLink(d, pages, typed, params.get("date") ?? "") +
           checkPageShare(d, pages, typed, params.get("date") ?? "");

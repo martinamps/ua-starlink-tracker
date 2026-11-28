@@ -24,13 +24,23 @@ interface AirportPageProps {
   currentPath?: string;
 }
 
-const FLIGHT_LINK = "font-mono text-primary hover:text-accent transition-colors";
+// Accent and an underline on hover, like every other link a traveller follows:
+// bold white text read as a label (journey walk, 27 Nov).
+const FLIGHT_LINK = "font-mono text-accent hover:underline";
+const ROW_LINK = "whitespace-nowrap text-accent hover:underline";
 
-function Plane({ d }: { d: AirportBoardDeparture }) {
-  return (
+/** The plane, linked to its own page where the site has tail pages. */
+function Plane({ d, tailPages }: { d: AirportBoardDeparture; tailPages: boolean }) {
+  const mark = d.starlink === "verified" && ` ${VERIFIED_MARK}`;
+  return tailPages ? (
+    <a href={`/fleet/${d.tail_number}`} className={`${FLIGHT_LINK} whitespace-nowrap`}>
+      {d.tail_number}
+      {mark}
+    </a>
+  ) : (
     <span className="font-mono text-secondary whitespace-nowrap">
       {d.tail_number}
-      {d.starlink === "verified" && ` ${VERIFIED_MARK}`}
+      {mark}
     </span>
   );
 }
@@ -102,7 +112,7 @@ function Stats({ board }: { board: AirportBoard }) {
   );
 }
 
-function NextDepartures({ board }: { board: AirportBoard }) {
+function NextDepartures({ board, tailPages }: { board: AirportBoard; tailPages: boolean }) {
   const { airport, departures } = board;
   const shown = departures.slice(0, AIRPORT_NEXT_DEPARTURES);
   const more = departures.length - shown.length;
@@ -135,10 +145,7 @@ function NextDepartures({ board }: { board: AirportBoard }) {
                 <a href={`/check-flight/${d.flight_number}`} className={FLIGHT_LINK}>
                   {d.flight_number}
                 </a>{" "}
-                <a
-                  href={`/route-planner/${airport}/${d.destination}`}
-                  className="whitespace-nowrap text-secondary hover:text-accent transition-colors"
-                >
+                <a href={`/route-planner/${airport}/${d.destination}`} className={ROW_LINK}>
                   to {d.destination}
                 </a>
                 {d.aircraft && <div className="text-xs text-muted sm:hidden">{d.aircraft}</div>}
@@ -147,7 +154,7 @@ function NextDepartures({ board }: { board: AirportBoard }) {
                 {d.aircraft ?? "—"}
               </Td>
               <Td numeric>
-                <Plane d={d} />
+                <Plane d={d} tailPages={tailPages} />
               </Td>
             </tr>
           ))}
@@ -162,7 +169,14 @@ function DestinationRow({
   row,
   max,
   days,
-}: { airport: string; row: AirportBoardDestination; max: number; days: number }) {
+  tailPages,
+}: {
+  airport: string;
+  row: AirportBoardDestination;
+  max: number;
+  days: number;
+  tailPages: boolean;
+}) {
   const n = row.departures.length;
   const label = `${airport} to ${row.destination}`;
   const facts = [
@@ -195,7 +209,7 @@ function DestinationRow({
       {facts.length > 0 && <p className="mt-0.5 text-xs text-muted">{facts.join(" · ")}</p>}
       {n > 0 && (
         <details className="group mt-1">
-          <summary className="cursor-pointer text-xs text-accent hover:underline">
+          <summary className="cursor-pointer py-3 text-sm text-accent hover:underline">
             {n === 1 ? "Show the flight" : `Show the ${fmt(n)} flights`}
           </summary>
           <ul className="mt-1.5 space-y-1 text-sm">
@@ -211,7 +225,7 @@ function DestinationRow({
                   {d.flight_number}
                 </a>
                 {d.aircraft && <span className="text-muted">{d.aircraft}</span>}
-                <Plane d={d} />
+                <Plane d={d} tailPages={tailPages} />
               </li>
             ))}
           </ul>
@@ -239,7 +253,9 @@ export default function AirportPage({
 
       <Stats board={board} />
 
-      {departures.length > 0 && <NextDepartures board={board} />}
+      {departures.length > 0 && (
+        <NextDepartures board={board} tailPages={site.features.tailPages} />
+      )}
 
       {destinations.length > 0 && (
         <Section
@@ -255,6 +271,7 @@ export default function AirportPage({
                 row={row}
                 max={max}
                 days={history.days}
+                tailPages={site.features.tailPages}
               />
             ))}
           </ul>
