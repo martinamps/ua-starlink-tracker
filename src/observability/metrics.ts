@@ -990,8 +990,10 @@ export const COUNTERS = {
   //   shed: over the drawing budget; error: the drawing threw. Never the
   //   flight, tail or airport.
   SHARE_PICTURE: "share_picture.request",
-  // "Every flight on this route" board served — tags: airline, surface (api|page),
-  //   outcome (nonstop|no_nonstop), dated (true|false)
+  // "Every flight on this route" board served — tags: airline, surface (api|page|hub),
+  //   outcome (nonstop|no_nonstop), dated (true|false). One hub /routes/{O}-{D}
+  //   view counts once per airline it asks, no_nonstop for those with no flights,
+  //   so per-airline totals include hub views: filter on surface to split them.
   ROUTE_FLIGHTS_VIEW: "route_flights.view",
   // A QR answer hit an equipment code missing from QATAR_EQUIPMENT (answered
   // as unknown, never no) — tags: airline, code (3-char IATA code | invalid)

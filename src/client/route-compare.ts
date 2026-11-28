@@ -32,6 +32,8 @@ interface CompareBody {
   origin?: string;
   destination?: string;
   results?: CompareResult[];
+  /** The pair's flight-by-flight page, or null. */
+  flights_page?: string | null;
 }
 
 function pill(href: string, text: string, color: string): string {
@@ -103,8 +105,12 @@ export function wireRouteCompare(): void {
         }
         const O = esc((d.origin || "").toUpperCase());
         const D = esc((d.destination || "").toUpperCase());
+        const results = d.results || [];
+        const board = d.flights_page
+          ? `<p class="mt-1 font-mono text-xs"><a href="${esc(d.flights_page)}" class="text-accent hover:underline">See each ${O} → ${D} flight →</a></p>`
+          : "";
         out.innerHTML =
-          (d.results || []).map((r) => renderResult(r, O, D)).join("") ||
+          results.map((r) => renderResult(r, O, D)).join("") + board ||
           `<span class="font-mono text-xs text-muted">No tracked airline has data for a nonstop on ${O} ⇄ ${D}.</span>`;
         footer?.classList.remove("hidden");
         // The hub has no planner of its own; United's is the one that exists.

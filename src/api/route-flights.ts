@@ -349,14 +349,14 @@ function loggedTypes(days: readonly RouteFlightLeg[]): string[] {
 }
 
 /** What a row is ranked on: the assigned plane when there is one, else the odds. */
-function rankOdds(r: RouteFlightRow): number {
+export function rankOdds(r: RouteFlightRow): number {
   const a = r.assignment;
   if (a && !a.past) return a.starlink === "none" ? 0 : 1;
   return r.probability ?? -1;
 }
 
 /** Listed first to last: regulars, flights not seen on the asked weekday, one-offs. */
-function rankGroup(r: RouteFlightRow): number {
+export function rankGroup(r: RouteFlightRow): number {
   if (!r.established) return 2;
   return r.operates_on_date === false ? 1 : 0;
 }
