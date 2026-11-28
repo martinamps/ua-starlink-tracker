@@ -60,6 +60,8 @@ function refreshAnswer(config: CheckFlightConfig): void {
   if (!target) return;
   const ctx: AnswerContext = {
     ...config,
+    // The answer fetched below is made now; the served one's sighting date goes.
+    seenAt: undefined,
     zoneFor: zoneLookup(config.zones),
     nowSec: Math.floor(Date.now() / 1000),
   };

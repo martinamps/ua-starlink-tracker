@@ -17,6 +17,7 @@ import {
   fmt,
   monthDay,
   probTier,
+  utcDayTime,
   wholeDates,
   zonedDeparture,
   zonedIsoDate,
@@ -128,6 +129,9 @@ export interface AnswerContext {
   tailPages: boolean;
   /** The date's legs beyond those a yes names, on a page with no leg chosen. */
   dayLegs?: DayLeg[];
+  /** The answer's aircraft is a logged sighting read back, last seen then
+   * (unix seconds); absent for an answer made now. */
+  seenAt?: number;
   /** Host for webcal:// links. */
   host: string;
   /** This answer's own page: canonical host, with its date and leg. Absent
@@ -511,7 +515,22 @@ const CHANGE_NOTE = "Aircraft can be swapped before departure.";
 
 /** The caveat with its remedy right under it: a calendar event that follows a swap. */
 const swapNote = (ctx: AnswerContext) =>
-  ` <p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${watchRow(ctx, true)}`;
+  ` <p class="mt-3 text-sm text-muted">${ctx.seenAt ? `${esc(seenNote(ctx.seenAt))} ` : ""}${CHANGE_NOTE}</p>${watchRow(ctx, true)}`;
+
+/** A read-back sighting dated in UTC: true however late the page is read. */
+export const seenNote = (seenAt: number) => `Aircraft as of ${utcDayTime(seenAt)}.`;
+
+/** A no's one aircraft and what it has instead, as the card's rows say it;
+ * null for any other answer, and for a no that names several aircraft. */
+export function noPlaneLine(body: CheckFlightBody): string | null {
+  const segments = body.fallback?.segments ?? [];
+  const [only] = segments;
+  if (body.hasStarlink !== false || segments.length !== 1 || only.hasStarlink !== false) {
+    return null;
+  }
+  const type = only.aircraft_model ? ` (${aircraftName(only.aircraft_model)})` : "";
+  return `${only.tail_number}${type} has ${wifiPhrase(only.verified_wifi)}.`;
+}
 
 function card(answer: AnswerTone, headline: string, body: string): string {
   const tone = ANSWER_TONE[answer];

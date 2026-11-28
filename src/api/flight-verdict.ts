@@ -19,7 +19,7 @@ import {
   normalizeLookupCaller,
   normalizeLookupShedReason,
 } from "../observability";
-import { matchesLocalDate } from "../utils/airport-tz";
+import { icaoToIata, matchesLocalDate } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
 import { isAirportCode, isRegistration, plainTypeName } from "../utils/outside-text";
 import { memoPromise } from "../utils/ttl-cache";
@@ -417,11 +417,16 @@ export interface FallbackSegment {
 export function resolveTailVerdict(
   scope: ScopedReader,
   tail: string,
-  nowSec = unixNow()
+  nowSec = unixNow(),
+  /** False for a replay of a logged sighting: reading a page must not move a
+   * tail up the queue of checks against the airline's own site. */
+  requeue = true
 ): TailVerdict {
   // The tail was found on one of the scope's flights, so it may be an
   // operating partner's: a listed Hawaiian A330 on an Alaska number.
-  const reader = scope.assignedTails;
+  const reader: ScopedReader["assignedTails"] = requeue
+    ? scope.assignedTails
+    : { ...scope.assignedTails, bumpDiscoveryPriority: () => {} };
   const sp = reader.getStarlinkPlaneByTail(tail);
 
   if (sp) {
@@ -504,6 +509,108 @@ function negativeTailVerdict(
     ...base,
   };
 }
+
+/** How long a logged sighting stands in for a lookup of its departure: as
+ * long as /api/check-flight itself replays that lookup from its cache. Past
+ * it, the browser's own ask may find a swap that the log can't know yet. */
+export const STORED_SIGHTING_MAX_AGE_SEC = ASSIGNMENT_CACHE_TTL;
+
+const storedAsOf = new WeakMap<FallbackSegment[], number>();
+
+/** When the oldest sighting behind a stored answer was made; undefined for a live lookup's. */
+export function storedSightingAsOf(segments: FallbackSegment[] | null | undefined) {
+  return segments ? storedAsOf.get(segments) : undefined;
+}
+
+/**
+ * What an earlier lookup found on the flight that date, read back from the
+ * assignment log for an answer that may make no lookup of its own (a page's
+ * first paint). It names only aircraft the flight updater does not track: a
+ * tracked tail is answered from the schedule, so here the schedule is passed
+ * in as `scheduled`, and a tracked tail it no longer holds has moved off.
+ *
+ * All or nothing. Each departure the log holds for the date must end in a
+ * sighting that still counts: the newest tail logged on it, not withdrawn by a
+ * later lookup, seen within STORED_SIGHTING_MAX_AGE_SEC, with both its times.
+ * One departure that fails, an aircraft the last lookup could not read, or a
+ * tail that would answer yes, and the answer is null: the caller says what it
+ * said before this existed. A yes from a tail the updater does not track has
+ * nothing to correct it between lookups, so it is never replayed.
+ */
+export function storedTailSightings(
+  reader: ScopedReader,
+  variants: readonly string[],
+  date: string,
+  startOfDay: number,
+  endOfDay: number,
+  scheduled: ReadonlySet<string>,
+  nowSec = unixNow()
+): FallbackSegment[] | null {
+  if (!inLookupWindow(startOfDay, endOfDay, nowSec)) return null;
+  const history = reader.getAssignmentHistory(variants, date) as Array<
+    ReturnType<ScopedReader["getAssignmentHistory"]>[number] & { withdrawn_at?: number | null }
+  >;
+  if (history.length === 0 || reader.hasUnreadAircraft(variants, date)) return null;
+
+  const newest = new Map<string, (typeof history)[number]>();
+  for (const r of history) {
+    const key = icaoToIata(r.departure_airport);
+    const cur = newest.get(key);
+    if (
+      !cur ||
+      r.last_seen > cur.last_seen ||
+      (r.last_seen === cur.last_seen && r.first_seen > cur.first_seen)
+    ) {
+      newest.set(key, r);
+    }
+  }
+
+  const segments: FallbackSegment[] = [];
+  let asOf = nowSec;
+  for (const [departure, r] of newest) {
+    if (reader.assignedTails.getStarlinkPlaneByTail(r.tail_number)) {
+      if (scheduled.has(storedSightingKey(departure, r.tail_number))) continue;
+      return null;
+    }
+    if (
+      r.withdrawn_at ||
+      r.departure_time === null ||
+      r.arrival_time === null ||
+      !r.arrival_airport ||
+      nowSec - r.last_seen > STORED_SIGHTING_MAX_AGE_SEC
+    ) {
+      return null;
+    }
+    const v = resolveTailVerdict(reader, r.tail_number, nowSec, false);
+    if (v.hasStarlink === true) return null;
+    segments.push({
+      tail_number: r.tail_number,
+      aircraft_model:
+        v.aircraft_model ||
+        reader.assignedTails.getFleetEntryByTail(r.tail_number)?.aircraft_type ||
+        null,
+      origin: r.departure_airport,
+      destination: r.arrival_airport,
+      departure_time: r.departure_time,
+      arrival_time: r.arrival_time,
+      hasStarlink: v.hasStarlink,
+      confidence: v.confidence,
+      verified_wifi: v.verified_wifi,
+      verified_at: v.verified_at,
+      operated_by: v.operated_by,
+      fleet_type: v.fleet_type,
+    });
+    asOf = Math.min(asOf, r.last_seen);
+  }
+  if (segments.length === 0) return null;
+  segments.sort((a, b) => a.departure_time - b.departure_time);
+  storedAsOf.set(segments, asOf);
+  return segments;
+}
+
+/** A departure and the tail on it, spelled one way for the log and the schedule. */
+export const storedSightingKey = (departureAirport: string, tail: string) =>
+  `${icaoToIata(departureAirport)}|${tail}`;
 
 /**
  * FR24 reverse-lookup fallback. Returns null when the date is outside FR24's
