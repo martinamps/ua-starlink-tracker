@@ -107,6 +107,12 @@ import {
 import { type FirstReadRule, type FirstReadTakeBackReason, firstReadDecision } from "./first-read";
 import { fleetRejectReason, recordFleetRejection } from "./fleet-admission";
 import { FLIGHT_ANSWERS_DDL, flightAnswerChanges } from "./flight-answers";
+import {
+  type OperatorOverride,
+  alaskaOperatorFromRegistrant,
+  applyExpressOperatorsFromFlights,
+  faaRegistrant,
+} from "./operator-evidence";
 import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
 import { type TailModNote, getSheetModNotes, replaceSheetModNotes } from "./sheet-mod-notes";
 import { readSourceState } from "./source-health";
@@ -939,6 +945,13 @@ export function alaskaOperatorFromTail(tail: string): string | null {
   return ALASKA_OPERATOR_BY_SUFFIX.find((o) => o.re.test(tail))?.name ?? null;
 }
 
+/** The register's registrant first: a Horizon or SkyWest jet outside its
+ * carrier's suffix block (N652MK is Horizon's) would otherwise read null and
+ * fall back to the airline's own name. Then the suffix block, then null. */
+export function alaskaOperator(db: Database, tail: string): string | null {
+  return alaskaOperatorFromRegistrant(faaRegistrant(db, tail)) ?? alaskaOperatorFromTail(tail);
+}
+
 /** Relabels listed and rostered Alaska tails whose registration block names
  * another operator. Runs once per rule set (migrate); addDiscoveredStarlinkPlane
  * applies the same rule to new listings. */
@@ -1154,6 +1167,7 @@ export function updateDatabase(
 
   const listedBefore = new Set<string>();
   const newlyListed: Array<{ tail: string; fleet: string }> = [];
+  let operatorOverrides: OperatorOverride[] = [];
   db.transaction(() => {
     // Get existing data before clearing the table
     const existingDates = new Map<string, string>();
@@ -1357,7 +1371,17 @@ export function updateDatabase(
     db.query(
       "DELETE FROM starlink_planes WHERE sheet_gid = 'discovery' AND verified_wifi IS NOT NULL AND verified_wifi != 'Starlink' AND airline = ?"
     ).run(airline);
+
+    if (airline === "UA") operatorOverrides = applyExpressOperatorsFromFlights(db);
   })();
+
+  for (const o of operatorOverrides) {
+    info(`Operator from flights: ${o.tail} sheet says "${o.from}", its legs say "${o.to}"`);
+    metrics.increment(COUNTERS.OPERATOR_FROM_FLIGHTS, {
+      airline: normalizeAirlineTag(airline),
+      fleet: normalizeFleet("express"),
+    });
+  }
 
   // Overwrite the raw sheet tallies with roster-derived totals. united_fleet
   // (FR24-sourced) agrees with United's own pipeline sheet to within ~1%; the
@@ -6507,7 +6531,7 @@ export function addDiscoveredStarlinkPlane(
     gid,
     typeRule ? null : (opts.dateFound ?? today),
     tailNumber,
-    (opts.airline === "AS" ? alaskaOperatorFromTail(tailNumber) : null) ??
+    (opts.airline === "AS" ? alaskaOperator(db, tailNumber) : null) ??
       (operatedBy || (AIRLINES[opts.airline]?.name ?? opts.airline)),
     fleet,
     unverified ? null : wifiProvider,
