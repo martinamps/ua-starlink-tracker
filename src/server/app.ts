@@ -419,6 +419,7 @@ import {
 } from "../api/tail-page";
 import TailPage from "../components/tail-page";
 import { drawShareCard } from "../share/card";
+import { DAILY_PICTURE_CACHE, isDailyPicture, versionedPicture } from "./picture-version";
 
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
 
@@ -734,7 +735,7 @@ for (const p of SOCIAL_IMAGE_PATHS) {
         headers: {
           ...BASE_RESPONSE_HEADERS,
           "Content-Type": "image/webp",
-          "Cache-Control": CACHE.day,
+          "Cache-Control": DAILY_PICTURE_CACHE,
         },
       })
     );
@@ -836,10 +837,15 @@ function currentStylesheetTag(): string {
 // A tenant whose OG card hasn't been generated yet (QR is excluded from
 // /api/fleet-summary, so generate-og-images never renders one) gets the
 // neutral hub card — never another airline's. Checked live, not at boot, so a
-// card landing on disk mid-run is picked up without a restart.
+// card landing on disk mid-run is picked up without a restart. Versioned by
+// content (picture-version.ts) so a redrawn card isn't hidden behind the
+// edge's copy of the old one.
 function resolveSocialImage(brand: PageBrand): string {
   const p = brand.socialImagePath;
-  return fs.existsSync(path.join(STATIC_DIR, path.basename(p))) ? p : HUB_BRAND.socialImagePath;
+  const chosen = fs.existsSync(path.join(STATIC_DIR, path.basename(p)))
+    ? p
+    : HUB_BRAND.socialImagePath;
+  return versionedPicture(STATIC_DIR, chosen);
 }
 
 // Share-card download offered only once the nightly batch has rendered this
@@ -847,7 +853,9 @@ function resolveSocialImage(brand: PageBrand): string {
 // preview beats a broken one) a *download button* handing out another scope's
 // card would be a tenancy leak in the user's camera roll.
 function resolveShareCard(scope: SiteConfig["scope"]): string | null {
-  return fs.existsSync(path.join(STATIC_DIR, shareCardFile(scope))) ? shareCardPath(scope) : null;
+  return fs.existsSync(path.join(STATIC_DIR, shareCardFile(scope)))
+    ? versionedPicture(STATIC_DIR, shareCardPath(scope))
+    : null;
 }
 
 // Per-tenant favicons. Standard discovery paths (/favicon.ico,
@@ -6383,7 +6391,8 @@ function createSharePictureHandler(limits: SharePictureLimits): Handler {
       redirect(resolveSocialImage(ctx.site.brand), 302, { "Cache-Control": cache });
     if (!request) {
       count("site_card");
-      return siteCard(CACHE.day);
+      // An hour, as the card itself: the location carries the card's version.
+      return siteCard(CACHE.hour);
     }
     // The parsed request, never the raw path or query: a key only a valid
     // address can form.
@@ -6454,7 +6463,11 @@ function staticDir(
       const ext = path.extname(filePath).toLowerCase().substring(1);
       const contentType = CONTENT_TYPES[ext] || "application/octet-stream";
       // Font file names carry a content hash (index.html), so they never change.
-      const cache = subPath.startsWith("fonts/") ? CACHE.year : CACHE.day;
+      const cache = subPath.startsWith("fonts/")
+        ? CACHE.year
+        : isDailyPicture(subPath)
+          ? DAILY_PICTURE_CACHE
+          : CACHE.day;
       return text(Bun.file(filePath), contentType, { cache });
     }
   } catch (err) {

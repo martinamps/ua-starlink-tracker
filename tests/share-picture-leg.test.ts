@@ -14,7 +14,7 @@ import { createApp } from "../src/server/app";
 import { addPlane, makeSyntheticDb, req } from "./helpers";
 
 const UA_HOST = "unitedstarlinktracker.com";
-const SITE_CARD = /^\/static\/social-image[\w-]*\.webp$/;
+const SITE_CARD = /^\/static\/social-image[\w-]*\.webp(?:\?v=[0-9a-z]+)?$/;
 
 describe("leg-scoped flight page share picture", () => {
   const date = departureLocalDate("SBA", Math.floor(Date.now() / 1000) + 86400);
