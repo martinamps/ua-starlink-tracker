@@ -152,7 +152,10 @@ if (JOBS_ENABLED) {
       intervalMs: 30 * 1000,
       initialDelayMs: 30 * 1000,
       run: async () => {
-        const tally = await sendFlightNotices(db, { onResult: countNotice });
+        const tally = await sendFlightNotices(db, {
+          decide: app.noticeAnswer,
+          onResult: countNotice,
+        });
         if (tally.expired > 0) countNotice("ALL", "expired");
       },
     })

@@ -352,7 +352,7 @@ import {
   xml,
 } from "./respond";
 
-import { noticeStore } from "../database/flight-notice";
+import { type NoticeDecider, type NoticeLeg, noticeStore } from "../database/flight-notice";
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { type SocketPeer, cameThroughCloudflare, clientIp, isLocalCaller } from "./client-ip";
 import { aircraftTypeParam, communityWireFields } from "./community-wire";
@@ -4057,6 +4057,26 @@ async function datedAnswer(
   date: string,
   legParse: LegParse = { leg: undefined }
 ): Promise<DatedAnswer | undefined> {
+  return (await datedShown(cfg, reader, flightNumber, date, legParse))?.dated;
+}
+
+type ShownVerdict = Exclude<
+  Awaited<ReturnType<typeof resolveFlightVerdict>>,
+  | { kind: "invalid_date" }
+  | { kind: "invalid_flight_number" }
+  | { kind: "qatar" }
+  | { kind: "qatar_no_data" }
+  | { kind: "qatar_history" }
+>;
+
+/** datedAnswer, with the verdict it was rendered from. */
+async function datedShown(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  date: string,
+  legParse: LegParse
+): Promise<{ verdict: ShownVerdict; dated: DatedAnswer } | undefined> {
   try {
     const verdict = await resolveFlightVerdict(
       cfg,
@@ -4080,7 +4100,7 @@ async function datedAnswer(
     );
     const body = checkFlightBody(cfg, reader, verdict, date, {}) as DatedAnswer["body"];
     const dayLegs = datedDayLegs(cfg, reader, flightNumber, date, body, legParse);
-    return {
+    const dated: DatedAnswer = {
       flightNumber,
       date,
       daysOut: verdict.window.daysOut,
@@ -4095,10 +4115,101 @@ async function datedAnswer(
         (body.flights ?? []).map((f) => f.departure_airport)
       ),
     };
+    return { verdict, dated };
   } catch (err) {
     logError(`Dated answer failed for ${flightNumber} ${date}`, err);
     return undefined;
   }
+}
+
+/**
+ * The aircraft a dated page names, leg by leg, and its Starlink answer as
+ * the page gives it: the verdict's own legs first, then the date's other
+ * legs the page lists beside it. What a flight-change notice is decided from
+ * (database/flight-notice.ts), so a notice can say nothing the page doesn't.
+ */
+export function shownNoticeLegs(
+  verdict: ShownVerdict,
+  dated: Pick<DatedAnswer, "dayLegs">,
+  origin: string | null
+): NoticeLeg[] {
+  const legs = new Map<string, NoticeLeg>();
+  const put = (
+    dep: string | null | undefined,
+    arr: string | null | undefined,
+    tail: string | null | undefined,
+    aircraft: string | null | undefined,
+    starlink: boolean | null | undefined,
+    departure: number | null | undefined
+  ) => {
+    const at = dep ? toIata(dep) : "";
+    if (!at || !tail || legs.has(at) || (origin && at !== origin)) return;
+    legs.set(at, {
+      dep: at,
+      arr: arr ? toIata(arr) : null,
+      tail,
+      aircraft: aircraft ?? null,
+      starlink: starlink ?? null,
+      departure_time: departure ?? null,
+    });
+  };
+  switch (verdict.kind) {
+    case "scheduled":
+      for (const r of scheduledFlights(verdict))
+        put(
+          r.departure_airport,
+          r.arrival_airport,
+          r.tail_number,
+          r.aircraft_type,
+          true,
+          r.departure_time
+        );
+      break;
+    case "scheduled_no":
+      for (const r of verdict.flights)
+        put(
+          r.departure_airport,
+          r.arrival_airport,
+          r.tail_number,
+          r.aircraft_type,
+          false,
+          r.departure_time
+        );
+      break;
+    case "fr24":
+      for (const s of verdict.starlink)
+        put(
+          s.origin,
+          s.destination,
+          s.tail_number,
+          s.aircraft_model,
+          s.hasStarlink,
+          s.departure_time
+        );
+      break;
+    case "fr24_no":
+      for (const s of verdict.segments)
+        put(
+          s.origin,
+          s.destination,
+          s.tail_number,
+          s.aircraft_model,
+          s.hasStarlink,
+          s.departure_time
+        );
+      break;
+    default: {
+      const summary = verdictSummary(verdict);
+      const a = summary.assignment;
+      if (a) put(a.origin, a.destination, a.tail, a.aircraft, summary.hasStarlink, a.departure);
+    }
+  }
+  for (const l of dated.dayLegs ?? [])
+    put(l.origin, l.destination, l.tail, null, l.starlink, l.departure_time);
+  return [...legs.values()].sort(
+    (x, y) =>
+      (x.departure_time ?? Number.MAX_SAFE_INTEGER) - (y.departure_time ?? Number.MAX_SAFE_INTEGER)
+  );
 }
 
 /**
@@ -6499,6 +6610,8 @@ function staticDir(
 
 export interface App {
   routes: RouteTable;
+  /** What a dated page answers now, as a flight-change notice reads it. */
+  noticeAnswer: NoticeDecider;
   /** Every value the `route` metric tag can take — the tag's cardinality budget. */
   routeTags: readonly string[];
   dispatch(req: Request, server?: SocketPeer): Promise<Response>;
@@ -6608,7 +6721,22 @@ export function createApp(
   // The pictures ride the /static family, and so its `route` tag: they are
   // image assets like the cards beside them, and the tag budget has no room
   // for a family of their own.
-  const notices = noticeStore(db);
+  const getReader = createReaderFactory(db);
+  // A notice is decided from the dated page's own answer: the same reader,
+  // the same leg parse, the same render path a visitor's tap lands on.
+  const noticeAnswer: NoticeDecider = async (q) => {
+    const cfg = AIRLINES[q.airline];
+    if (!cfg) return null;
+    const shown = await datedShown(
+      cfg,
+      getReader(cfg.code),
+      q.flightNumber,
+      q.depDate,
+      parseLegQuery(q.origin, null)
+    );
+    return shown ? shownNoticeLegs(shown.verdict, shown.dated, q.origin) : null;
+  };
+  const notices = noticeStore(db, noticeAnswer);
   const notice = createNoticeHandler(notices, noticeFlight);
   const staticFamily: Handler = (ctx) =>
     notice(ctx) ??
@@ -6621,7 +6749,6 @@ export function createApp(
           : ctx.url.pathname.startsWith("/static/share/")
             ? sharePicture(ctx)
             : staticDir(ctx, archive));
-  const getReader = createReaderFactory(db);
   const verifiedCrawler = createCrawlerVerifier(opts.crawlerDns);
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
   const ipHits = new Map<string, number[]>();
@@ -6980,5 +7107,5 @@ export function createApp(
     ]),
   ];
 
-  return { routes, routeTags, dispatch };
+  return { routes, routeTags, dispatch, noticeAnswer };
 }

@@ -36,6 +36,10 @@ const UNSUBSCRIBE_PATH = "/static/notice/unsubscribe";
 const MAX_BODY = 2048;
 /** The calendar feed's own horizon (flight-answer.ts WATCH_MAX_DAYS_OUT). */
 const MAX_DAYS_OUT = 330;
+/** New subscriptions one address may make in an hour, counted in memory
+ * only: the address is never stored. */
+export const SUBSCRIBES_PER_ADDRESS = 20;
+const ADDRESS_WINDOW_MS = 3600 * 1000;
 
 export function countNotice(scope: string, raw: string): void {
   const action = normalizeNoticeAction(raw);
@@ -85,6 +89,25 @@ export function createNoticeHandler(
   store: NoticeStore,
   checkFlight: FlightCheck
 ): (ctx: RequestContext) => Promise<Response> | null {
+  const taps = new Map<string, number[]>();
+  let lastSweep = 0;
+  /** True once this address has made its hour's subscriptions. */
+  function overAddressCap(ip: string, now: number): boolean {
+    if (now - lastSweep > ADDRESS_WINDOW_MS) {
+      for (const [k, ts] of taps) {
+        const kept = ts.filter((t) => now - t < ADDRESS_WINDOW_MS);
+        if (kept.length === 0) taps.delete(k);
+        else taps.set(k, kept);
+      }
+      lastSweep = now;
+    }
+    const hits = (taps.get(ip) ?? []).filter((t) => now - t < ADDRESS_WINDOW_MS);
+    taps.set(ip, hits);
+    if (hits.length >= SUBSCRIBES_PER_ADDRESS) return true;
+    hits.push(now);
+    return false;
+  }
+
   return (ctx) => {
     const path = ctx.url.pathname;
     if (!path.startsWith(NOTICE_PREFIX) || !store.enabled()) return null;
@@ -130,9 +153,12 @@ export function createNoticeHandler(
       if (store.unsubscribe(endpoint, pinned.code, fn, d)) countNotice(scope, "unsubscribed");
       return answer(true);
     }
+    if (overAddressCap(ctx.ip, Date.now())) {
+      return json({ ok: false }, { status: 429, headers: noStore });
+    }
     const keys = body?.keys as { p256dh?: unknown; auth?: unknown } | undefined;
     const o = typeof body?.o === "string" && /^[A-Z]{3}$/.test(body.o) ? body.o : null;
-    const result = store.subscribe(
+    const result = await store.subscribe(
       {
         endpoint,
         keys: { p256dh: keys?.p256dh as string, auth: keys?.auth as string },
