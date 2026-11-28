@@ -5,6 +5,8 @@
  * profiling and runtimeMetrics must stay disabled under Bun.
  */
 
+import { redactOutboundSpan } from "./outbound-url";
+
 export type Span = import("dd-trace").Span;
 
 type TraceTags = Record<string, string | number>;
@@ -72,6 +74,18 @@ export const TRACER_OPTIONS = {
   plugins: false,
 } satisfies import("dd-trace").TracerOptions;
 
+/**
+ * Exported so a test can pin them. The Qatar schedule ingester hits one
+ * endpoint ~6.7k times/day; blocklist it (the fetch plugin has no per-plugin
+ * sampleRate). vendor.request keeps full-rate success/error/latency for those
+ * calls. The request hook keeps credentials that ride in a URL (Slack webhook
+ * path, Sheets API key) out of http.url (outbound-url.ts).
+ */
+export const FETCH_PLUGIN_OPTIONS = {
+  blocklist: [/qoreservices\.qatarairways\.com/],
+  hooks: { request: redactOutboundSpan },
+};
+
 let tracer: TracerLike = noopTracer;
 let logFormat: unknown = null;
 
@@ -84,12 +98,7 @@ if (isEnabled) {
   ddTracer.init(TRACER_OPTIONS);
 
   tracer = ddTracer as unknown as TracerLike;
-  // The Qatar schedule ingester hits one endpoint ~6.7k times/day; blocklist it
-  // (the fetch plugin has no per-plugin sampleRate). vendor.request keeps
-  // full-rate success/error/latency for those calls.
-  tracer.use("fetch", {
-    blocklist: [/qoreservices\.qatarairways\.com/],
-  });
+  tracer.use("fetch", FETCH_PLUGIN_OPTIONS);
   logFormat = ddFormats.LOG;
 }
 
