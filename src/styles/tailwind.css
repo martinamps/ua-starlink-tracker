@@ -401,6 +401,11 @@
   letter-spacing: normal;
   font-weight: 400;
 }
+/* The card's heading, from data-name: the block above already carries the
+   name as text, so a second copy stays out of the page's plain text. */
+.spec-card-name::before {
+  content: attr(data-name);
+}
 .spec-trigger:hover .spec-card,
 .spec-trigger:focus .spec-card,
 .spec-trigger:focus-within .spec-card {

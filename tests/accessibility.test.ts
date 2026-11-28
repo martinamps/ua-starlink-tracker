@@ -162,12 +162,15 @@ describe("names told to assistive technology", () => {
 
   test("a hangar block's spec card describes its trigger and stays out of the heading's name", async () => {
     const { text } = await bodyOf(app, "/fleet", UNITED);
-    const cards = [...text.matchAll(/<span id="(spec-[^"]+)"[^>]*>/g)];
+    const cards = [...text.matchAll(/<span id="(spec-[^"]+)"[^>]*class="spec-card[^>]*>/g)];
     expect(cards.length).toBeGreaterThan(0);
     expect(new Set(cards.map((c) => c[1])).size).toBe(cards.length);
     for (const [tag, id] of cards) {
       expect(tag).toContain('aria-hidden="true"');
-      expect(text).toContain(`aria-describedby="${id}"`);
+      // The rows and the fact: the card's heading repeats the trigger's own text.
+      expect(text).toContain(`aria-describedby="${id}-rows ${id}-fact"`);
+      expect(text).toContain(`id="${id}-rows"`);
+      expect(text).toContain(`id="${id}-fact"`);
     }
   });
 
