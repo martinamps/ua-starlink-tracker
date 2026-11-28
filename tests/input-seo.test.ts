@@ -14,6 +14,7 @@ import {
   getSitemapRoutes,
   routeIsRecent,
 } from "../src/database/database";
+import { recordFlightAnswers } from "../src/database/flight-answers";
 import { createReaderFactory } from "../src/database/reader";
 import { ROUTE_RECENT_DAYS } from "../src/database/sql/windows";
 import { createApp } from "../src/server/app";
@@ -181,7 +182,7 @@ describe("route pages noindex once nobody flew them this week", () => {
     expect(r?.changed_at).toBe((r?.last_touched ?? 0) - 30 * DAY);
   });
 
-  test("flight lastmod is the newest assignment first seen, not the refresh", () => {
+  test("a new assignment row alone does not move a flight's lastmod", () => {
     const sdb = syntheticRoutes();
     const anchor = Math.floor(Date.now() / 1000) - DAY;
     sdb
@@ -194,7 +195,27 @@ describe("route pages noindex once nobody flew them this week", () => {
       .run(anchor, anchor + 3600, anchor - 3 * DAY, anchor);
     const f = getSitemapFlights(sdb, "UA").find((x) => x.flight_number === "UA1");
     expect(f?.last_touched).toBe(anchor);
-    expect(f?.changed_at).toBe(anchor - 3 * DAY);
+    // The route's own first sighting, 30 days before its last: the one change on record.
+    expect(f?.changed_at).toBe(anchor - 30 * DAY);
+  });
+
+  test("flight lastmod is the last recorded change of the page's answer", () => {
+    const sdb = syntheticRoutes();
+    const anchor = Math.floor(Date.now() / 1000) - DAY;
+    const changedAt = () =>
+      getSitemapFlights(sdb, "UA").find((x) => x.flight_number === "UA1")?.changed_at;
+    const routeOnly = changedAt();
+    // A first sighting is no change: the date stays the older true one.
+    recordFlightAnswers(sdb, "UA", [{ flight_number: "UA1", answer: "a" }], anchor - 2 * DAY);
+    expect(changedAt()).toBe(routeOnly);
+    // The same answer seen again moves nothing.
+    recordFlightAnswers(sdb, "UA", [{ flight_number: "UA1", answer: "a" }], anchor - DAY);
+    expect(changedAt()).toBe(routeOnly);
+    recordFlightAnswers(sdb, "UA", [{ flight_number: "UA1", answer: "b" }], anchor);
+    expect(changedAt()).toBe(anchor);
+    // A stamp ahead of the clock is a corrupt row, not a change.
+    recordFlightAnswers(sdb, "UA", [{ flight_number: "UA1", answer: "c" }], anchor + 30 * DAY);
+    expect(changedAt()).toBe(routeOnly);
   });
 
   test("no sitemap route is noindex on the snapshot", async () => {
