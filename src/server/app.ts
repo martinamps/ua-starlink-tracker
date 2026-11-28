@@ -316,6 +316,7 @@ import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
 import { orList, placeCodeAirports } from "../utils/airport-aliases";
 import { toIata } from "../utils/airport-code";
 import { airportCityWithCode, airportSpokenPlace, routePairLabel } from "../utils/airport-places";
+import { currentAirportCode } from "../utils/airport-renames";
 import {
   airportLocalDate,
   airportTimezone,
@@ -1567,23 +1568,29 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
   }
 };
 
+/** A retired code (PBI) asks for the airport under its code now (DJT). */
+const currentCode = (code: string | null): string | null =>
+  code ? currentAirportCode(code) : null;
+
 const apiCompareRoute: Handler = ({ url, getReader, tenant }) => {
   const guard = hubOnly(tenant);
   if (guard) return guard;
 
-  const origin = url.searchParams.get("origin");
-  const destination = url.searchParams.get("destination");
-  if (!origin || !destination || origin.length !== 3 || destination.length !== 3) {
+  const rawOrigin = url.searchParams.get("origin");
+  const rawDestination = url.searchParams.get("destination");
+  if (!rawOrigin || !rawDestination || rawOrigin.length !== 3 || rawDestination.length !== 3) {
     return jsonError(400, "origin and destination must be 3-letter IATA codes");
   }
-  if (origin.toUpperCase() === destination.toUpperCase()) {
+  const origin = currentAirportCode(rawOrigin);
+  const destination = currentAirportCode(rawDestination);
+  if (origin === destination) {
     return jsonError(400, "Origin and destination must differ");
   }
 
   const results = compareRoute(getReader, origin, destination);
   return json({
-    origin: origin.toUpperCase(),
-    destination: destination.toUpperCase(),
+    origin,
+    destination,
     results,
   });
 };
@@ -1696,8 +1703,8 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   // route "any flight" from NYC or ROMA to a real hub. Same rule as the MCP
   // planner: unknown is outside the coordinate table and absent from this
   // airline's flights. K/P ICAO spellings are read as their IATA code.
-  const from = normalizeAirportCode(origin);
-  const to = normalizeAirportCode(destination);
+  const from = currentCode(normalizeAirportCode(origin));
+  const to = currentCode(normalizeAirportCode(destination));
   const unknown = [
     ...(from ? [] : [origin]),
     ...(to ? [] : [destination]),
@@ -1780,8 +1787,8 @@ function recordRouteFlightsView(
 const apiRouteFlights: Handler = ({ url, reader, tenant }) => {
   const cfg = tenantConfig(tenant);
   if (!cfg) return jsonError(404, "Not found");
-  const origin = normalizeAirportCode(url.searchParams.get("origin"));
-  const destination = normalizeAirportCode(url.searchParams.get("destination"));
+  const origin = currentCode(normalizeAirportCode(url.searchParams.get("origin")));
+  const destination = currentCode(normalizeAirportCode(url.searchParams.get("destination")));
   if (!origin || !destination || !airportTimezone(origin) || !airportTimezone(destination)) {
     return jsonError(400, "origin and destination must be known IATA airport codes");
   }
@@ -4449,7 +4456,9 @@ export function parseRoutePath(pathname: string): { origin: string; destination:
   if (!rest) return null;
   const parts = rest.split("/");
   if (parts.length !== 2) return null;
-  const [origin, destination] = parts.map((p) => p.toUpperCase());
+  // A retired code (PBI) reads as the airport's code now (DJT): the caller's
+  // canonical-path check then 301s the old address to its twin.
+  const [origin, destination] = parts.map((p) => currentAirportCode(p));
   if (!ROUTE_AIRPORT_RE.test(origin) || !ROUTE_AIRPORT_RE.test(destination)) return null;
   if (origin === destination) return null;
   return { origin, destination };
@@ -4676,7 +4685,10 @@ const routePlannerPage: Handler = (ctx) => {
     // canonical uppercase form, mirroring /check-flight, so no duplicate 200s.
     const canonicalPath = `/route-planner/${parsed.origin}/${parsed.destination}`;
     if (ctx.url.pathname !== canonicalPath) {
-      return Response.redirect(`https://${ctx.site.canonicalHost}${canonicalPath}`, 301);
+      return Response.redirect(
+        `https://${ctx.site.canonicalHost}${canonicalPath}${ctx.url.search}`,
+        301
+      );
     }
     const cfg = siteAirline(ctx.site);
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) {
@@ -5343,7 +5355,7 @@ const routesPage: Handler = (ctx) => {
 /** `/routes/ORD` → "ORD"; anything else → null. */
 export function parseAirportPath(pathname: string): string | null {
   const rest = pathname.slice("/routes".length).replace(/^\/+|\/+$/g, "");
-  const airport = rest.toUpperCase();
+  const airport = currentAirportCode(rest);
   return ROUTE_AIRPORT_RE.test(airport) ? airport : null;
 }
 
@@ -5409,7 +5421,10 @@ const airportPage: Handler = (ctx) => {
   }
   const canonicalPath = `/routes/${airport}`;
   if (ctx.url.pathname !== canonicalPath) {
-    return Response.redirect(`https://${ctx.site.canonicalHost}${canonicalPath}`, 301);
+    return Response.redirect(
+      `https://${ctx.site.canonicalHost}${canonicalPath}${ctx.url.search}`,
+      301
+    );
   }
   // airportPages is airline-site-only; siteAirline throws (fail closed) on the hub.
   const cfg = siteAirline(ctx.site);

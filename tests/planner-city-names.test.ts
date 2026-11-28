@@ -16,6 +16,7 @@ import { normalizeAirportCode } from "../src/api/check-flight-core";
 import { createApp } from "../src/server/app";
 import { AIRPORT_COORDS } from "../src/utils/airport-geo";
 import { AIRPORT_NAMES, airportPlaceName } from "../src/utils/airport-names";
+import { currentAirportCode, isRetiredAirportCode } from "../src/utils/airport-renames";
 import {
   AIRPORT_QUERY_MAX,
   foldPlace,
@@ -56,9 +57,10 @@ describe("searching the names table", () => {
 
   test("every airport is found by the name the site prints for it", () => {
     for (const code of Object.keys(AIRPORT_NAMES)) {
+      // A retired code (PBI) is found as the airport's code now (DJT).
       const name = airportPlaceName(code) as string;
-      expect(codesOf(name, 600), name).toContain(code);
-      expect(codesOf(name.toUpperCase(), 600), name).toContain(code);
+      expect(codesOf(name, 600), name).toContain(currentAirportCode(code));
+      expect(codesOf(name.toUpperCase(), 600), name).toContain(currentAirportCode(code));
     }
   });
 
@@ -119,6 +121,10 @@ describe("what a box's text means when the form is sent", () => {
       expect(AIRPORT_NAMES[code], code).toBeDefined();
       for (const typed of [code, code.toLowerCase(), ` ${code} `]) {
         const r = resolveAirport(typed);
+        if (isRetiredAirportCode(code)) {
+          expect(r, typed).toMatchObject({ kind: "code", code: currentAirportCode(code) });
+          continue;
+        }
         expect(r, typed).toEqual({ kind: "code", code, name: airportPlaceName(code) });
       }
     }
