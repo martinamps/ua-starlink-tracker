@@ -5588,7 +5588,9 @@ const WIFI_MISMATCH_PREDICATE = `verified_wifi IS NOT NULL
 /** A reported listing drops off the log after this long without our check
  * agreeing: a sheet row that never confirms is more likely a wrong listing
  * than a slow one (N77426 sat at 31 of 31 Viasat reads before the sheet
- * withdrew it), and a parked plane we cannot check is not news for months. */
+ * withdrew it), and a parked plane we cannot check is not news for months.
+ * It bounds what reads as news (the Atom feed). The /newly-equipped panel
+ * takes every listing, so an old one the sheet still keeps stays findable. */
 export const REPORTED_MAX_AGE_DAYS = 30;
 
 type ListedNotCountedRow = Omit<ReportedInstall, "reason" | "observed_wifi" | "observed_at"> & {

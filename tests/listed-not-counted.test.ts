@@ -375,9 +375,13 @@ describe("/newly-equipped and its feed", () => {
     expect(row("N79PRK")).toContain("our reads since the listing have not settled on a reading");
     expect(row("N71NON")).toContain("our check reads no Wi-Fi, and has never read Starlink on it");
     expect(row("N3OTH")).toContain("our check still reads Viasat");
-    for (const tail of [...FLAPS, "N4OLD", "N5OLDA", "N6DISC", "N9NOT"]) {
+    for (const tail of [...FLAPS, "N6DISC", "N9NOT"]) {
       expect(text, tail).not.toContain(`id="${tail}"`);
     }
+    // Past the feed's age cap, still listed, still not counted: the panel keeps it.
+    expect(row("N4OLD")).toContain("our check still reads Viasat");
+    expect(row("N5OLDA")).toContain("First seen ");
+    expect(row("N4NODT")).not.toContain("First seen");
     expect(panel).toContain("They are not in our count");
     expect(panel).not.toMatch(/has Starlink/);
   });
