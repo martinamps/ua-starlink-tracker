@@ -10,6 +10,7 @@
  * reason a missing stylesheet is: pages would silently lose their behavior.
  */
 import path from "node:path";
+import { assetArchive } from "../server/asset-archive";
 import { BASE_RESPONSE_HEADERS } from "../utils/constants";
 
 const ENTRIES = [
@@ -47,6 +48,7 @@ async function buildAll(): Promise<void> {
     const code = await out.text();
     const href = `/static/${name}.${Bun.hash(code).toString(36)}.js`;
     srcByName.set(name, href);
+    assetArchive?.keep(href, code);
     responses.set(
       href,
       new Response(code, {
