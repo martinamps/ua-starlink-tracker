@@ -68,11 +68,13 @@ import {
 import { airportCoords } from "../utils/airport-geo";
 import {
   AIRPORT_TZ,
+  type DatedLeg,
   type FlightDateWindow,
+  THROUGH_SPAN_SEC,
   airportLocalDate,
   airportTimezone,
   flightDateWindow,
-  matchesLocalDate,
+  legsOnFlightDate,
 } from "../utils/airport-tz";
 import {
   type FallbackSegment,
@@ -891,16 +893,30 @@ function assignmentRowsOn(
   deps: Pick<ResolveDeps, "lookupTail">
 ): { rows: FlightAssignmentRow[]; unequipped: UnequippedAssignment[] } {
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
+  const fetchEnd = window.queryEnd + THROUGH_SPAN_SEC;
 
   // Query is last_updated DESC, so dedupe by departure_time keeps the
-  // most-recent row after an aircraft swap; then keep only rows whose
-  // departure-airport local date matches the queried date.
+  // most-recent row after an aircraft swap; then keep only the rows that fly
+  // on the queried date (legsOnFlightDate: its local date at the departure
+  // airport, or a through flight's later legs past local midnight).
   const seen = new Set<number>();
-  const onDate = (r: { departure_airport: string; departure_time: number }) =>
-    matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
-  const unequipped = cfg.communitySource
-    ? reader.getUnequippedAssignments(variants, window.queryStart, window.queryEnd).filter(onDate)
+  const unequippedAll = cfg.communitySource
+    ? reader.getUnequippedAssignments(variants, window.queryStart, fetchEnd)
     : [];
+  const scheduledAll = reader
+    .getFlightAssignments(variants, window.queryStart, fetchEnd)
+    .filter((r) => {
+      if (seen.has(r.departure_time)) return false;
+      seen.add(r.departure_time);
+      return true;
+    });
+  const onDate = legsOnFlightDate<DatedLeg>(
+    date,
+    [...scheduledAll, ...unequippedAll],
+    window.start,
+    window.end
+  );
+  const unequipped = unequippedAll.filter((u) => onDate.has(u));
   // Only community carriers poll non-★ tails, so only they can hold a newer
   // non-★ row that supersedes a ★ row for the same departure (a swap).
   const supersededAt = new Map<number, number>();
@@ -910,22 +926,18 @@ function assignmentRowsOn(
       Math.max(u.last_updated, supersededAt.get(u.departure_time) ?? 0)
     );
   }
-  const scheduled = reader
-    .getFlightAssignments(variants, window.queryStart, window.queryEnd)
-    .filter((r) => {
-      if (seen.has(r.departure_time)) return false;
-      seen.add(r.departure_time);
-      return true;
-    })
-    .filter(onDate)
+  const scheduled = scheduledAll
+    .filter((r) => onDate.has(r))
     .filter((r) => r.last_updated >= (supersededAt.get(r.departure_time) ?? 0));
   // An answer made with no live lookup (the hub, a page's first paint) reads
   // what an earlier lookup stored: a listed tail it named after our last read
   // of that tail's schedule is on the flight as far as we know.
-  const rows =
-    scheduled.length === 0 && deps.lookupTail === null
-      ? reader.getListedSightings(variants, window.queryStart, window.queryEnd).filter(onDate)
-      : scheduled;
+  const sightings = () => {
+    const all = reader.getListedSightings(variants, window.queryStart, fetchEnd);
+    const on = legsOnFlightDate(date, all, window.start, window.end);
+    return all.filter((r) => on.has(r));
+  };
+  const rows = scheduled.length === 0 && deps.lookupTail === null ? sightings() : scheduled;
   return { rows, unequipped };
 }
 
@@ -967,11 +979,18 @@ export function flightDayLegs(
   // Roster tails off the Starlink list, where the carrier's schedule holds
   // them: the answer reads these for a community-source carrier only, but a
   // leg they fly exists for any carrier.
-  const unequipped = reader
-    .getUnequippedAssignments(variants, window.queryStart, window.queryEnd)
-    .filter((u) =>
-      matchesLocalDate(date, u.departure_airport, u.departure_time, window.start, window.end)
-    );
+  const unequippedAll = reader.getUnequippedAssignments(
+    variants,
+    window.queryStart,
+    window.queryEnd + THROUGH_SPAN_SEC
+  );
+  const unequippedOn = legsOnFlightDate<DatedLeg>(
+    date,
+    [...rows, ...unequippedAll],
+    window.start,
+    window.end
+  );
+  const unequipped = unequippedAll.filter((u) => unequippedOn.has(u));
   for (const r of [...rows].sort((a, b) => a.departure_time - b.departure_time)) {
     add(r.departure_airport, r.arrival_airport, {
       departure_time: r.departure_time,

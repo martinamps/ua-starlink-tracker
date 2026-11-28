@@ -3954,6 +3954,7 @@ export interface UnequippedAssignment {
   departure_airport: string;
   arrival_airport: string;
   departure_time: number;
+  arrival_time: number | null;
   last_updated: number;
   aircraft_type: string | null;
   mark: GuideMark | null;
@@ -3973,7 +3974,7 @@ export function getUnequippedAssignments(
   if (flightNumberVariants.length === 0) return [];
   const q = withAirline(
     `SELECT u.tail_number, u.flight_number, u.departure_airport, u.arrival_airport,
-            u.departure_time, u.last_updated, f.aircraft_type, g.mark, g.guide_updated
+            u.departure_time, u.arrival_time, u.last_updated, f.aircraft_type, g.mark, g.guide_updated
      FROM upcoming_flights u
      INNER JOIN united_fleet f ON f.tail_number = u.tail_number
      LEFT JOIN fleet_guide_tails g
