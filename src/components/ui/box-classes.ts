@@ -6,3 +6,7 @@
 export const EYEBROW_TEXT = "font-mono text-xs uppercase tracking-wider text-muted";
 export const SURFACE = "rounded-lg border border-subtle bg-surface";
 export const PANEL_PAD = { md: "p-5", sm: "p-4 sm:p-5", none: "" } as const;
+/** A data table and the box around it that it measures itself against
+ * (DataTable in layout.tsx; `.table-stack` in src/styles/tailwind.css). */
+export const TABLE_FRAME = "table-stack-frame";
+export const TABLE = "table-stack w-full text-sm";

@@ -1,7 +1,7 @@
 import type React from "react";
 import type { RouteFlightBoard, RouteFlightRow } from "../api/route-flights";
 import { FIELD_CLASS } from "./flight-search-form";
-import { ClientScriptTag, LINK, Section, Td, Th, buttonClass } from "./layout";
+import { ClientScriptTag, DataTable, LINK, Section, Td, Th, buttonClass } from "./layout";
 import { oddsCellHtml } from "./odds-history";
 import {
   VERIFIED_LEGEND,
@@ -97,7 +97,7 @@ export function RouteFlightsSection({
           </a>
         </p>
       ) : (
-        <table className="w-full text-sm" data-history-src={historySrc}>
+        <DataTable data-history-src={historySrc}>
           <thead>
             <tr>
               <Th>Flight</Th>
@@ -121,7 +121,7 @@ export function RouteFlightsSection({
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       )}{" "}
       <p className="mt-4 text-xs text-muted">
         {board.note}

@@ -7,7 +7,7 @@ import { AirportRankingPanel } from "./airport-ranking";
 import { PopularFlightsLinks } from "./atoms";
 import { AirportBars } from "./home/rollout";
 import type { Link } from "./layout";
-import { PageHeader, PageShell, Panel, Section, SectionTitle, Td, Th } from "./layout";
+import { DataTable, PageHeader, PageShell, Panel, Section, SectionTitle, Td, Th } from "./layout";
 import type { RouteNetwork } from "./routes-map/network";
 import { RoutesMap, showRouteMap } from "./routes-map/routes-map";
 import { fmt, utcDateTime, zonedDeparture } from "./ui/format";
@@ -89,7 +89,7 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
     );
   };
   return (
-    <table className="w-full text-sm">
+    <DataTable>
       <thead>
         <tr>
           <Th>Route</Th>
@@ -144,7 +144,7 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
           );
         })}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

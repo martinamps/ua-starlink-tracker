@@ -127,7 +127,7 @@ function RouteComparePanel() {
           aria-label="From airport code"
           placeholder="From (SFO)"
           maxLength={3}
-          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
+          className="flex-1 min-w-0 font-mono text-sm px-3 py-2 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
           required
         />
         <input
@@ -136,7 +136,7 @@ function RouteComparePanel() {
           aria-label="To airport code"
           placeholder="To (HNL)"
           maxLength={3}
-          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
+          className="flex-1 min-w-0 font-mono text-sm px-3 py-2 bg-surface-elevated border border-neutral rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
           required
         />
         <button type="submit" className={buttonClass()}>
