@@ -294,7 +294,6 @@ import {
   describeCarrierPrediction,
   emptyPlanMessage,
   joinSentences,
-  planItinerary,
   planRoute,
   predictLegOrFlight,
   routeBaseline,
@@ -1745,11 +1744,8 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   const targetDateUnix =
     dateParam && routeBoardDateOk(dateParam) ? flightDateWindow(dateParam)?.mid : undefined;
   const day = targetDateUnix !== undefined ? dateParam : null;
-  const itineraries = planItinerary(reader, from, to, {
-    maxItineraries: 12,
-    maxStops,
-    targetDateUnix,
-  }).map((it) => ({
+  const plan = planRoute(reader, from, to, { maxItineraries: 12, maxStops, targetDateUnix });
+  const itineraries = plan.itineraries.map((it) => ({
     ...it,
     legs: it.legs.map((leg, i) => {
       const page = legPagePath(cfg, leg.flight_number, legDay(leg, i, day), leg.route);
@@ -1760,10 +1756,8 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   // pair's duration is unknowable, i.e. an airport outside the coordinate table).
   const baseline = routeBaseline(reader, from, to);
   if (itineraries.length > 0) return json({ origin, destination, itineraries, baseline });
-  // Additive: why nothing is offered. Re-planned only on the rare empty answer
-  // so the itinerary call above stays as it is.
-  const { empty } = planRoute(reader, from, to, { maxItineraries: 12, maxStops, targetDateUnix });
-  const message = empty ? emptyPlanMessage(empty, to) : undefined;
+  // Additive: why nothing is offered.
+  const message = plan.empty ? emptyPlanMessage(plan.empty, to) : undefined;
   return json({ origin, destination, itineraries, baseline, ...(message ? { message } : {}) });
 };
 
