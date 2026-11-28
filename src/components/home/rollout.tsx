@@ -236,7 +236,7 @@ export function AirportBars({
   if (top.length === 0) return null;
   const max = top[0].count;
   return (
-    <ol className={columns === 2 ? "grid gap-x-8 sm:grid-cols-2" : ""}>
+    <ol className={columns === 2 ? "grid grid-cols-1 gap-x-8 sm:grid-cols-2" : ""}>
       {top.map((r) => {
         const place = airportPlaceName(r.airport);
         const href = airportHref?.(r.airport);
@@ -254,7 +254,9 @@ export function AirportBars({
                 ) : (
                   <span className="font-mono text-primary">{r.airport}</span>
                 )}{" "}
-                {place && <span className="min-w-0 text-xs text-secondary">{place}</span>}{" "}
+                {place && (
+                  <span className="min-w-0 wrap-break-word text-xs text-secondary">{place}</span>
+                )}{" "}
                 <span className="ml-auto shrink-0 text-secondary tabular-nums">{fmt(r.count)}</span>
               </div>{" "}
               <Meter

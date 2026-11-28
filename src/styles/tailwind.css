@@ -703,3 +703,50 @@
 .verdict-no {
   border-left-color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
 }
+
+/* A data table (DataTable in layout.tsx) in a column narrower than 15rem.
+   Its cells' longest words, side by side, need about 16rem, so a reader with
+   a larger font set in the browser got a table wider than the window on a
+   phone, and the page scrolled sideways. Here each row becomes a line of its
+   cells that wraps: a cell moves under the one before it first, and breaks
+   its own text only when it is wider than the column by itself. The headings
+   stay for screen readers. rem in a container query is the root's font size,
+   so the rule follows the reader's setting; at the default size the column
+   is never this narrow at 320px, and the table is drawn as before. */
+.table-stack-frame {
+  container-type: inline-size;
+}
+@container (width < 15rem) {
+  .table-stack,
+  .table-stack > tbody {
+    display: block;
+  }
+  .table-stack > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .table-stack > tbody > tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    column-gap: 0.75rem;
+    row-gap: 0.25rem;
+    padding-block: 0.5rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .table-stack > tbody > tr > td {
+    min-width: 0;
+    padding: 0;
+    border-bottom-width: 0;
+  }
+  .table-stack > tbody > tr > .text-right {
+    margin-left: auto;
+  }
+  .table-stack .whitespace-nowrap {
+    white-space: normal;
+  }
+}

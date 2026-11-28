@@ -5,7 +5,7 @@ import {
   type AirportRanking,
 } from "../api/airport-ranking";
 import { airportPlaceName } from "../utils/airport-places";
-import { Panel, SectionTitle, Td, Th } from "./layout";
+import { DataTable, Panel, SectionTitle, Td, Th } from "./layout";
 import { fmt, monthDay, utcDateTime, weekdayDate } from "./ui/format";
 import { Meter } from "./ui/meter";
 
@@ -53,7 +53,7 @@ function RankTable({
   airportHref?: AirportHref;
 }) {
   return (
-    <table className="w-full text-sm">
+    <DataTable>
       <thead className={head ? "" : "sr-only"}>
         <tr>
           <Th>
@@ -93,7 +93,7 @@ function RankTable({
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

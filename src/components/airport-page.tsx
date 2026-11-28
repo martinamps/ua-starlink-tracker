@@ -10,7 +10,18 @@ import {
 } from "../api/airport-board";
 import { airportCity, airportPlaceName } from "../utils/airport-places";
 import type { Link } from "./layout";
-import { LINK, PageHeader, PageShell, Panel, SECTION, Section, StatValue, Td, Th } from "./layout";
+import {
+  DataTable,
+  LINK,
+  PageHeader,
+  PageShell,
+  Panel,
+  SECTION,
+  Section,
+  StatValue,
+  Td,
+  Th,
+} from "./layout";
 import { VERIFIED_LEGEND, VERIFIED_MARK } from "./route-flights-copy";
 import { fmt, utcDateTime, weekdayDate } from "./ui/format";
 import { Meter } from "./ui/meter";
@@ -125,7 +136,7 @@ function NextDepartures({ board, tailPages }: { board: AirportBoard; tailPages: 
       title="Next Starlink departures"
       dek={`${clock}${more > 0 ? ` The first ${fmt(shown.length)} of ${fmt(departures.length)}; every one is under its destination below.` : ""}`}
     >
-      <table className="w-full text-sm">
+      <DataTable>
         <thead>
           <tr>
             <Th>Leaves</Th>
@@ -159,7 +170,7 @@ function NextDepartures({ board, tailPages }: { board: AirportBoard; tailPages: 
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
     </Section>
   );
 }
@@ -190,12 +201,12 @@ function DestinationRow({
         {row.linkable ? (
           <a
             href={`/route-planner/${airport}/${row.destination}`}
-            className={`w-28 shrink-0 ${FLIGHT_LINK}`}
+            className={`w-28 ${FLIGHT_LINK}`}
           >
             {label}
           </a>
         ) : (
-          <span className="w-28 shrink-0 font-mono text-primary">{label}</span>
+          <span className="w-28 font-mono text-primary">{label}</span>
         )}
         <Meter
           share={max > 0 ? n / max : 0}
@@ -218,8 +229,9 @@ function DestinationRow({
                 key={`${d.flight_number}-${d.departure_time}`}
                 className="flex flex-wrap items-baseline gap-x-3"
               >
-                <span className="whitespace-nowrap text-secondary tabular-nums">
-                  {d.day}, {d.time}
+                <span className="text-secondary tabular-nums">
+                  <span className="whitespace-nowrap">{d.day},</span>{" "}
+                  <span className="whitespace-nowrap">{d.time}</span>
                 </span>
                 <a href={`/check-flight/${d.flight_number}`} className={FLIGHT_LINK}>
                   {d.flight_number}

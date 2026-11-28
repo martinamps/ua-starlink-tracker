@@ -346,7 +346,18 @@ export function AircraftList({
           >
             {countLabel || null}
           </div>{" "}
-          <div className="flex gap-1.5 sm:gap-2">
+          {/* The filters fit side by side, each label on two lines, down to
+              23rem when there are four (the hub's) and 17.25rem when three;
+              narrower, the last ran past the panel's edge and out of sight,
+              so there the row wraps. In rem, so the line moves with a larger
+              font set in the browser: at the default size three always fit. */}
+          <div
+            className={
+              content.subfleetFilters.length > 2
+                ? "flex max-[22.9rem]:flex-wrap gap-1.5 sm:gap-2"
+                : "flex max-[17.25rem]:flex-wrap gap-1.5 sm:gap-2"
+            }
+          >
             <button
               type="button"
               id="filter-all"

@@ -6,7 +6,7 @@
 import React from "react";
 import { AIRLINES, SITES, type SiteConfig, liveAirlineSites } from "../airlines/registry";
 import { type ClientScript, clientScriptSrc } from "../client/bundle";
-import { EYEBROW_TEXT, PANEL_PAD, SURFACE } from "./ui/box-classes";
+import { EYEBROW_TEXT, PANEL_PAD, SURFACE, TABLE, TABLE_FRAME } from "./ui/box-classes";
 import { fmt } from "./ui/format";
 import { SLASHED_AIRPORT_WORDS } from "./ui/slashed-airport-words";
 
@@ -471,6 +471,23 @@ export function StatInline({ n, children }: { n?: number; children?: React.React
 
 const TH = `border-b border-subtle pb-2 pr-3 last:pr-0 text-left ${EYEBROW_TEXT}`;
 const TD = "border-b border-subtle py-2 tabular-nums";
+
+/** A data table. In a column narrower than 15rem, which a phone gives at a
+ * larger browser font, each row becomes a line of its cells that wraps, so
+ * the table never pushes the page sideways; wider, it is a plain table. */
+export function DataTable({
+  className = "",
+  children,
+  ...rest
+}: React.TableHTMLAttributes<HTMLTableElement>) {
+  return (
+    <div className={TABLE_FRAME}>
+      <table className={className ? `${TABLE} ${className}` : TABLE} {...rest}>
+        {children}
+      </table>
+    </div>
+  );
+}
 
 export function Th({
   numeric = false,
