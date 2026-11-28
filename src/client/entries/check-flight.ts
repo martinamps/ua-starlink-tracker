@@ -10,6 +10,7 @@ import {
   answerShown,
   renderFlightAnswer,
 } from "../flight-answer";
+import { wireFlightNotice } from "../flight-notice";
 import { wireFlightSearchForms } from "../flight-search";
 import { onReady } from "../ready";
 import { type Shown, browserStore, rememberCheck } from "../recent-checks";
@@ -24,6 +25,16 @@ interface CheckFlightConfig extends Omit<AnswerContext, "zoneFor" | "nowSec"> {
   /** What the served answer said, for the homepage's "Your flights"; absent
    * for an answer not worth coming back to (an error, a date already over). */
   seen?: Shown;
+}
+
+/** The notice control, where the card carries one (its switch is on). */
+function notice(config: CheckFlightConfig): void {
+  if (!config.noticeKey) return;
+  wireFlightNotice({
+    f: config.flightNumber,
+    d: config.date,
+    ...(config.leg?.origin ? { o: config.leg.origin } : {}),
+  });
 }
 
 /** Keep this flight, and what its answer just said, in this browser. */
@@ -81,6 +92,7 @@ function refreshAnswer(config: CheckFlightConfig): void {
       if (body.error) return;
       const answer = renderFlightAnswer(body, ctx);
       target.innerHTML = answer.html;
+      notice(config);
       if (config.seen) {
         remember(config, answerShown(answer, body));
       }
@@ -106,6 +118,7 @@ function init(): void {
   try {
     const config = JSON.parse(raw) as CheckFlightConfig;
     if (config.seen) remember(config, config.seen);
+    notice(config);
     if (config.refresh) refreshAnswer(config);
   } catch {
     // Server-rendered answer stands.

@@ -15,6 +15,10 @@ export interface RequestContext {
   url: URL;
   /** Server-observed client IP (cf-connecting-ip). */
   ip: string;
+  /** The caller's address as no header of theirs can set it (client-ip.ts
+   * unforgeableIp), for caps a forger must not dodge. Set on the notice
+   * addresses only. */
+  peerIp?: string;
   site: SiteConfig;
   tenant: Tenant;
   reader: ScopedReader;
@@ -22,6 +26,9 @@ export interface RequestContext {
   getReader: (scope: Scope) => ScopedReader;
   /** Server-observed: `ip` is in the Starlink geofeed. */
   onStarlinkIp: boolean;
+  /** The flight-change notice's public key while its switch is on, else
+   * null (database/flight-notice.ts). Absent where no app built the context. */
+  noticeKey?: () => string | null;
 }
 
 export function tenantScope(tenant: Tenant): Scope {

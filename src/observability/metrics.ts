@@ -70,6 +70,8 @@
  *   surface:         watch.cta_shown: check_flight                   (1)
  *   action:          share.control: shown | sheet | copy (normalizeShareAction) (3)
  *                    recent.checks: shown | opened | cleared (normalizeRecentAction) (3)
+ *                    flight_notice: subscribed | unsubscribed | sent | gone |
+ *                    failed | expired (normalizeNoticeAction)            (6)
  *   source:          source.* metrics only: SourceId in database/source-health.ts (15).
  *                    (scraper.sync and others carry their own `source` values)
  *   kind:            source.failure: error | timeout | blocked | empty | refused |
@@ -727,6 +729,21 @@ export function normalizeRecentAction(raw: string | null | undefined): RecentAct
   return RECENT_ACTIONS.find((a) => a === raw) ?? null;
 }
 
+// flight_notice: every word is the server's own; a browser sends none of them.
+export const NOTICE_ACTIONS = [
+  "subscribed",
+  "unsubscribed",
+  "sent",
+  "gone",
+  "failed",
+  "expired",
+] as const;
+export type NoticeAction = (typeof NOTICE_ACTIONS)[number];
+
+export function normalizeNoticeAction(raw: string | null | undefined): NoticeAction | null {
+  return NOTICE_ACTIONS.find((a) => a === raw) ?? null;
+}
+
 /** IATA equipment codes are three alphanumerics; anything else is upstream
  * junk and must not mint a tag value. */
 export function normalizeEquipmentCodeTag(code: string | null | undefined): string {
@@ -1008,6 +1025,13 @@ export const COUNTERS = {
   //   a row's link followed; cleared: the list emptied by its one button).
   //   Opened over shown is the use rate. Never a flight, a date or the list.
   RECENT_CHECKS: "recent.checks",
+  // "Tell me if this changes" (database/flight-notice.ts) — tags: airline,
+  //   action (subscribed | unsubscribed: a browser's tap; sent: a notice the
+  //   push service took; gone: the browser had dropped the subscription, so
+  //   all of its rows went; failed: any other answer, retried up to 5 times;
+  //   expired: subscriptions removed after their flight left, counted per
+  //   sender tick under airline:all). Never the flight, date or endpoint.
+  FLIGHT_NOTICE: "flight_notice",
 } as const;
 
 /**
