@@ -138,8 +138,15 @@ function SpecCard({ id, name, spec }: { id: string; name: string; spec: Aircraft
       aria-hidden="true"
       className="spec-card absolute top-full left-0 mt-1 w-64 bg-surface-elevated border border-subtle rounded-lg p-3 text-xs shadow-xl z-20 block"
     >
-      <span className="block font-display text-sm text-primary mb-2">{name}</span>{" "}
-      <dl className="space-y-1 mb-2">
+      {/* The block's own heading already says the name, just above, so the
+          card's copy is drawn by CSS from data-name: as text it doubled the
+          name in the page's plain text and the trigger's description
+          ("CRJ700 CRJ700 Seats 70"). */}
+      <span
+        data-name={name}
+        className="spec-card-name block font-display text-sm text-primary mb-2"
+      />
+      <dl id={`${id}-rows`} className="space-y-1 mb-2">
         {row("Seats", spec.seats)}
         {row("Wingspan", spec.wingspan_ft, "ft")}
         {row("Length", spec.length_ft, "ft")}
@@ -148,7 +155,10 @@ function SpecCard({ id, name, spec }: { id: string; name: string; spec: Aircraft
         {row("First flight", spec.first_flight)}
         {row("Engines", spec.engines)}
       </dl>{" "}
-      <span className="block text-xs text-secondary leading-snug pt-2 border-t border-subtle">
+      <span
+        id={`${id}-fact`}
+        className="block text-xs text-secondary leading-snug pt-2 border-t border-subtle"
+      >
         {spec.fun_fact}
       </span>
     </span>
@@ -194,7 +204,9 @@ function FamilyBlock({
               spec ? "text-secondary hover:text-accent cursor-help" : "text-secondary"
             }`}
             tabIndex={spec ? 0 : -1}
-            aria-describedby={spec ? specId : undefined}
+            // The rows and the fact, not the whole card: a description that
+            // opens with the name repeats what the trigger itself reads.
+            aria-describedby={spec ? `${specId}-rows ${specId}-fact` : undefined}
           >
             <span className="block truncate">{name}</span>{" "}
             {spec && <SpecCard id={specId} name={name} spec={spec} />}
