@@ -333,9 +333,6 @@ describe("Alaska: a newer tail read under the operator's spelling outranks a sig
         tailRead(other, [leg("SKW3999", "SEA", "PDX", DEP() + 3 * HOUR)], DEP() - 2 * HOUR);
       },
       confirmed: false,
-      // The flight check ranks rivals under the sighting's own spelling only,
-      // so it still answers verified Yes here; the planner stays on the safe side.
-      checkSays: true,
     },
   ];
 

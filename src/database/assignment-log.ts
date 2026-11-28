@@ -576,7 +576,8 @@ function listedSightings(
   const listed = airlineIn(airlines, "sp.airline");
   const flights = variants ? `AND l.flight_number IN (${placeholders(variants)})` : "";
   // Without variants (the planner's whole day) a rival must share the
-  // spelling; the planner then keeps the newest sighting per slot itself.
+  // spelling; the planner then checks each sighting it would confirm against
+  // the newest tail on the departure under every spelling itself.
   const rivalFlight = variants
     ? `n.flight_number IN (${placeholders(variants)})`
     : "n.flight_number = l.flight_number";
