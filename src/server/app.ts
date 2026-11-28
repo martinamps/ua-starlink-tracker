@@ -194,7 +194,7 @@ import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
-import { answerTurn, flightAnswerKey } from "../components/check-flight/answer-key";
+import { flightAnswerKey, starlinkFlip } from "../components/check-flight/answer-key";
 import { firmDescription } from "../components/check-flight/firm-lead";
 import ChromePage, {
   CHROME_OG_IMAGE_ALT,
@@ -6989,7 +6989,7 @@ export function createApp(
       }
       out.push({
         airline: cfg.code,
-        ...recordFlightAnswers(db, cfg.code, answers, unixNow(), answerTurn),
+        ...recordFlightAnswers(db, cfg.code, answers, unixNow(), starlinkFlip),
       });
     }
     return out;

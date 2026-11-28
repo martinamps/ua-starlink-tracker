@@ -18,11 +18,12 @@
  * with what was last recorded and queues the pages of what differs. The
  * first pass only records, so a deploy of this feature announces nothing.
  *
- * A flight page whose answer to a traveller turned (yes ↔ no on the same
- * leg, the usual answer's band, the quiet note: answerTurn in
- * check-flight/answer-key.ts) is news for that page alone. The hourly answer
- * watcher hands those over; a first sighting, a new plane with the same
- * answer, a leg rotation or a lead that appears or goes never reaches here. They go out in one small batch per pass, under a daily cap of
+ * A flight page whose next plane on the same leg flipped between Starlink
+ * and not (starlinkFlip in check-flight/answer-key.ts) is news for that page
+ * alone. The hourly answer watcher hands those over; a first sighting, a new
+ * plane with the same answer, a leg rotation, a lead that appears or goes,
+ * verified ↔ likely, the usual band and the quiet note never reach here
+ * (the last three still move the sitemap date). They go out in one small batch per pass, under a daily cap of
  * their own, at most once a day per page, so tails and facts keep all of
  * theirs.
  *
@@ -100,12 +101,15 @@ export const FACT_TAIL_RESERVE = 20;
 export const FACT_WAITING_MAX_PAGES = 60;
 
 /** Flight pages one site may submit in any 24 hours, on a ledger of their
- * own. A stand-in seeded from the live feed turned 314-352 United answers a day
- * (production lists about twice its flights), while Bingbot fetches ~320
- * United flight pages a day: each address sent counts against the engine's
- * crawl of the site, so this asks for at most a third more. Past it the rest
- * are left to the sitemap's lastmod, and a loop in the watcher costs no more. */
-export const FLIGHT_DAILY_CAP = 100;
+ * own. Engines take one or two URLs of a submission and leave the rest: of
+ * the flight pages sent on fleet-discovery flips since 30 Oct, Bing fetched 1
+ * in 16 within the hour, while it fetched the home page after most sends.
+ * Each address sent counts against the engine's crawl of the site, so only
+ * Starlink flips are sent, and few. Raise it only once a week of sends shows
+ * Bing fetching more than 1 in 5 sent flight pages within the hour. Past it
+ * the rest are left to the sitemap's lastmod, and a loop in the watcher costs
+ * no more. */
+export const FLIGHT_DAILY_CAP = 25;
 /** Flight pages one site sends in one pass (the watcher runs hourly): the
  * day's cap goes out through the day, each pass's most telling turns first,
  * instead of in one burst at the first pass after the window rolls. */

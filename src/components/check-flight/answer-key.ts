@@ -88,6 +88,17 @@ export function answerTurn(before: string, after: string): 0 | 1 | 2 | 3 | null 
   return null;
 }
 
+/**
+ * The turns IndexNow is told about: the next plane on the same leg flipping
+ * between Starlink and not (answerTurn's 0). Engines take one or two URLs of
+ * a submission and leave the rest, and each URL counts against the site's
+ * crawl, so only the flip a traveller acts on is sent; the other turns still
+ * move the sitemap date.
+ */
+export function starlinkFlip(before: string, after: string): 0 | null {
+  return answerTurn(before, after) === 0 ? 0 : null;
+}
+
 interface AnswerKeyShape {
   firm?: unknown[] | null;
   usual?: unknown;

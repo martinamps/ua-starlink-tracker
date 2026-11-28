@@ -3,7 +3,11 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { answerTurn, flightAnswerKey } from "../src/components/check-flight/answer-key";
+import {
+  answerTurn,
+  flightAnswerKey,
+  starlinkFlip,
+} from "../src/components/check-flight/answer-key";
 import type { AssignedDeparture, FlightFacts } from "../src/components/check-flight/types";
 import { getSitemapFlights } from "../src/database/database";
 import { recordFlightAnswers } from "../src/database/flight-answers";
@@ -152,6 +156,22 @@ describe("whether a changed key turned the answer", () => {
     expect(answerTurn(base, legBand)).toBe(2);
     expect(answerTurn(base, key({ ...band, nextAssigned: null }))).toBe(2);
     expect(answerTurn(base, key({ ...quiet, nextAssigned: null }))).toBe(3);
+  });
+
+  test("only a Starlink flip on the same leg is handed to IndexNow", () => {
+    const no = key({ nextAssigned: { ...assigned, hasStarlink: false, wifi: "non-Starlink" } });
+    expect(starlinkFlip(base, no)).toBe(0);
+    expect(starlinkFlip(no, base)).toBe(0);
+    for (const other of [
+      key({ nextAssigned: { ...assigned, verified: false } }),
+      key({ prediction: { probability: 0.8, n_observations: 40, confidence: "medium" } }),
+      key({ notObservedSince: 1_799_000_000 }),
+      key({ nextAssigned: { ...assigned, origin: "DEN", hasStarlink: false } }),
+      key({ nextAssigned: null }),
+    ]) {
+      expect(answerTurn(base, other) === 0).toBe(false);
+      expect(starlinkFlip(base, other)).toBeNull();
+    }
   });
 
   test("keys that are not keys never pass for news", () => {

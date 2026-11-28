@@ -187,7 +187,7 @@ if (JOBS_ENABLED) {
           info(
             `Flight answers ${r.airline}: ${r.changed} changed of ${r.seen}, ${r.turned.length} turned`
           );
-          // Only answers that turned, never a first sighting or a new leg:
+          // Only Starlink flips on the same leg, never a first sighting or a new leg:
           // a no-op unless the IndexNow submitter below is active.
           if (r.turned.length > 0) await announceFlightPages(r.airline, r.turned);
         }
