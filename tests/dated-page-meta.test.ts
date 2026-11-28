@@ -23,6 +23,11 @@ const DAY = 86400;
 const now = Math.floor(Date.now() / 1000);
 const isoDay = (sec: number) => new Date(sec * 1000).toISOString().slice(0, 10);
 const STAMP = new Date((now - HOUR) * 1000).toISOString();
+/** The date at Denver of an instant: a dated page answers by its airport's own day. */
+const denverDay = (sec: number) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver" }).format(new Date(sec * 1000));
+const UA100_DEPARTS = now + 3 * HOUR;
+const UA900_DEPARTS = now + 5 * HOUR;
 
 let db: Database;
 let app: ReturnType<typeof createApp>;
@@ -56,7 +61,7 @@ beforeAll(() => {
   // UA100: a Starlink plane assigned within hours, with a history behind it.
   addPlane(db, "N1VER", "Starlink");
   addFleet(db, "N1VER", "confirmed", { verifiedWifi: "Starlink", verifiedAt: now - DAY });
-  addFlight(db, "N1VER", "UA100", "DEN", now + 3 * HOUR, { arrivalAirport: "ORD" });
+  addFlight(db, "N1VER", "UA100", "DEN", UA100_DEPARTS, { arrivalAirport: "ORD" });
   // UA300: a plane settled on another provider, assigned within hours.
   addFleet(db, "N4VIA", "negative", { verifiedWifi: "Viasat", verifiedAt: now - 3 * DAY });
   addFlight(db, "N4VIA", "UA300", "DEN", now + 4 * HOUR, { arrivalAirport: "SFO" });
@@ -95,18 +100,10 @@ async function page(path: string) {
   };
 }
 
-/** The date, today or tomorrow, on which a seeded departure falls at its airport. */
-async function answeredDate(fn: string, answer: RegExp) {
-  for (const d of [isoDay(now), isoDay(now + DAY)]) {
-    const p = await page(`/check-flight/${fn}/${d}`);
-    if (answer.test(p.description ?? "")) return { date: d, page: p };
-  }
-  throw new Error(`no dated ${fn} page answered ${answer}`);
-}
-
 describe("a dated page's title and description give that date's answer", () => {
   test("an assigned Starlink plane: a yes, never odds", async () => {
-    const { date, page: p } = await answeredDate("UA100", /^Yes — UA100 on /);
+    const date = denverDay(UA100_DEPARTS);
+    const p = await page(`/check-flight/UA100/${date}`);
     expect(p.status).toBe(200);
     expect(p.description).toMatch(
       /^Yes — UA100 on \w{3} \d{1,2} has Starlink \(N1VER, verified\)\./
@@ -324,12 +321,11 @@ describe("a hostile tail stored from a feed stays inside the head's text", () =>
     const bad = '"><img src=x onerror=alert(1)>';
     addPlane(db, bad, "Starlink");
     addFleet(db, bad, "confirmed", { verifiedWifi: "Starlink", verifiedAt: now - DAY });
-    addFlight(db, bad, "UA900", "DEN", now + 5 * HOUR, { arrivalAirport: "LAX" });
-    for (const d of [isoDay(now), isoDay(now + DAY)]) {
-      const res = await app.dispatch(req(`/check-flight/UA900/${d}`, UA));
-      const head = (await res.text()).split("<body")[0];
-      expect(head).not.toContain("<img");
-      expect(head).not.toContain("alert(1)>");
-    }
+    addFlight(db, bad, "UA900", "DEN", UA900_DEPARTS, { arrivalAirport: "LAX" });
+    const res = await app.dispatch(req(`/check-flight/UA900/${denverDay(UA900_DEPARTS)}`, UA));
+    const head = (await res.text()).split("<body")[0];
+    expect(head).toContain("Yes — UA900 on ");
+    expect(head).not.toContain("<img");
+    expect(head).not.toContain("alert(1)>");
   });
 });
