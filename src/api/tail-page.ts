@@ -21,6 +21,7 @@ import { unixNow } from "../database/sql/windows";
 import type { TailAnswerKind, TailFlight, TailRecord } from "../database/tails";
 import { TAIL_RECENT_DAYS, tailFlightPair } from "../database/tails";
 import type { FleetProgressTailRow } from "../types";
+import { routePlannerPath } from "../utils/airport-renames";
 import { airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { wifiPhrase } from "../utils/reported-reason";
@@ -370,7 +371,7 @@ function flightRow(f: TailFlight, opts: TailPageOptions): TailFlightRow {
     flight_number: f.flight_number,
     flightHref: opts.flightLinks && f.linkable ? `/check-flight/${f.flight_number}` : null,
     route: f.destination ? `${f.origin} to ${f.destination}` : `from ${f.origin}`,
-    routeHref: opts.routeLinks && pair ? `/route-planner/${pair.origin}/${pair.destination}` : null,
+    routeHref: opts.routeLinks && pair ? routePlannerPath(pair.origin, pair.destination) : null,
     day: at.day,
     time: at.time,
     departure_time: f.departure_time,

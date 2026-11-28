@@ -2,6 +2,7 @@ import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { AirportRanking } from "../api/airport-ranking";
 import type { PopularFlight } from "../database/database";
 import type { AirportDepartures, RouteSchedule, RouteScheduleRow } from "../types";
+import { routePlannerPath } from "../utils/airport-renames";
 import { airportTimezone } from "../utils/airport-tz";
 import { AirportRankingPanel } from "./airport-ranking";
 import { PopularFlightsLinks } from "./atoms";
@@ -79,7 +80,7 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
     );
     return linkable ? (
       <a
-        href={`/route-planner/${l.origin}/${l.destination}`}
+        href={routePlannerPath(l.origin, l.destination)}
         className={`font-mono hover:text-accent transition-colors ${primary ? "text-primary" : "text-secondary"}`}
       >
         {label}

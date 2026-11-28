@@ -12,6 +12,7 @@ import { AIRLINES, type AirlineConfig, airlineHomeUrl } from "../airlines/regist
 import type { RolloutFactsStatus } from "../airlines/rollout-facts";
 import type { PopularFlight } from "../database/database";
 import type { PerAirlineStat, RecentInstall } from "../types";
+import { routePlannerPath } from "../utils/airport-renames";
 import { denominatorIsPublishable } from "../utils/share-cards";
 import { operatorName } from "./home/aircraft-list";
 import { ButtonLink, Chip, Eyebrow, Panel } from "./layout";
@@ -108,7 +109,7 @@ export function PopularRoutesLinks({
         {routes.map((r) => (
           <Chip
             key={`${r.origin}-${r.destination}`}
-            href={`/route-planner/${r.origin}/${r.destination}`}
+            href={routePlannerPath(r.origin, r.destination)}
           >
             {r.origin} → {r.destination}
           </Chip>

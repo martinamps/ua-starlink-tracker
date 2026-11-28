@@ -1,6 +1,7 @@
 import type { SiteConfig } from "../airlines/registry";
 import type { RouteFlightBoard } from "../api/route-flights";
 import { airportWithCode, routePairLabel } from "../utils/airport-places";
+import { routePlannerPath } from "../utils/airport-renames";
 import type { Link } from "./layout";
 import { Chip, LINK, PageHeader, PageShell, Section } from "./layout";
 import {
@@ -102,7 +103,7 @@ export default function RoutePage({
 
       <RouteFlightsSection
         board={board}
-        path={`/route-planner/${origin}/${destination}`}
+        path={routePlannerPath(origin, destination)}
         plannerHref={plannerHref}
       />
 
@@ -124,7 +125,7 @@ export default function RoutePage({
         <p className="text-sm text-secondary">
           {reverseLinkable && (
             <>
-              <a href={`/route-planner/${destination}/${origin}`} className={LINK}>
+              <a href={routePlannerPath(destination, origin)} className={LINK}>
                 {destination} to {origin}
               </a>
               {" · "}
