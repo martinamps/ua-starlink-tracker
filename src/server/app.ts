@@ -5576,7 +5576,7 @@ const CSV_COLUMN_MEANING: Record<(typeof CSV_COLUMNS)[number], string> = {
   TailNumber: "Aircraft registration (tail number).",
   Aircraft: "Aircraft type as recorded for the tail.",
   fleet:
-    "mainline for the airline's own fleet; otherwise the label of the regional subfleet that flies it.",
+    "mainline for the airline's main fleet, or its label for the regional fleet (express on United, horizon on Alaska). The label names a fleet, not who flies the aircraft; the operator is in OperatedBy.",
   OperatedBy: "The carrier that operates the aircraft.",
   DateFound:
     "Date (YYYY-MM-DD) the tail was first found with Starlink, by this tracker or a source it reads; not the install date. Empty when unknown.",
