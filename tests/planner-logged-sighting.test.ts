@@ -176,10 +176,70 @@ const CASES: Case[] = [
   },
 ];
 
+/**
+ * The planner reads the day's log once and ranks a departure's tails itself,
+ * so these pin it to getLoggedAircraft's ranking: an older rival under another
+ * spelling loses, the sighted tail under two spellings is one tail, and two
+ * tails tied on both stamps go however getLoggedAircraft orders them.
+ */
+const RANK_CASES: (Case & { sighted: () => string })[] = (() => {
+  const sighted: Record<string, string> = {};
+  const one = (
+    name: string,
+    flight: string,
+    arr: string,
+    rival: (t: string) => void,
+    confirmed: boolean
+  ) => ({
+    name,
+    flight,
+    dep: "ORD",
+    arr,
+    seed: () => {
+      const t = plane("Starlink");
+      sighted[flight] = t;
+      sighting(`SKW${flight.slice(2)}`, "ORD", arr, t, 3600);
+      rival(t);
+    },
+    sighted: () => sighted[flight],
+    confirmed,
+  });
+  return [
+    one(
+      "an older tail under another spelling",
+      "UA5421",
+      "MKE",
+      () => sighting("OO5421", "ORD", "MKE", plane("None"), 7200),
+      true
+    ),
+    one(
+      "the sighted tail logged under two spellings",
+      "UA5422",
+      "MLI",
+      (t) => sighting("UA5422", "ORD", "MLI", t, 3600),
+      true
+    ),
+    one(
+      "another tail tied on both stamps, other spelling",
+      "UA5423",
+      "PIA",
+      () => sighting("OO5423", "ORD", "PIA", plane("None"), 3600),
+      false
+    ),
+    one(
+      "another tail tied on both stamps, same spelling",
+      "UA5424",
+      "SBN",
+      () => sighting("SKW5424", "ORD", "SBN", plane("None"), 3600),
+      false
+    ),
+  ];
+})();
+
 beforeAll(() => {
   setAssignmentFetcher(async () => []);
   db = makeFreshDb();
-  for (const c of CASES) {
+  for (const c of [...CASES, ...RANK_CASES]) {
     known(c.flight, `SKW${c.flight.slice(2)}`, c.dep, c.arr);
     c.seed();
   }
@@ -205,6 +265,31 @@ describe("the planner confirms a leg from a logged sighting as the flight check 
         .filter((l) => l.flight_number === c.flight);
       expect(legs.length).toBeGreaterThan(0);
       for (const l of legs) expect(l.confirmed).toBe(c.confirmed);
+    });
+  }
+});
+
+describe("the planner ranks a departure's logged tails as getLoggedAircraft does", () => {
+  for (const c of RANK_CASES) {
+    test(`${c.flight} ${c.dep}-${c.arr}: ${c.name}`, () => {
+      const newest = reader
+        .getLoggedAircraft(
+          ["UA", "SKW", "OO"].map((p) => `${p}${c.flight.slice(2)}`),
+          DATE
+        )
+        .find((a) => a.departure_airport === c.dep);
+      const expected = newest?.tail_number === c.sighted();
+      // A tie has no fixed winner; the untied cases do.
+      if (!c.name.includes("tied")) expect(expected).toBe(c.confirmed);
+      const legs = planItinerary(reader, c.dep, c.arr, {
+        maxItineraries: 12,
+        maxStops: 0,
+        targetDateUnix: mid(),
+      })
+        .flatMap((it) => it.legs)
+        .filter((l) => l.flight_number === c.flight);
+      expect(legs.length).toBeGreaterThan(0);
+      for (const l of legs) expect(l.confirmed).toBe(expected);
     });
   }
 });

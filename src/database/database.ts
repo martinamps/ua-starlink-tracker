@@ -161,10 +161,26 @@ export { DEPARTURE_WINDOW_HOURS, ROUTE_AIRPORT_RE };
 type MetaRow = { value: string };
 
 /**
+ * How many distinct SQL strings `db.query()` keeps prepared, per handle.
+ * bun:sqlite's default is 20 and the cache never evicts: the first 20 strings a
+ * process sees stay prepared and every later one is prepared again on each
+ * call. The server issues a few hundred distinct strings (189 on a recorded
+ * call set across every endpoint family, 632 from src/ over the whole test
+ * suite), all built from fixed fragments and IN-lists of bounded length, never
+ * from interpolated values. 1000 holds all of them with room, and caps the
+ * worst case near 30-40 MB of prepared statements.
+ */
+export const QUERY_CACHE_SIZE = 1000;
+
+/**
  * Open a connection, no schema work. A process opens one handle and shares
  * it: every open re-prepares statements.
  */
 export function openDatabase(path = DB_PATH): Database {
+  // A static on the class, read at each query(): set before the first one.
+  if (Database.MAX_QUERY_CACHE_SIZE < QUERY_CACHE_SIZE) {
+    Database.MAX_QUERY_CACHE_SIZE = QUERY_CACHE_SIZE;
+  }
   const db = new Database(path);
   // busy_timeout first: switching to WAL needs a lock, and a boot that overlaps
   // the previous process (deploys) must wait for it rather than crash.
