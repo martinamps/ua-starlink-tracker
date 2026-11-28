@@ -17,6 +17,8 @@ import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
 import { setAssignmentFetcher } from "../src/api/flight-verdict";
+import { logFlightAssignments } from "../src/database/assignment-log";
+import { updateFlights, updateLastFlightCheck } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { type ItineraryLeg, planItinerary } from "../src/scripts/starlink-predictor";
 import { createApp } from "../src/server/app";
@@ -238,6 +240,142 @@ describe("/api/plan-route agrees with the stored flight check", () => {
       const answer = JSON.parse(check.text) as { hasStarlink: boolean | null; confidence: string };
       const verifiedYes = answer.hasStarlink === true && answer.confidence === "verified";
       for (const l of legs) expect(l.confirmed).toBe(c.confirmed);
+      expect(verifiedYes).toBe(c.checkSays ?? c.confirmed);
+    });
+  }
+});
+
+/**
+ * Alaska's SkyWest flights through the real writers: a lookup logs the
+ * number asked (AS3442), a tail read keeps FR24's SKW3442, so the newer tail
+ * read is no sighting the whole-day read can rank. The planner must still let
+ * it outrank the older Starlink sighting.
+ */
+describe("Alaska: a newer tail read under the operator's spelling outranks a sighting", () => {
+  const HOUR = 3600;
+  let asDb: Database;
+  let asReader: ReturnType<ReturnType<typeof createReaderFactory>>;
+  let asApp: ReturnType<typeof createApp>;
+  let n = 0;
+
+  function listed(wifi: string | null): string {
+    const tail = `N7${String(++n).padStart(2, "0")}X`;
+    addPlane(asDb, tail, wifi, { airline: "AS", aircraft: "Embraer E175" });
+    asDb
+      .query("UPDATE starlink_planes SET last_flight_check = ? WHERE TailNumber = ?")
+      .run(DEP() - 12 * HOUR, tail);
+    return tail;
+  }
+  const leg = (fn: string, dep: string, arr: string, at = DEP()) => ({
+    flight_number: fn,
+    departure_airport: dep,
+    arrival_airport: arr,
+    departure_time: at,
+    arrival_time: at + HOUR,
+  });
+  function tailRead(tail: string, flights: ReturnType<typeof leg>[], at: number) {
+    const now = Date.now;
+    Date.now = () => at * 1000;
+    try {
+      updateFlights(asDb, tail, flights);
+      updateLastFlightCheck(asDb, tail, true);
+    } finally {
+      Date.now = now;
+    }
+  }
+  // The flight flew the day before on a Starlink tail, so the planner has the leg.
+  function known(fn: string, dep: string, arr: string) {
+    const now = Math.floor(Date.now() / 1000);
+    for (let i = 0; i < 12; i++) {
+      asDb
+        .query(
+          `INSERT INTO starlink_verification_log (tail_number, flight_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, airline)
+           VALUES (?, ?, 'alaska', ?, 1, 'Starlink', 1, 'AS')`
+        )
+        .run(`N8${fn.slice(2)}`, fn, now - 86400 * (i + 1));
+    }
+    const t = utc(`${DAY_BEFORE}T15:00:00Z`);
+    asDb
+      .query(
+        `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'AS')`
+      )
+      .run(listed("Starlink"), `SKW${fn.slice(2)}`, dep, arr, t, t + HOUR, now - 86400);
+  }
+
+  const AS_CASES: Case[] = [
+    {
+      name: "a lone sighting of a verified tail",
+      flight: "AS3441",
+      dep: "SEA",
+      arr: "BOI",
+      seed: () =>
+        logFlightAssignments(
+          asDb,
+          "AS",
+          listed("Starlink"),
+          [leg("AS3441", "SEA", "BOI")],
+          DEP() - 6 * HOUR
+        ),
+      confirmed: true,
+    },
+    {
+      // The tail read put another tail on the flight after the sighting, and
+      // a later read took it off again: its log row stays, under SKW3442.
+      name: "a newer tail read under the operator's spelling",
+      flight: "AS3442",
+      dep: "SEA",
+      arr: "GEG",
+      seed: () => {
+        logFlightAssignments(
+          asDb,
+          "AS",
+          listed("Starlink"),
+          [leg("AS3442", "SEA", "GEG")],
+          DEP() - 6 * HOUR
+        );
+        const other = listed("None");
+        tailRead(other, [leg("SKW3442", "SEA", "GEG")], DEP() - 4 * HOUR);
+        tailRead(other, [leg("SKW3999", "SEA", "PDX", DEP() + 3 * HOUR)], DEP() - 2 * HOUR);
+      },
+      confirmed: false,
+      // The flight check ranks rivals under the sighting's own spelling only,
+      // so it still answers verified Yes here; the planner stays on the safe side.
+      checkSays: true,
+    },
+  ];
+
+  beforeAll(() => {
+    asDb = makeFreshDb();
+    for (const c of AS_CASES) {
+      known(c.flight, c.dep, c.arr);
+      c.seed();
+    }
+    asReader = createReaderFactory(asDb)("AS");
+    asApp = createApp(asDb);
+  });
+  afterAll(() => asDb.close());
+
+  for (const c of AS_CASES) {
+    test(`${c.flight} ${c.dep}-${c.arr}: ${c.name} reads confirmed=${c.confirmed}`, async () => {
+      const legs = planItinerary(asReader, c.dep, c.arr, {
+        maxItineraries: 12,
+        maxStops: 0,
+        targetDateUnix: mid(),
+      })
+        .flatMap((it) => it.legs)
+        // The planner names the leg by United's prefix (UA3442) whatever the scope.
+        .filter((l) => l.flight_number.slice(2) === c.flight.slice(2));
+      expect(legs.length).toBeGreaterThan(0);
+      for (const l of legs) expect(l.confirmed).toBe(c.confirmed);
+
+      const check = await bodyOf(
+        asApp,
+        `/api/check-any-flight?flight_number=${c.flight}&date=${DATE}&origin=${c.dep}&destination=${c.arr}`,
+        HUB
+      );
+      const answer = JSON.parse(check.text) as { hasStarlink: boolean | null; confidence: string };
+      const verifiedYes = answer.hasStarlink === true && answer.confidence === "verified";
       expect(verifiedYes).toBe(c.checkSays ?? c.confirmed);
     });
   }
