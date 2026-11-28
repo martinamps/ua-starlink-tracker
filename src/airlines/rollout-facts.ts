@@ -89,11 +89,6 @@ interface RolloutFactBase {
    * overtaken by events). Airline and type pages drop it so two answers never
    * sit side by side; /timeline keeps the dated record. */
   superseded?: true;
-  /** Why a superseded fact was withdrawn, where what answers in its place is
-   * older than it: a source that did not hold up, not a later fact. /timeline
-   * prints this in place of "a later fact, listed above, replaced it", which
-   * would be untrue there. */
-  withdrawnBecause?: string;
 }
 
 /** A claim the source itself dates. Only these move the page's lastmod. */
@@ -564,7 +559,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "British Airways",
     iata: "BA",
     status: "installing",
-    statusLabel: "Installing; no count from BA since March",
+    statusLabel: "Installing; British Airways gives no count",
     // British Airways' own words only, from its March 19, 2026 media centre
     // release: it has published no count of equipped aircraft since,
     // so neither a count nor a "Yes" can be printed. No year of ours either:
@@ -594,9 +589,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        // Must stay ahead of the Head for Points fact of the same date: the
+        // Must stay ahead of the first-flight fact of the same date: the
         // flight answer prints the first current fact of the newest date, and
-        // this is the airline's own word.
+        // this one is the fleet-wide answer.
         fact: "British Airways says Starlink is available to all customers, in every cabin, free of charge, and that its entire fleet of more than 300 aircraft will have it within two years, covering its long-haul and short-haul fleets but excluding BA Cityflyer. It said it was then fitting Starlink to its 787-8 fleet.",
         asOf: "2026-03-19",
         source: {
@@ -605,27 +600,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "British Airways was the first UK airline to install Starlink; its first equipped aircraft, Boeing 787-8 G-ZBJJ, was due to fly BA197 London Heathrow–Houston on March 19, 2026.",
+        // British Airways names no tail for this flight. Head for Points named
+        // one itself, with no source, so the first flight is told in the
+        // airline's own words of the day.
+        fact: "British Airways became the first UK airline to launch Starlink Wi-Fi on March 19, 2026, on a flight to Houston, Texas; the 787-8 bound for Houston was the first aircraft in its fleet to be connected.",
         asOf: "2026-03-19",
         source: {
-          label: "Head for Points",
-          url: "https://www.headforpoints.com/2026/03/19/british-airways-debuts-high-speed-starlink-wi-fi-today/",
-        },
-      },
-      {
-        // Kept only as the dated record. The five tails and the "paused" were
-        // the article's report of a rival tracker's list, not British Airways'
-        // words, and its October 2026 resume date came from another outlet and
-        // has passed; every report since says installs resumed. British
-        // Airways' own March 19 release (above) answers instead.
-        superseded: true,
-        withdrawnBecause:
-          "Withdrawn: its tails and its pause came from another tracker's list, not from British Airways, and its October 2026 date has passed. British Airways' own March 19, 2026 words, listed below, answer instead.",
-        fact: "British Airways paused Starlink installations after equipping just five aircraft (G-ZBJA, G-ZBJI, G-ZBJJ, G-ZBJK and G-ZBJM) since the rollout began in March 2026. The airline says installations are expected to resume in October 2026 after the busy summer season, because the programme is aligned with scheduled maintenance, and that the technology will reach its whole fleet of more than 300 aircraft over roughly two years.",
-        asOf: "2026-06-07",
-        source: {
-          label: "Simple Flying",
-          url: "https://simpleflying.com/british-airways-suspends-starlink-installations-later-this-year/",
+          label: "British Airways media centre",
+          url: "https://mediacentre.britishairways.com/news/19032026/british-airways-first-starlink-flight-takes-off-making-the-airline-the-first-in-the-uk-to-launch-the-fastest-wi-fi-in-the-sky",
         },
       },
     ],
