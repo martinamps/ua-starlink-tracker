@@ -155,8 +155,8 @@ describe("rollout-facts structure", () => {
     }
   });
 
-  // Both used to alias to the BA page, whose "installs paused" answer is wrong
-  // for two airlines that are flying Starlink.
+  // Both used to alias to the BA page, whose answer is British Airways' alone and
+  // wrong for two airlines that are flying Starlink.
   test("IAG sister airlines own their pages instead of 301ing to British Airways", async () => {
     const app = createApp(openSnapshot());
     for (const slug of ["aer-lingus", "iberia"]) {
