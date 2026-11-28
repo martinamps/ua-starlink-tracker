@@ -103,7 +103,7 @@ import { clientIp } from "../server/client-ip";
 import { aircraftTypeText } from "../server/community-wire";
 import { jsonRpc, mcpMethodNotAllowed } from "../server/respond";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
-import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
+import { airportLocalDate, isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
 import { debug, error as logError } from "../utils/logger";
 import { isAirportCode } from "../utils/outside-text";
 import { denominatorIsPublishable } from "../utils/share-cards";
@@ -122,6 +122,7 @@ import {
   legOffRoute,
   legSubject,
   listedWording,
+  negativeWifi,
   normalizeAirportCode,
   parseLegQuery,
   recordFlightLookup,
@@ -808,21 +809,23 @@ async function toolCheckFlight(
   // The hub never does FR24 reverse lookups — same gate as hub REST
   // /api/check-flight and /api/check-any-flight (lookupTail: null), so the
   // same flight+date can't get contradictory verdicts by protocol.
+  const baseDeps =
+    hostReader.scope === "ALL"
+      ? {
+          lookupTail: null,
+          // Read only for an airline answered by its statement on one type.
+          ...(cfg.statementRule?.by === "type"
+            ? { aircraftType: aircraftTypeText(args.aircraft_type) }
+            : {}),
+        }
+      : undefined;
   const verdict = await resolveFlightVerdict(
     cfg,
     reader,
     flightNumber,
     date,
     withLeg(
-      hostReader.scope === "ALL"
-        ? {
-            lookupTail: null,
-            // Read only for an airline answered by its statement on one type.
-            ...(cfg.statementRule?.by === "type"
-              ? { aircraftType: aircraftTypeText(args.aircraft_type) }
-              : {}),
-          }
-        : undefined,
+      baseDeps,
       parseLegQuery(
         typeof args.origin === "string" ? args.origin : null,
         typeof args.destination === "string" ? args.destination : null
@@ -841,14 +844,130 @@ async function toolCheckFlight(
   const t = verdictTelemetry(verdict);
   recordFlightLookup("mcp", t.outcome, t.confidence, reader.scope);
   recordLegScope("mcp", verdict, cfg.code, mcpClientTags());
-  const result = await renderCheckFlightVerdict(cfg, reader, verdict, date, {
-    ...opts,
-    liveLookup: hostReader.scope !== "ALL",
-  });
+  const unmatched = await unmatchedLegText(verdict, date, () =>
+    resolveFlightVerdict(cfg, reader, flightNumber, date, baseDeps)
+  );
+  // The prediction branch it stands in for records the same figure.
+  if (unmatched && verdict.kind === "prediction") recordPrediction(verdict.pred, reader.scope);
+  const result = unmatched
+    ? textResult(unmatched)
+    : await renderCheckFlightVerdict(cfg, reader, verdict, date, {
+        ...opts,
+        liveLookup: hostReader.scope !== "ALL",
+      });
   return withLivePageNoted(
     result,
     opts.undated ? null : flightLivePage(cfg, reader, verdict.normalized, date)
   );
+}
+
+type Answered = Exclude<
+  FlightVerdict,
+  { kind: "invalid_date" } | { kind: "invalid_flight_number" }
+>;
+
+interface HeldLeg {
+  origin: string;
+  destination: string;
+  departure: number;
+  aircraft: string;
+}
+
+const code = (raw: string | null | undefined) => normalizeAirportCode(raw) ?? raw ?? "?";
+const notStarlink = (wifi: string) =>
+  `a ${wifi === "no" ? "no-WiFi" : `${wifi} WiFi`} aircraft, not Starlink`;
+
+/** The legs an assignment answer holds, each with what its aircraft carries; [] for an estimate. */
+function heldLegs(v: Answered): HeldLeg[] {
+  const row = (r: FlightAssignmentRow, aircraft: string): HeldLeg => ({
+    origin: code(r.departure_airport),
+    destination: code(r.arrival_airport),
+    departure: r.departure_time,
+    aircraft,
+  });
+  const seg = (s: FallbackSegment): HeldLeg => ({
+    origin: code(s.origin),
+    destination: code(s.destination),
+    departure: s.departure_time,
+    aircraft:
+      s.confidence === "verified"
+        ? "a verified Starlink aircraft"
+        : s.confidence === "spreadsheet"
+          ? "a Starlink-listed aircraft, not yet verified"
+          : s.confidence === "negative"
+            ? notStarlink(wifiLabel(s.verified_wifi))
+            : "an aircraft we don't track as Starlink",
+  });
+  const legs =
+    v.kind === "scheduled"
+      ? [
+          ...v.verified.map((r) => row(r, "a verified Starlink aircraft")),
+          ...v.unverified.map((r) => row(r, "a Starlink-listed aircraft, not yet verified")),
+        ]
+      : v.kind === "scheduled_no"
+        ? v.flights.map((r) => row(r, notStarlink(negativeWifi(r))))
+        : v.kind === "fr24"
+          ? v.starlink.map(seg)
+          : v.kind === "fr24_no"
+            ? v.segments.map(seg)
+            : [];
+  return legs.sort((x, y) => x.departure - y.departure);
+}
+
+/**
+ * check_flight text for a leg we hold no row for, on a number whose other legs
+ * that date we do hold. The scoped fallback is the per-number estimate, which
+ * read "~2% (no flight history)" while the date's run sat on a verified
+ * Starlink tail. That run's aircraft may not fly the traveller's leg either (a
+ * leg past local midnight belongs to the run before), so it is shown as what
+ * we hold, never as a yes for the leg; the estimate is given only from history.
+ * Null when nothing is held for the date: the estimate and its note stand.
+ */
+async function unmatchedLegText(
+  verdict: Answered,
+  date: string,
+  resolveUnscoped: () => Promise<FlightVerdict>
+): Promise<string | null> {
+  if (verdict.kind !== "prediction") return null;
+  const leg = verdict.leg;
+  if (leg?.match !== "unmatched" || leg.answered !== null || !leg.origin) return null;
+  const unscoped = await resolveUnscoped();
+  if (unscoped.kind === "invalid_date" || unscoped.kind === "invalid_flight_number") return null;
+  const held = heldLegs(unscoped);
+  if (held.length === 0) return null;
+
+  const fn = verdict.normalized;
+  const asked = leg.destination
+    ? `${leg.origin} → ${leg.destination} leg`
+    : `leg from ${leg.origin}`;
+  const localDate = (h: HeldLeg) => airportLocalDate(h.origin, h.departure) ?? date;
+  const list = held
+    .map(
+      (h) =>
+        `- ${h.origin} → ${h.destination}, departs ${localDate(h)} local time, on ${h.aircraft}`
+    )
+    .join("\n");
+  const later = held.find(
+    (h) =>
+      h.origin === leg.origin &&
+      (!leg.destination || h.destination === leg.destination) &&
+      localDate(h) !== date
+  );
+  const pred = verdict.pred;
+  const estimate =
+    pred.n_observations > 0
+      ? `For your ${asked} departing on ${date} we hold nothing to answer from; ${fn}'s history puts it at ${flightPct(pred.probability, pred.n_observations)} Starlink probability (${pred.n_observations} historical obs).`
+      : `For your ${asked} departing on ${date} we hold nothing to answer from and no flight history, so we can't say whether it has Starlink.`;
+  return [
+    `**${fn} on ${date}**: leg unmatched. We hold no ${asked} for ${fn} departing on ${date}.`,
+    `What we do hold for ${fn} on ${date}, which may not be the aircraft on your leg:\n${list}`,
+    ...(later
+      ? [
+          `That run's ${later.origin} → ${later.destination} departs ${localDate(later)} local time: check ${fn} with date ${localDate(later)} for that leg.`,
+        ]
+      : []),
+    verdict.fr24Error ? `${estimate} ${fr24DegradedNote(verdict)}` : estimate,
+  ].join("\n\n");
 }
 
 /** check_flight text for a resolved verdict — exported so AF answers can be
