@@ -425,9 +425,11 @@
    the window is wider than the grid. That margin is measured and not
    assumed: with a larger font set in the browser the rem breakpoints move
    too, and the page's padding is 1rem or 1.5rem at widths where a rule that
-   counted on 2rem left the card up to 20px outside. The card stays 8px
-   clear, half a classic scrollbar, which 100vw counts as window. At 16px the
-   sum is positive (the shift is 0), so no card moves at the default size.
+   counted on 2rem left the card up to 20px outside. 100vw counts a classic
+   scrollbar as window, so the margin reads half the bar too wide, and the
+   card stays 9px clear: at 8px a 17px bar (Windows') left it 0.5px under the
+   bar and the page scrolled 1px sideways. At 16px the sum is positive (the
+   shift is 0), so no card moves at the default size.
    Ranges run to 14 columns. The container is lifted so the cards still draw
    over the sections below it. */
 @media (min-width: 768px) {
@@ -437,7 +439,7 @@
     z-index: 1;
     gap: 12px;
     --spec-last: calc(118px - 1rem - 16rem);
-    --spec-next: min(0px, calc(239px - 16.5rem + (100vw - 100cqw) / 2));
+    --spec-next: min(0px, calc(238px - 16.5rem + (100vw - 100cqw) / 2));
   }
 }
 @container (508px <= width < 638px) {
