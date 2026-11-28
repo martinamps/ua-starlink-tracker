@@ -43,6 +43,8 @@ interface Leg {
   probability: number;
   confidence: string;
   n_observations: number;
+  /** Flying time; null when unknown, so the itinerary's totals are null too. */
+  duration_hours?: number | null;
   /** On a dated search: the leg's plane is assigned and verified Starlink. */
   confirmed?: boolean;
   /** This host's answer page for the flight, dated when the search was. */
@@ -200,14 +202,28 @@ function flightPath(legs: Leg[]): string {
 }
 
 /**
- * The figure the list is ranked by: expected Starlink time against flying
- * time. Options are ordered by that share (less a little per stop), so a
- * short connection can rank above a nonstop with a higher headline.
+ * Starlink time against flying time, read from the legs as shown, like the
+ * headline: a leg that says Yes counts all its hours. When every leg says Yes
+ * the line drops its percent, so the card carries one answer. The list is
+ * still ranked by the API's expected_starlink_hours, which keeps the swap
+ * allowance on confirmed legs; with no confirmed leg the two are the same.
  */
 function starlinkTime(it: Itinerary): string {
   const total = it.total_flight_hours;
-  const expected = it.expected_starlink_hours;
-  if (typeof total !== "number" || typeof expected !== "number" || total <= 0) return "";
+  if (typeof total !== "number" || total <= 0) return "";
+  if (allConfirmed(it.legs)) {
+    return `<div class="text-xs text-muted mb-3">~${fmtHours(total)} flying, all on Starlink planes</div>`;
+  }
+  const expected = it.legs.some((l) => l.confirmed)
+    ? it.legs.reduce<number | null>(
+        (sum, l) =>
+          sum === null || typeof l.duration_hours !== "number"
+            ? null
+            : sum + shownLegProbability(l) * l.duration_hours,
+        0
+      )
+    : it.expected_starlink_hours;
+  if (typeof expected !== "number") return "";
   return `<div class="text-xs text-muted mb-3">~${fmtHours(expected)} of ~${fmtHours(total)} flying expected on Starlink (${probLabel(expected / total)})</div>`;
 }
 
