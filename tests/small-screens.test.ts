@@ -10,7 +10,8 @@
  * The hangar's spec card. It is 16rem wide over px blocks, and the page's
  * side padding steps at rem breakpoints, which move with the browser's own
  * font setting. A rule that counted on one padding left the card up to 20px
- * past the window at a 24px setting.
+ * past the window at a 24px setting, and one that stayed 8px clear left it
+ * half a pixel under a 17px classic scrollbar.
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
@@ -93,14 +94,21 @@ describe("the hangar's spec card in the column before the last", () => {
     // The card starts a 1px border and the head's 0.5rem inside its block,
     // is 16rem wide, and its block's left edge is two blocks and a gap
     // (118 + 12 + 118) from the grid's right edge at the least.
-    const overrun = (font: number, margin: number) =>
-      1 + 0.5 * font + left(font, margin) + 16 * font - (248 + margin);
     // The page's padding from 768px at the default font is 2rem.
     expect(left(16, 32)).toBe(0);
     for (let font = 16; font <= 32; font += 0.5) {
       // px-4, sm:px-6, md:px-8, and a grid centred in a wider window.
       for (const margin of [font, 1.5 * font, 2 * font, 200]) {
-        expect(overrun(font, margin), `${font}px font, ${margin}px margin`).toBeLessThanOrEqual(0);
+        // 100vw counts a classic scrollbar as window, so the rule reads the
+        // margin half a bar wider than it is; the card must still end at or
+        // before the bar. 17px is Windows' bar, 15px Linux's, 0 an overlay.
+        for (const bar of [0, 15, 17]) {
+          const seen = margin - bar / 2;
+          expect(
+            1 + 0.5 * font + left(font, margin) + 16 * font - (248 + seen),
+            `${font}px font, ${seen}px margin, ${bar}px scrollbar`
+          ).toBeLessThanOrEqual(0);
+        }
       }
     }
   });
