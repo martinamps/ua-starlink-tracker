@@ -329,6 +329,27 @@ describe("buildAirportRanking", () => {
 });
 
 describe("/routes", () => {
+  test("labels every cell of its tables but the one naming the row, for when they stack", async () => {
+    // Stacked under a larger browser font, the headings are hidden; the
+    // labels (tests/table-stack-labels.test.ts) say what each count is.
+    const tables = [
+      ...(await page("/routes")).matchAll(/<table class="table-stack[^"]*">([\s\S]*?)<\/table>/g),
+    ];
+    expect(tables).toHaveLength(2);
+    for (const [, table] of tables) {
+      const rows =
+        table.match(/<tbody>[\s\S]*<\/tbody>/)?.[0].match(/<tr[^>]*>[\s\S]*?<\/tr>/g) ?? [];
+      expect(rows.length).toBeGreaterThan(0);
+      for (const tr of rows) {
+        const cells = tr.match(/<td\b[^>]*>/g) ?? [];
+        expect(
+          cells.filter((td) => !td.includes("data-label=")),
+          tr
+        ).toHaveLength(1);
+      }
+    }
+  });
+
   test("ranks the airports for a dated day, each linked where its page indexes", async () => {
     const body = await page("/routes");
     const block = sectionOf(body, "Airports with the most Starlink departures");

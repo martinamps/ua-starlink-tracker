@@ -749,4 +749,24 @@
   .table-stack .whitespace-nowrap {
     white-space: normal;
   }
+  /* With the headings hidden, a bare count can't say what it counts: a cell
+     given a label (Td's label prop) shows it above its value. The "/ ''" form
+     keeps it out of what screen readers announce, since the heading still
+     names the cell; a browser that lacks that form keeps the first line. */
+  .table-stack > tbody > tr > td[data-label]::before {
+    content: attr(data-label);
+    content: attr(data-label) / "";
+    display: block;
+    margin-bottom: 0.125rem;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 400;
+    color: var(--color-text-muted);
+  }
+  .table-stack > tbody > tr > td[data-label-inline]::before {
+    display: inline;
+    margin-bottom: 0;
+    font-size: inherit;
+    line-height: inherit;
+  }
 }

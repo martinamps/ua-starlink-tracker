@@ -516,11 +516,20 @@ export function Th({
 export function Td({
   numeric = false,
   optional = false,
+  label,
+  labelInline = false,
   className = "",
   children,
 }: {
   numeric?: boolean;
   optional?: boolean;
+  /** Shown above the cell only once DataTable stacks its rows and hides the
+   * headings; give it to a cell whose value doesn't say what it is (a bare
+   * count). Screen readers keep the heading and skip this. */
+  label?: string;
+  /** Draw the label just before the value on its line, not above it: for a
+   * one-character mark such as "#" before a rank. */
+  labelInline?: boolean;
   className?: string;
   children?: React.ReactNode;
 }) {
@@ -528,6 +537,8 @@ export function Td({
     <>
       <td
         className={`${TD} ${numeric ? "text-right" : ""} ${optional ? "hidden sm:table-cell" : ""} ${className}`}
+        data-label={label}
+        data-label-inline={label && labelInline ? "" : undefined}
       >
         {children}
       </td>{" "}
