@@ -116,22 +116,51 @@ export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
     const rest = reason.slice(lead.length);
     return `<span class="${stated[1]}">${stated[0]}</span> · ${esc(d.airline || "")} · ${esc(rest)} (${sourceLink(d.airline_statement.source)})`;
   }
-  const p = typeof d.probability === "number" ? d.probability : null;
-  const [label, cls] =
-    d.hasStarlink === true
-      ? ["Starlink", "text-success"]
-      : d.hasStarlink === false
-        ? ["No Starlink", "text-muted"]
-        : p !== null && d.basis && p === 0
-          ? ["Unlikely", "text-muted"]
-          : p !== null && d.basis
-            ? [`≥${Math.floor(p * 100)}% Starlink`, "text-accent"]
-            : p !== null
-              ? [`${fleetFigure(d) ? shareLabel(p) : probLabel(p)} Starlink`, "text-accent"]
-              : d.confidence === "type"
-                ? ["Depends on aircraft", "text-muted"]
-                : ["Unknown", "text-muted"];
+  const { label, cls } = verdictLabel(d);
   return `<span class="${cls}">${label}</span> · ${esc(d.airline || "")} · ${sentence}`;
+}
+
+/** The colours a check-any label takes; "Your flights" keeps one by name. */
+export const LEAD_CLASSES = ["text-success", "text-muted", "text-accent"] as const;
+export type LeadClass = (typeof LEAD_CLASSES)[number];
+
+export interface AnswerLead {
+  label: string;
+  cls: LeadClass;
+  /** The figure the label prints ("≥40%", "32%"), for a forecast. */
+  odds?: string;
+}
+
+function verdictLabel(d: CheckAnyBody): AnswerLead {
+  const p = typeof d.probability === "number" ? d.probability : null;
+  if (d.hasStarlink === true) return { label: "Starlink", cls: "text-success" };
+  if (d.hasStarlink === false) return { label: "No Starlink", cls: "text-muted" };
+  if (p !== null && d.basis && p === 0) return { label: "Unlikely", cls: "text-muted" };
+  if (p !== null) {
+    const odds = d.basis
+      ? `≥${Math.floor(p * 100)}%`
+      : fleetFigure(d)
+        ? shareLabel(p)
+        : probLabel(p);
+    return { label: `${odds} Starlink`, cls: "text-accent", odds };
+  }
+  return d.confidence === "type"
+    ? { label: "Depends on aircraft", cls: "text-muted" }
+    : { label: "Unknown", cls: "text-muted" };
+}
+
+/**
+ * A check-any answer's label alone, as checkAnyHtml leads with it: an
+ * airline's dated statement, or the verdict. For a surface with room for one
+ * line ("Your flights" on the hub); null for an error or a community answer.
+ */
+export function checkAnyLead(d: CheckAnyBody, community: boolean): AnswerLead | null {
+  if (d.error || community) return null;
+  const stated = d.airline_statement ? STATEMENT_LABELS[d.airline_statement.answer] : undefined;
+  if (d.airline_statement && stated) {
+    return { label: stated[0], cls: stated[1] === "text-accent" ? "text-accent" : "text-muted" };
+  }
+  return verdictLabel(d);
 }
 
 export type CheckPages = Record<string, { url: string; site: string }>;
@@ -140,7 +169,7 @@ export type CheckPages = Record<string, { url: string; site: string }>;
  * The hub answers from stored schedules alone; the airline's own page names
  * the aircraft and re-checks close to departure, so a hub answer hands off to it.
  */
-function checkPageHref(d: CheckAnyBody, pages: CheckPages, raw: string, date: string) {
+export function checkPageHref(d: CheckAnyBody, pages: CheckPages, raw: string, date: string) {
   const page = d.airline ? pages[d.airline] : undefined;
   const fn = canonicalFlightInput(raw);
   if (!page || d.error || !/^[A-Z0-9]+$/.test(fn)) return null;

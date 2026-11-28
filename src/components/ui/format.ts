@@ -96,6 +96,13 @@ export function probLabel(p: number): string {
   return `${Math.round(n)}%`;
 }
 
+/** A printed odds label back in words: "74%" → "about 74%", "≥40%" → "at
+ * least 40%", "<1%" → "under 1%". For a figure kept as it was shown. */
+export function labelPhrase(label: string): string {
+  if (label.startsWith("≥")) return `at least ${label.slice(1)}`;
+  return inWords(label, label === "100%" || label === "0%");
+}
+
 /** probLabel in words, for prose: "about 74%", "over 99%", "under 1%". */
 export const probPhrase = (p: number) => inWords(probLabel(p), !(p > 0 && p < 1));
 

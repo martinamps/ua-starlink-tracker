@@ -144,6 +144,8 @@ export interface FlightAnswer {
   firm: boolean;
   /** A partial answer's Starlink legs ("ORD → FLL"), for surfaces that print a figure. */
   yesLegs?: string[];
+  /** A forecast's figure as its headline prints it ("74%", "<1%"). */
+  odds?: string;
 }
 
 const WATCH_MAX_DAYS_OUT = 330;
@@ -600,6 +602,21 @@ function countedAnswer(
 }
 
 /**
+ * What an answer said, as the homepage's "Your flights" keeps it and compares
+ * it later (src/client/recent-checks.ts). One builder for the flight page, its
+ * live re-check and the row's own answer, so all three keep the same facts.
+ */
+export function answerShown(answer: FlightAnswer, body: CheckFlightBody) {
+  return {
+    tone: answer.tone,
+    firm: answer.firm,
+    tails: answerTails(body),
+    headline: answer.headline,
+    ...(answer.odds ? { odds: answer.odds } : {}),
+  };
+}
+
+/**
  * The aircraft an answer names, sorted: a yes's planes, a no's, or the one a
  * type answer was scheduled on. Empty for an answer that names none.
  */
@@ -788,5 +805,7 @@ function answerCard(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
     ? ""
     : `${probabilityBar(pred.probability, tone, n)} <p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>`;
   const html = card(tone, headline, `${detail}${watchRow(ctx, false)}`);
-  return { tone, headline, html, firm: false };
+  return typeRule
+    ? { tone, headline, html, firm: false }
+    : { tone, headline, html, firm: false, odds: flightLabel(pred.probability, n) };
 }

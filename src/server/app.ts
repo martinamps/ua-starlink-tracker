@@ -165,7 +165,7 @@ import {
 import { clientScriptResponse } from "../client/bundle";
 import {
   type DayLeg,
-  answerTails,
+  answerShown,
   datePassed,
   forecastNote,
   inTravelOrder,
@@ -4413,13 +4413,7 @@ const recentCheckAnswer: Handler = async (ctx) => {
   const answerCtx = answerContext(ctx.site, dated, facts);
   const answer = renderFlightAnswer(dated.body, answerCtx);
   return text(
-    JSON.stringify({
-      headline: answer.headline,
-      tone: answer.tone,
-      firm: answer.firm,
-      tails: answerTails(dated.body),
-      passed: datePassed(answerCtx),
-    }),
+    JSON.stringify({ ...answerShown(answer, dated.body), passed: datePassed(answerCtx) }),
     "application/json",
     { cache: CACHE.noStore, headers: { ...BASE_RESPONSE_HEADERS, "X-Robots-Tag": "noindex" } }
   );
