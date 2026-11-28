@@ -18,6 +18,15 @@
  * with what was last recorded and queues the pages of what differs. The
  * first pass only records, so a deploy of this feature announces nothing.
  *
+ * A flight page whose next plane on the same leg flipped between Starlink
+ * and not (starlinkFlip in check-flight/answer-key.ts) is news for that page
+ * alone. The hourly answer watcher hands those over; a first sighting, a new
+ * plane with the same answer, a leg rotation, a lead that appears or goes,
+ * verified ↔ likely, the usual band and the quiet note never reach here
+ * (the last three still move the sitemap date). They go out in one small batch per pass, under a daily cap of
+ * their own, at most once a day per page, so tails and facts keep all of
+ * theirs.
+ *
  * Off unless NODE_ENV=production with jobs enabled; INDEXNOW_DISABLED=1 (or
  * "true") turns it off there too, key file included.
  */
@@ -91,6 +100,24 @@ export const FACT_TAIL_RESERVE = 20;
  * sitemap. */
 export const FACT_WAITING_MAX_PAGES = 60;
 
+/** Flight pages one site may submit in any 24 hours, on a ledger of their
+ * own. Engines take one or two URLs of a submission and leave the rest: of
+ * the flight pages sent on fleet-discovery flips since 30 Oct, Bing fetched 1
+ * in 16 within the hour, while it fetched the home page after most sends.
+ * Each address sent counts against the engine's crawl of the site, so only
+ * Starlink flips are sent, and few. Raise it only once a week of sends shows
+ * Bing fetching more than 1 in 5 sent flight pages within the hour. Past it
+ * the rest are left to the sitemap's lastmod, and a loop in the watcher costs
+ * no more. */
+export const FLIGHT_DAILY_CAP = 25;
+/** Flight pages one site sends in one pass (the watcher runs hourly): the
+ * day's cap goes out through the day, each pass's most telling turns first,
+ * instead of in one burst at the first pass after the window rolls. */
+export const FLIGHT_PAGES_PER_PASS = 5;
+/** Flight pages self-checked per pass at most: each is a page render, and
+ * one that no longer serves or indexes frees its place for the next. */
+const FLIGHT_CHECKS_PER_PASS = 4 * FLIGHT_PAGES_PER_PASS;
+
 /** The protocol's key alphabet and length. */
 const KEY_SHAPE = /^[A-Za-z0-9-]{8,128}$/;
 
@@ -99,6 +126,9 @@ const KEY_SHAPE = /^[A-Za-z0-9-]{8,128}$/;
 const META_SCOPE = "ALL";
 const KEY_META = "indexnowKey";
 const sentMeta = (site: SiteConfig) => `indexnowSent:${site.key}`;
+/** Per site: flight pages sent in the last 24 hours. Apart from sentMeta so
+ * flight sends never spend the room kept for tails and facts. */
+const flightSentMeta = (site: SiteConfig) => `indexnowFlightSent:${site.key}`;
 /** Every tail the job has ever noticed on an airline's list: what "new" is
  * measured against. Not the same as announced: see WAITING_META. */
 const ANNOUNCED_META = "indexnowAnnounced";
@@ -194,6 +224,8 @@ interface SendOptions {
    * rollout fact that was added or replaced. */
   kind?: "ping" | "fact";
 }
+
+type SendKind = "ping" | "fact" | "flight";
 
 interface WaitingTail {
   tail: string;
@@ -327,6 +359,12 @@ export interface IndexNow {
    * the last call, and of earlier ones not accepted yet. The first call only
    * records the facts. Never rejects. */
   announceFactChanges(): Promise<void>;
+  /** Submit the pages of `flightNumbers` on the airline's own site: flights
+   * whose answer turned this pass, most telling first. At most
+   * FLIGHT_PAGES_PER_PASS go, each page at most once a day, under
+   * FLIGHT_DAILY_CAP; what does not fit is left to the sitemap, never
+   * queued. Never rejects. */
+  announceFlightChanges(airline: AirlineCode, flightNumbers: string[]): Promise<SubmitStatus>;
 }
 
 export function createIndexNow(deps: IndexNowDeps): IndexNow {
@@ -400,6 +438,17 @@ export function createIndexNow(deps: IndexNowDeps): IndexNow {
     }
   }
 
+  /** The vendor request counter for one kind of send. */
+  function counter(airline: AirlineCode, kind: SendKind) {
+    const tags = {
+      vendor: "indexnow",
+      type: kind,
+      airline: airline === META_SCOPE ? normalizeScopeTag(airline) : normalizeAirlineTag(airline),
+    };
+    return (status: Exclude<SubmitStatus, "noop">) =>
+      metrics.increment(COUNTERS.VENDOR_REQUEST, { ...tags, status });
+  }
+
   /** Record a failed send and quiet the site; returns the pause in seconds. */
   function backOff(site: SiteConfig): number {
     const at = nowSec();
@@ -417,6 +466,53 @@ export function createIndexNow(deps: IndexNowDeps): IndexNow {
     return pause;
   }
 
+  /** POST `urlList` for `site` and settle the ledger by the answer: a 429
+   * pauses the site for what the engine asked, any other failure backs off. */
+  async function post(
+    site: SiteConfig,
+    urlList: string[],
+    count: (status: Exclude<SubmitStatus, "noop" | "shed">) => void
+  ): Promise<SubmitStatus> {
+    let res: Response;
+    try {
+      res = await doFetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ host: site.canonicalHost, key, urlList }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      const timedOut = err instanceof Error && /timeout|abort/i.test(`${err.name} ${err.message}`);
+      count(timedOut ? "timeout" : "error");
+      logError(`IndexNow: no answer for ${site.canonicalHost}, quiet for ${backOff(site)}s`, err);
+      return timedOut ? "timeout" : "error";
+    }
+    // 200 = accepted; 202 = accepted, key check pending.
+    if (res.status === 200 || res.status === 202) {
+      const { failures, ...settled } = readLedger(site, nowSec());
+      if (failures) writeLedger(site, settled);
+      count("success");
+      info(`IndexNow: ${urlList.length} page(s) submitted for ${site.canonicalHost}`);
+      return "success";
+    }
+    if (res.status === 429) {
+      const asked = Number.parseInt(res.headers.get("retry-after") ?? "", 10);
+      const pause = Number.isFinite(asked)
+        ? Math.min(Math.max(asked, RESUBMIT_GAP_SEC), DAY_SEC)
+        : DEFAULT_PAUSE_SEC;
+      const at = nowSec();
+      writeLedger(site, { ...readLedger(site, at), pausedUntil: at + pause });
+      count("rate_limited");
+      logError(`IndexNow: 429 for ${site.canonicalHost}, quiet for ${pause}s`);
+      return "rate_limited";
+    }
+    // 400 bad request, 403 key not found or not matching, 422 an address
+    // that is not the host's.
+    count("error");
+    logError(`IndexNow: ${res.status} for ${site.canonicalHost}, quiet for ${backOff(site)}s`);
+    return "error";
+  }
+
   async function submitToSite(
     site: SiteConfig,
     airline: AirlineCode,
@@ -424,13 +520,7 @@ export function createIndexNow(deps: IndexNowDeps): IndexNow {
     opts: SendOptions = {}
   ): Promise<SubmitStatus> {
     const { whole = false, reserve = 0, kind = "ping" } = opts;
-    const tags = {
-      vendor: "indexnow",
-      type: kind,
-      airline: airline === META_SCOPE ? normalizeScopeTag(airline) : normalizeAirlineTag(airline),
-    };
-    const count = (status: Exclude<SubmitStatus, "noop">) =>
-      metrics.increment(COUNTERS.VENDOR_REQUEST, { ...tags, status });
+    const count = counter(airline, kind);
     try {
       if (!site.live) return "noop";
       const wanted = [...new Set(paths.flatMap((p) => addressOf(site, p) ?? []))];
@@ -464,45 +554,7 @@ export function createIndexNow(deps: IndexNowDeps): IndexNow {
       ledger.sent.push(...urlList.map((a): [string, number] => [a, now]));
       writeLedger(site, ledger);
 
-      let res: Response;
-      try {
-        res = await doFetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json; charset=utf-8" },
-          body: JSON.stringify({ host: site.canonicalHost, key, urlList }),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-      } catch (err) {
-        const timedOut =
-          err instanceof Error && /timeout|abort/i.test(`${err.name} ${err.message}`);
-        count(timedOut ? "timeout" : "error");
-        logError(`IndexNow: no answer for ${site.canonicalHost}, quiet for ${backOff(site)}s`, err);
-        return timedOut ? "timeout" : "error";
-      }
-      // 200 = accepted; 202 = accepted, key check pending.
-      if (res.status === 200 || res.status === 202) {
-        const { failures, ...settled } = readLedger(site, nowSec());
-        if (failures) writeLedger(site, settled);
-        count("success");
-        info(`IndexNow: ${urlList.length} page(s) submitted for ${site.canonicalHost}`);
-        return "success";
-      }
-      if (res.status === 429) {
-        const asked = Number.parseInt(res.headers.get("retry-after") ?? "", 10);
-        const pause = Number.isFinite(asked)
-          ? Math.min(Math.max(asked, RESUBMIT_GAP_SEC), DAY_SEC)
-          : DEFAULT_PAUSE_SEC;
-        const at = nowSec();
-        writeLedger(site, { ...readLedger(site, at), pausedUntil: at + pause });
-        count("rate_limited");
-        logError(`IndexNow: 429 for ${site.canonicalHost}, quiet for ${pause}s`);
-        return "rate_limited";
-      }
-      // 400 bad request, 403 key not found or not matching, 422 an address
-      // that is not the host's.
-      count("error");
-      logError(`IndexNow: ${res.status} for ${site.canonicalHost}, quiet for ${backOff(site)}s`);
-      return "error";
+      return await post(site, urlList, count);
     } catch (err) {
       count("error");
       logError(`IndexNow: submission failed for ${site.canonicalHost}`, err);
@@ -782,7 +834,93 @@ export function createIndexNow(deps: IndexNowDeps): IndexNow {
     }
   }
 
-  return { submit, announceNewTails, announceFactChanges };
+  function readFlightSent(site: SiteConfig, now: number): Array<[string, number]> {
+    try {
+      const raw = JSON.parse(getMeta(db, flightSentMeta(site), META_SCOPE) ?? "[]") as unknown;
+      if (!Array.isArray(raw)) return [];
+      return raw.filter(
+        (e): e is [string, number] =>
+          Array.isArray(e) &&
+          typeof e[0] === "string" &&
+          typeof e[1] === "number" &&
+          now - e[1] < DAY_SEC
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  async function announceFlightChanges(
+    airline: AirlineCode,
+    flightNumbers: string[]
+  ): Promise<SubmitStatus> {
+    const count = counter(airline, "flight");
+    try {
+      const site = siteForAirline(airline, true);
+      if (!site?.live) return "noop";
+      const wanted = [
+        ...new Set(
+          flightNumbers.flatMap(
+            (fn) => addressOf(site, `/check-flight/${encodeURIComponent(fn)}`) ?? []
+          )
+        ),
+      ];
+      if (wanted.length === 0) return "noop";
+      const sentBefore = new Set(readFlightSent(site, nowSec()).map(([a]) => a));
+      // Once a day per page: an answer that flips back and forth hourly is
+      // one recrawl's worth of news, not many.
+      const fresh = wanted.filter((a) => !sentBefore.has(a));
+      if (fresh.length === 0) return "noop";
+      if (readLedger(site, nowSec()).pausedUntil) {
+        count("shed");
+        return "shed";
+      }
+      const room = Math.min(FLIGHT_PAGES_PER_PASS, FLIGHT_DAILY_CAP - sentBefore.size);
+      if (room <= 0) {
+        count("shed");
+        info(
+          `IndexNow: ${fresh.length} ${airline} flight page(s) past the ${FLIGHT_DAILY_CAP}-a-day cap, left to the sitemap`
+        );
+        return "shed";
+      }
+      const served: string[] = [];
+      for (const address of fresh.slice(0, FLIGHT_CHECKS_PER_PASS)) {
+        if (served.length >= room) break;
+        if (await serves(site, address)) served.push(address);
+      }
+      if (served.length === 0) return "noop";
+
+      // No await between reading the ledger and writing it back.
+      const now = nowSec();
+      const ledger = readFlightSent(site, now);
+      const already = new Set(ledger.map(([a]) => a));
+      const urlList = served
+        .filter((a) => !already.has(a))
+        .slice(0, Math.max(0, Math.min(room, FLIGHT_DAILY_CAP - ledger.length)));
+      if (urlList.length === 0) return "noop";
+      const left = fresh.length - urlList.length;
+      if (left > 0) {
+        info(
+          `IndexNow: ${left} ${airline} flight page(s) not sent this pass (cap, or not served), left to the sitemap`
+        );
+      }
+      // Counted before the answer, as on the main ledger: a failed send still
+      // spent its place, and is not retried.
+      setMeta(
+        db,
+        flightSentMeta(site),
+        JSON.stringify([...ledger, ...urlList.map((a): [string, number] => [a, now])]),
+        META_SCOPE
+      );
+      return await post(site, urlList, count);
+    } catch (err) {
+      count("error");
+      logError(`IndexNow: flight page submission failed for ${airline}`, err);
+      return "error";
+    }
+  }
+
+  return { submit, announceNewTails, announceFactChanges, announceFlightChanges };
 }
 
 let active: IndexNow | null = null;
@@ -793,6 +931,15 @@ let active: IndexNow | null = null;
 export function activateIndexNow(deps: IndexNowDeps): IndexNow {
   active = createIndexNow(deps);
   return active;
+}
+
+/** The flight pages whose answer turned, to the process's submitter; a
+ * no-op until one is activated. Never rejects. */
+export async function announceFlightPages(
+  airline: AirlineCode,
+  flightNumbers: string[]
+): Promise<SubmitStatus> {
+  return active ? active.announceFlightChanges(airline, flightNumbers) : "noop";
 }
 
 /** Fire-and-forget submission of an airline site's changed pages. */

@@ -194,7 +194,7 @@ import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
-import { flightAnswerKey } from "../components/check-flight/answer-key";
+import { flightAnswerKey, starlinkFlip } from "../components/check-flight/answer-key";
 import { firmDescription } from "../components/check-flight/firm-lead";
 import ChromePage, {
   CHROME_OG_IMAGE_ALT,
@@ -6501,7 +6501,9 @@ export interface App {
   dispatch(req: Request, server?: SocketPeer): Promise<Response>;
   /** Builds each sitemap flight page's answer key with the page's own reads
    * and records the ones that changed: what the sitemap dates flights by. */
-  recordFlightAnswers(): Promise<Array<{ airline: AirlineCode; seen: number; changed: number }>>;
+  recordFlightAnswers(): Promise<
+    Array<{ airline: AirlineCode; seen: number; changed: number; turned: string[] }>
+  >;
 }
 
 function finalizeResponse(res: Response, varyHost: boolean): Response {
@@ -6967,7 +6969,8 @@ export function createApp(
   ];
 
   const recordAnswers = async () => {
-    const out: Array<{ airline: AirlineCode; seen: number; changed: number }> = [];
+    const out: Array<{ airline: AirlineCode; seen: number; changed: number; turned: string[] }> =
+      [];
     for (const { site, airline: cfg } of liveAirlineSites()) {
       if (!site.features.checkFlightPage) continue;
       const reader = getReader(cfg.code);
@@ -6984,7 +6987,10 @@ export function createApp(
         // The reads are synchronous; yield so requests are served between batches.
         if (i % ANSWER_BATCH === ANSWER_BATCH - 1) await sleep(0);
       }
-      out.push({ airline: cfg.code, ...recordFlightAnswers(db, cfg.code, answers, unixNow()) });
+      out.push({
+        airline: cfg.code,
+        ...recordFlightAnswers(db, cfg.code, answers, unixNow(), starlinkFlip),
+      });
     }
     return out;
   };

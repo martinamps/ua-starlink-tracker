@@ -18,9 +18,12 @@ import {
   DAILY_URL_CAP,
   FACT_PAGES_PER_PASS,
   FACT_TAIL_RESERVE,
+  FLIGHT_DAILY_CAP,
+  FLIGHT_PAGES_PER_PASS,
   type IndexNow,
   WAITING_MAX_AGE_SEC,
   WAITING_MAX_TAILS,
+  announceFlightPages,
   createIndexNow,
   ensureIndexNowKey,
   factChangePages,
@@ -257,6 +260,7 @@ describe("the switch", () => {
 
   test("this process never activated a submitter, so a ping sends nothing", async () => {
     pingIndexNow("UA", ["/", "/fleet"]);
+    expect(await announceFlightPages("UA", ["UA1"])).toBe("noop");
     await Bun.sleep(50);
     expect(received).toEqual([]);
   });
@@ -1159,5 +1163,188 @@ describe("a changed rollout fact", () => {
       value: string;
     } | null;
     expect(Object.keys(JSON.parse(stored?.value ?? "{}"))).toContain("facts:UA:united");
+  });
+});
+
+describe("a flight page whose answer turned", () => {
+  /** Every page serves 200 and indexes: what is under test is the choosing,
+   * the cap and the gap, not which flight pages the fresh database has. */
+  const servesAll = () =>
+    build({
+      dispatch: async () =>
+        new Response("<html><head></head></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+    });
+  const flights = (n: number, from = 0) => Array.from({ length: n }, (_, i) => `UA${from + i + 1}`);
+
+  test("sends that flight's own page on the airline's site, counted as a flight send", async () => {
+    const inx = servesAll();
+    expect(await inx.announceFlightChanges("UA", ["UA123", "UA5212"])).toBe("success");
+    expect(received.length).toBe(1);
+    expect(received[0].host).toBe(UA);
+    expect(received[0].key).toBe(key);
+    expect(pathsFor(UA)).toEqual(["/check-flight/UA123", "/check-flight/UA5212"]);
+    expect(counted.map((t) => [t.type, t.status])).toEqual([["flight", "success"]]);
+  });
+
+  test("nothing turned, nothing sent", async () => {
+    const inx = servesAll();
+    expect(await inx.announceFlightChanges("UA", [])).toBe("noop");
+    expect(received).toEqual([]);
+    expect(counted).toEqual([]);
+  });
+
+  test("a page is sent at most once a day, however often its answer turns", async () => {
+    const inx = servesAll();
+    expect(await inx.announceFlightChanges("UA", ["UA1"])).toBe("success");
+    for (let h = 1; h < 24; h++) {
+      minutes(60);
+      expect(await inx.announceFlightChanges("UA", ["UA1"])).toBe("noop");
+    }
+    minutes(61);
+    expect(await inx.announceFlightChanges("UA", ["UA1"])).toBe("success");
+    expect(received.map((s) => s.urlList.length)).toEqual([1, 1]);
+  });
+
+  /** One watcher pass an hour for `hours`, each handing over `perPass` new
+   * turned flights; returns how many pages were sent. */
+  async function hourly(inx: IndexNow, hours: number, perPass: number, start: number) {
+    let n = start;
+    for (let h = 0; h < hours; h++) {
+      await inx.announceFlightChanges("UA", flights(perPass, n));
+      n += perPass;
+      minutes(60);
+    }
+    return n;
+  }
+  const sentTo = (host: string) => forHost(host).reduce((n, s) => n + s.urlList.length, 0);
+
+  test("one pass sends a few pages, most telling first, and keeps none of the rest", async () => {
+    const inx = servesAll();
+    const turned = flights(40);
+    expect(await inx.announceFlightChanges("UA", turned)).toBe("success");
+    expect(pathsFor(UA)).toEqual(
+      turned.slice(0, FLIGHT_PAGES_PER_PASS).map((fn) => `/check-flight/${fn}`)
+    );
+    // Not queued: the next pass, with nothing newly turned, sends nothing.
+    minutes(60);
+    expect(await inx.announceFlightChanges("UA", [])).toBe("noop");
+    expect(sentTo(UA)).toBe(FLIGHT_PAGES_PER_PASS);
+  });
+
+  test("a site never sends more flight pages than the cap in 24 hours, then sends again", async () => {
+    const inx = servesAll();
+    const next = await hourly(inx, 24, 40, 0);
+    expect(sentTo(UA)).toBeLessThanOrEqual(FLIGHT_DAILY_CAP);
+    expect(sentTo(UA)).toBeGreaterThan(0);
+    // Spread through the day: no send is larger than one pass's share.
+    for (const s of forHost(UA))
+      expect(s.urlList.length).toBeLessThanOrEqual(FLIGHT_PAGES_PER_PASS);
+    expect(counted.some((t) => t.type === "flight" && t.status === "shed")).toBe(true);
+    const before = sentTo(UA);
+    minutes(24 * 60);
+    expect(await inx.announceFlightChanges("UA", flights(3, next))).toBe("success");
+    expect(sentTo(UA)).toBe(before + 3);
+  });
+
+  test("flight sends leave the tails' and facts' daily room untouched", async () => {
+    const inx = servesAll();
+    await indexNow.announceNewTails();
+    await hourly(inx, 24, 40, 0);
+    listUnited("N777UA");
+    await indexNow.announceNewTails();
+    const tailSends = forHost(UA).filter((s) => s.urlList.some((u) => u.endsWith("/fleet/N777UA")));
+    expect(tailSends.length).toBe(1);
+    // And the other way: a day's full main ledger does not stop flights.
+    for (let i = 0; i < DAILY_URL_CAP; i++) await indexNow.submit("UA", [`/fleet/N${i}X`]);
+    minutes(24 * 60 + 1);
+    expect(await inx.announceFlightChanges("UA", ["UA4242"])).toBe("success");
+  });
+
+  test("only pages the site serves, 200 and indexable, are sent", async () => {
+    // The fresh database knows none of these flights, and a known flight's
+    // page is checked with the app's own dispatch.
+    const r = await indexNow.announceFlightChanges("UA", ["UA99999", "XX1"]);
+    expect(["noop", "success"]).toContain(r);
+    for (const u of received.flatMap((s) => s.urlList)) {
+      const res = await app.dispatch(new Request(u, { headers: { host: UA } }));
+      expect(res.status).toBe(200);
+    }
+  });
+
+  test("a flight number that is other people's text never leaves the flight path", async () => {
+    const inx = servesAll();
+    await inx.announceFlightChanges("UA", [
+      "../../fleet",
+      "UA1?x=1",
+      "UA1#a",
+      "//evil.example/x",
+      "UA 1",
+      "UA1\\..",
+    ]);
+    for (const u of received.flatMap((s) => s.urlList)) {
+      const url = new URL(u);
+      expect(url.host).toBe(UA);
+      expect(url.pathname.startsWith("/check-flight/")).toBe(true);
+      expect(url.pathname.slice("/check-flight/".length)).not.toContain("/");
+      expect(url.search).toBe("");
+      expect(url.hash).toBe("");
+    }
+  });
+
+  test("a site that is not live, or not ours, is never sent for", async () => {
+    const inx = servesAll();
+    expect(await inx.announceFlightChanges("HA", ["HA50"])).toBe("noop");
+    expect(await inx.announceFlightChanges("ZZ", ["ZZ1"])).toBe("noop");
+    expect(received).toEqual([]);
+  });
+
+  test("a paused site sheds flight pages without sending, and does not keep them", async () => {
+    const inx = servesAll();
+    answer = { status: 429, headers: { "retry-after": "3600" } };
+    expect(await indexNow.submit("UA", ["/"])).toBe("rate_limited");
+    received = [];
+    counted.length = 0;
+    expect(await inx.announceFlightChanges("UA", ["UA1"])).toBe("shed");
+    expect(received).toEqual([]);
+    expect(counted.map((t) => t.status)).toEqual(["shed"]);
+    answer = { status: 200 };
+    minutes(61);
+    expect(await inx.announceFlightChanges("UA", [])).toBe("noop");
+    expect(received).toEqual([]);
+  });
+
+  test("a failed flight send is logged once, backs the site off, and is not retried", async () => {
+    const inx = servesAll();
+    answer = { status: 500 };
+    expect(await inx.announceFlightChanges("UA", ["UA1", "UA2"])).toBe("error");
+    expect(received.length).toBe(1);
+    // The site is quiet for every kind of send now.
+    expect(await indexNow.submit("UA", ["/"])).toBe("shed");
+    answer = { status: 200 };
+    minutes(11);
+    // Its places were spent: the same pages are not resent that day.
+    expect(await inx.announceFlightChanges("UA", ["UA1", "UA2"])).toBe("noop");
+    expect(received.length).toBe(1);
+  });
+
+  test("an engine that cannot be reached changes nothing for the caller", async () => {
+    const inx = build({
+      endpoint: "http://127.0.0.1:1/indexnow",
+      dispatch: async () =>
+        new Response("<html></html>", { status: 200, headers: { "content-type": "text/html" } }),
+    });
+    expect(["error", "timeout"]).toContain(await inx.announceFlightChanges("UA", ["UA1"]));
+  });
+
+  test("a broken flight ledger in the database is survived", async () => {
+    const inx = servesAll();
+    db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+      `ALL:indexnowFlightSent:${SITES.united.key}`,
+      "{not json"
+    );
+    expect(await inx.announceFlightChanges("UA", ["UA1"])).toBe("success");
   });
 });
