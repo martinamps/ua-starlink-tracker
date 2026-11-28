@@ -548,8 +548,30 @@ export function getListedSightings(
   end: number
 ): FlightAssignmentRow[] {
   if (variants.length === 0) return [];
+  return listedSightings(db, airlines, variants, start, end);
+}
+
+/** The same sightings for every flight number departing in [start, end), for
+ * the planner's confirmed tier, which reads a whole day at once. */
+export function getListedSightingsBetween(
+  db: Database,
+  airlines: readonly string[],
+  start: number,
+  end: number
+): FlightAssignmentRow[] {
+  return listedSightings(db, airlines, null, start, end);
+}
+
+function listedSightings(
+  db: Database,
+  airlines: readonly string[],
+  variants: readonly string[] | null,
+  start: number,
+  end: number
+): FlightAssignmentRow[] {
   const a = airlineIn(airlines, "l.airline");
   const listed = airlineIn(airlines, "sp.airline");
+  const flights = variants ? `AND l.flight_number IN (${placeholders(variants)})` : "";
   const rows = db
     .query(
       `SELECT 0 AS id, l.tail_number, l.flight_number, l.departure_airport, l.arrival_airport,
@@ -561,7 +583,7 @@ export function getListedSightings(
        FROM flight_assignment_log l
        INNER JOIN starlink_planes sp ON sp.TailNumber = l.tail_number AND ${listed.sql}
        ${settledNegativeJoin("_neg", "sp.TailNumber", "sp.airline")}
-       WHERE ${a.sql} AND l.flight_number IN (${placeholders(variants)})
+       WHERE ${a.sql} ${flights}
          AND l.departure_time >= ? AND l.departure_time < ? AND l.arrival_time IS NOT NULL
          AND l.arrival_airport IS NOT NULL
          AND l.last_seen > COALESCE(sp.last_flight_check, 0)
@@ -577,7 +599,7 @@ export function getListedSightings(
            AND ${modHoldSql("sp.TailNumber", "sp.airline")})
        ORDER BY l.last_seen DESC`
     )
-    .all(...listed.params, ...a.params, ...variants, start, end) as FlightAssignmentRow[];
+    .all(...listed.params, ...a.params, ...(variants ?? []), start, end) as FlightAssignmentRow[];
   return rows.filter(printable);
 }
 

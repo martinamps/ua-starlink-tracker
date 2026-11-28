@@ -71,6 +71,7 @@ import { newestPerDeparture } from "../database/newest-row";
 import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
 import type { RouteFlightLeg } from "../database/route-flights";
 import { rowEvidence } from "../database/sql/equipped";
+import type { Flight } from "../types";
 import {
   airportCoords,
   airportDistanceMiles,
@@ -2368,7 +2369,101 @@ function confirmedEdgesOn(reader: ScopedReader, date: string): Map<string, "expr
       row.fleet === "mainline" ? "mainline" : "express"
     );
   }
+  confirmSightings(reader, date, window, rows, out);
   return out;
+}
+
+/** The flight's digits as a number (SKW05406 → 5406), or -1 with none. A slot
+ * key keeps them, so a row whose number differs can't share the slot. */
+function flightDigits(fn: string): number {
+  let n = 0;
+  let scale = 1;
+  let i = fn.length - 1;
+  for (; i >= 0; i--) {
+    const c = fn.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) break;
+    n += c * scale;
+    scale *= 10;
+  }
+  return i === fn.length - 1 ? -1 : n;
+}
+
+/**
+ * A listed tail an earlier lookup logged on the flight, newer than our last
+ * read of that tail's schedule, answers the flight check as the schedule row
+ * it stands in for (getListedSightings), so it confirms the leg here too.
+ * Only on the flight check's terms: a number with any schedule row on the
+ * date answers from the schedule, not the log, and of the sightings left the
+ * newest per departure decides, across spellings, so a later swap off the
+ * tail (another aircraft logged, or a lookup that withdrew it) wins.
+ */
+function confirmSightings(
+  reader: ScopedReader,
+  date: string,
+  window: NonNullable<ReturnType<typeof flightDateWindow>>,
+  scheduleRows: readonly StarlinkEdgeRow[],
+  out: Map<string, "express" | "mainline">
+): void {
+  const onDate = (r: { departure_airport: string; departure_time: number }) =>
+    matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
+  const slotOf = (fn: string) => slotFlightKey(fn, reader.scope) ?? fn;
+  const keyed = reader
+    .getListedSightingsBetween(window.queryStart, window.queryEnd)
+    .filter(onDate)
+    .map((row) => ({
+      row,
+      slot: slotOf(row.flight_number),
+      departure_time: row.departure_time,
+      last_updated: row.last_updated,
+    }));
+  if (keyed.length === 0) return;
+  const sighted = new Set(keyed.map((k) => k.slot));
+  const digits = new Set(keyed.map((k) => flightDigits(k.row.flight_number)));
+  // A slot key with no digits matches no prefix, so it is the spelling itself.
+  const spellings = new Set(keyed.map((k) => k.row.flight_number));
+  const scheduled = new Set<string>();
+  for (const r of scheduleRows) {
+    if (!digits.has(flightDigits(r.flight_number)) && !spellings.has(r.flight_number)) continue;
+    const slot = slotOf(r.flight_number);
+    if (sighted.has(slot) && !scheduled.has(slot) && onDate(r)) scheduled.add(slot);
+  }
+  const open = keyed.filter((k) => !scheduled.has(k.slot));
+  for (const { row, slot } of newestPerDeparture(
+    open,
+    (k) => `${k.slot}|${k.row.departure_airport}`
+  )) {
+    if (rowEvidence(row) !== "verified") continue;
+    if (!newestOnDeparture(reader, date, row)) continue;
+    out.set(
+      edgeKey(slot, row.departure_airport, row.arrival_airport),
+      row.fleet === "mainline" ? "mainline" : "express"
+    );
+  }
+}
+
+/**
+ * Whether the sighting's tail is still the newest logged on its departure
+ * under any of the flight's spellings. The whole-day read can only rule out a
+ * rival under the sighting's own spelling, and a tail read's row is never a
+ * sighting: a lookup logs AS3442, while a tail read keeps SkyWest-for-Alaska
+ * as SKW3442, so a newer tail there must still outrank the older sighting.
+ * Only a few verified sightings reach this a day, each one indexed read.
+ */
+function newestOnDeparture(
+  reader: ScopedReader,
+  date: string,
+  row: Pick<Flight, "airline" | "flight_number" | "departure_airport" | "tail_number">
+): boolean {
+  const cfg = AIRLINES[row.airline];
+  const digits = flightDigits(row.flight_number);
+  const variants =
+    cfg && digits >= 0
+      ? buildAirlineFlightNumberVariants(cfg, `${cfg.iata}${digits}`)
+      : [row.flight_number];
+  const newest = reader
+    .getLoggedAircraft(variants, date)
+    .find((a) => a.departure_airport === row.departure_airport);
+  return !newest || newest.tail_number === row.tail_number;
 }
 
 const edgeKey = (slot: string, dep: string, arr: string) => `${slot}|${dep}|${arr}`;
