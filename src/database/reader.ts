@@ -56,6 +56,7 @@ import {
   type DepartureReading,
   type HeldLegDay,
   type LoggedAircraft,
+  type LoggedDepartureRow,
   type ResolvedLeg,
   type ReturnedDeparture,
   type SameDayAlternative,
@@ -66,6 +67,7 @@ import {
   getListedSightings,
   getListedSightingsBetween,
   getLoggedAircraft,
+  getLoggedDepartures,
   getSameDayStarlinkAlternatives,
   hasUnreadAircraft,
   isKnownFlightNumber,
@@ -433,6 +435,9 @@ export interface ScopedReader {
   /** The newest tail logged per departure, with its fleet-list type; every
    * date the log holds when `depDate` is absent. */
   getLoggedAircraft(variants: readonly string[], depDate?: string): LoggedAircraft[];
+  /** Every tail logged on any of the flights on the date, newest first, over
+   * getLoggedAircraft's airlines. */
+  getLoggedDepartures(depDate: string): LoggedDepartureRow[];
   /** Listed tails seen on the flight since their schedule was last read, as
    * schedule rows; spans operatingPartners like getFlightAssignments. */
   getListedSightings(
@@ -722,6 +727,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
     getLoggedAircraft: (v, d) => getLoggedAircraft(db, withOperatingPartners(airlines), v, d),
+    getLoggedDepartures: (d) => getLoggedDepartures(db, withOperatingPartners(airlines), d),
     getListedSightings: (v, s, e) =>
       getListedSightings(db, withOperatingPartners(airlines), v, s, e),
     getListedSightingsBetween: (s, e) => getListedSightingsBetween(db, airlines, s, e),
