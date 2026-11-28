@@ -2474,7 +2474,32 @@ const slotEdgeKey = (reader: ScopedReader, flight: string, dep: string, arr: str
 const nextIsoDate = (date: string) =>
   new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
-const weekdayOf = (date: string) => zonedWeekday(Date.parse(`${date}T12:00:00Z`) / 1000, "UTC");
+// The graph asks for a weekday and a local clock on every edge of every plan,
+// thousands a call; through Intl that was most of #275's added time. Both are
+// pure in their inputs, so each is worked out once.
+const weekdayNames = new Map<string, string>();
+const weekdayOf = (date: string): string => {
+  let name = weekdayNames.get(date);
+  if (name === undefined) {
+    if (weekdayNames.size >= 4096) weekdayNames.clear();
+    name = zonedWeekday(Date.parse(`${date}T12:00:00Z`) / 1000, "UTC");
+    weekdayNames.set(date, name);
+  }
+  return name;
+};
+
+const departureClocks = new Map<string, { date: string; minutes: number }>();
+/** The local date and minutes after midnight of a departure at its airport. */
+function departureClock(sec: number, zone: string): { date: string; minutes: number } {
+  const key = `${zone}|${sec}`;
+  let clock = departureClocks.get(key);
+  if (clock === undefined) {
+    if (departureClocks.size >= 100_000) departureClocks.clear();
+    clock = { date: localDateISO(sec, zone), minutes: zonedMinutes(sec, zone) };
+    departureClocks.set(key, clock);
+  }
+  return clock;
+}
 
 // The log holds a week; its grouped scan runs some tens of ms at United's size,
 // and a usual time or a weekday doesn't move within minutes.
@@ -2538,8 +2563,12 @@ function buildRouteGraph(
     if (hist.probability < minLegProb && !confirmedSomeDay) continue;
 
     const zone = airportTimezone(dep);
-    const days = new Set(logged.get(key));
-    if (zone && r.departure_time) days.add(localDateISO(r.departure_time, zone));
+    const clock = zone && r.departure_time ? departureClock(r.departure_time, zone) : null;
+    const seen = logged.get(key);
+    const scheduledDay = clock && !seen?.has(clock.date) ? clock.date : null;
+    const weekdays = new Set<string>();
+    for (const day of seen ?? []) weekdays.add(weekdayOf(day));
+    if (scheduledDay) weekdays.add(weekdayOf(scheduledDay));
     const option: EdgeOption = {
       slot: key,
       hist,
@@ -2547,9 +2576,9 @@ function buildRouteGraph(
       departure: dep,
       arrival: arr,
       duration_hours: r.avg_duration_sec > 0 ? r.avg_duration_sec / 3600 : null,
-      minutes: zone && r.departure_time ? zonedMinutes(r.departure_time, zone) : null,
-      days: days.size,
-      weekdays: new Set([...days].map(weekdayOf)),
+      minutes: clock ? clock.minutes : null,
+      days: (seen?.size ?? 0) + (scheduledDay ? 1 : 0),
+      weekdays,
       newest: r.departure_time,
     };
     if (!graph.has(dep)) graph.set(dep, new Map());

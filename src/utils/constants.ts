@@ -10,6 +10,13 @@ export const DB_PATH =
     ? "/srv/ua-starlink-tracker/plane-data.sqlite"
     : "./plane-data.sqlite");
 
+// Previous builds' fingerprinted assets (src/server/asset-archive.ts). On the
+// data volume beside the database in production, so it outlives the container;
+// off elsewhere unless set.
+export const ASSET_ARCHIVE_DIR =
+  process.env.ASSET_ARCHIVE_DIR ??
+  (process.env.NODE_ENV === "production" ? "/srv/ua-starlink-tracker/asset-archive" : "");
+
 // Shared User-Agent for outbound HTTP and Playwright contexts. Bare
 // "Mozilla/5.0" trips bot heuristics on several upstreams; one realistic
 // Chrome string keeps the call sites from drifting.

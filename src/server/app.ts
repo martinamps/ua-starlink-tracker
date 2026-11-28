@@ -223,6 +223,7 @@ import type { Link as PageLink } from "../components/layout";
 import { firstReadNote, firstReadTakenBackNote } from "../database/first-read";
 import type { AirlineChartCount } from "../database/roster";
 import { reportedClause } from "../utils/reported-reason";
+import { type AssetArchive, FINGERPRINTED_ASSET, assetArchive } from "./asset-archive";
 
 import { homeHeadline } from "../components/home/headline";
 import HubTimelinePage, {
@@ -294,7 +295,6 @@ import {
   describeCarrierPrediction,
   emptyPlanMessage,
   joinSentences,
-  planItinerary,
   planRoute,
   predictLegOrFlight,
   routeBaseline,
@@ -753,6 +753,7 @@ staticResponses.set(
     },
   })
 );
+assetArchive?.keep(ROUTES_BASEMAP_HREF, BASEMAP_SVG);
 
 /**
  * Compiled Tailwind, fingerprinted and registered as a tenant-agnostic asset.
@@ -810,6 +811,7 @@ function registerStylesheet(): void {
       },
     })
   );
+  assetArchive?.keep(href, css);
   stylesheetHref = href;
   stylesheetTag = `<link rel="stylesheet" href="${href}">`;
 }
@@ -1752,11 +1754,8 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   const targetDateUnix =
     dateParam && routeBoardDateOk(dateParam) ? flightDateWindow(dateParam)?.mid : undefined;
   const day = targetDateUnix !== undefined ? dateParam : null;
-  const itineraries = planItinerary(reader, from, to, {
-    maxItineraries: 12,
-    maxStops,
-    targetDateUnix,
-  }).map((it) => ({
+  const plan = planRoute(reader, from, to, { maxItineraries: 12, maxStops, targetDateUnix });
+  const itineraries = plan.itineraries.map((it) => ({
     ...it,
     legs: it.legs.map((leg, i) => {
       const page = legPagePath(cfg, leg.flight_number, legDay(leg, i, day), leg.route);
@@ -1767,10 +1766,8 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   // pair's duration is unknowable, i.e. an airport outside the coordinate table).
   const baseline = routeBaseline(reader, from, to);
   if (itineraries.length > 0) return json({ origin, destination, itineraries, baseline });
-  // Additive: why nothing is offered. Re-planned only on the rare empty answer
-  // so the itinerary call above stays as it is.
-  const { empty } = planRoute(reader, from, to, { maxItineraries: 12, maxStops, targetDateUnix });
-  const message = empty ? emptyPlanMessage(empty, to) : undefined;
+  // Additive: why nothing is offered.
+  const message = plan.empty ? emptyPlanMessage(plan.empty, to) : undefined;
   return json({ origin, destination, itineraries, baseline, ...(message ? { message } : {}) });
 };
 
@@ -6434,8 +6431,9 @@ function createSharePictureHandler(limits: SharePictureLimits): Handler {
 }
 
 /**
- * A name shaped like a build's fingerprinted assets: `tailwind.<hash>.css`,
- * `<entry>.<hash>.js`, `routes-map.<hash>.svg`.
+ * Files under /static/. A name shaped like a build's fingerprinted assets
+ * (`tailwind.<hash>.css`, `<entry>.<hash>.js`, `routes-map.<hash>.svg`) that
+ * this build doesn't hold is looked up in the archive of previous builds.
  *
  * A miss on one of these must never be stored. A deploy runs the old and the
  * new container side by side for a second or two, so a page rendered by the
@@ -6445,9 +6443,10 @@ function createSharePictureHandler(limits: SharePictureLimits): Handler {
  * would never see it. Uncached, the same race costs one request. It also
  * keeps a reverted build's assets from being refused by an hour-old 404.
  */
-const FINGERPRINTED_ASSET = /^\/static\/[a-z0-9-]+\.[0-9a-z]+\.(?:js|css|svg)$/;
-
-const staticDir: Handler = ({ url, site }) => {
+function staticDir(
+  { url, site }: RequestContext,
+  archive: AssetArchive | null
+): Response | Promise<Response> {
   const subPath = url.pathname.replace(/^\/static\//, "");
   const filePath = path.join(STATIC_DIR, subPath);
   try {
@@ -6462,10 +6461,13 @@ const staticDir: Handler = ({ url, site }) => {
     logError(`Error serving static file ${filePath}`, err);
   }
   if (FINGERPRINTED_ASSET.test(url.pathname)) {
+    // A previous build's name: a page that build rendered may still be open.
+    const kept = archive?.find(url.pathname);
+    if (kept) return text(Bun.file(kept.file), kept.contentType, { cache: CACHE.year });
     return text("Not found", "text/plain", { status: 404, cache: CACHE.noStore });
   }
   return notFound(site);
-};
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Route table + dispatch
@@ -6568,8 +6570,13 @@ const NOT_A_HOST = /[^A-Za-z0-9\-._~!$&'()*+,;=%:[\]]/;
 
 export function createApp(
   db: Database,
-  opts: { crawlerDns?: CrawlerDns; sharePictures?: Partial<SharePictureLimits> } = {}
+  opts: {
+    crawlerDns?: CrawlerDns;
+    sharePictures?: Partial<SharePictureLimits>;
+    assetArchive?: AssetArchive | null;
+  } = {}
 ): App {
+  const archive = opts.assetArchive === undefined ? assetArchive : opts.assetArchive;
   const sharePicture = createSharePictureHandler({
     ...SHARE_PICTURE_LIMITS,
     ...opts.sharePictures,
@@ -6586,7 +6593,7 @@ export function createApp(
           ? recentCheckAnswer(ctx)
           : ctx.url.pathname.startsWith("/static/share/")
             ? sharePicture(ctx)
-            : staticDir(ctx);
+            : staticDir(ctx, archive);
   const getReader = createReaderFactory(db);
   const verifiedCrawler = createCrawlerVerifier(opts.crawlerDns);
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
