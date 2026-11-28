@@ -59,6 +59,7 @@ import {
 } from "../components/ui/format";
 import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
 import type { AirlineTypeCount } from "../database/airline-count";
+import type { LoggedDepartureRow } from "../database/assignment-log";
 import type {
   FleetRosterEntry,
   GuideMark,
@@ -2348,9 +2349,7 @@ function confirmedEdgesOn(reader: ScopedReader, date: string): Map<string, "expr
   const times = new Set<number>();
   for (const r of rows) {
     if (rowEvidence(r) !== "verified") continue;
-    if (!matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)) {
-      continue;
-    }
+    if (!onLocalDate(date, window, r)) continue;
     confirmable.add(r);
     times.add(r.departure_time);
   }
@@ -2405,7 +2404,7 @@ function confirmSightings(
   out: Map<string, "express" | "mainline">
 ): void {
   const onDate = (r: { departure_airport: string; departure_time: number }) =>
-    matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
+    onLocalDate(date, window, r);
   const slotOf = (fn: string) => slotFlightKey(fn, reader.scope) ?? fn;
   const keyed = reader
     .getListedSightingsBetween(window.queryStart, window.queryEnd)
@@ -2428,12 +2427,25 @@ function confirmSightings(
     if (sighted.has(slot) && !scheduled.has(slot) && onDate(r)) scheduled.add(slot);
   }
   const open = keyed.filter((k) => !scheduled.has(k.slot));
+  let logged: Map<string, LoggedDepartureRow[]> | undefined;
+  const loggedOn = () => {
+    if (!logged) {
+      logged = new Map();
+      for (const r of reader.getLoggedDepartures(date)) {
+        const key = `${r.flight_number}|${r.departure_airport}`;
+        const rows = logged.get(key);
+        if (rows) rows.push(r);
+        else logged.set(key, [r]);
+      }
+    }
+    return logged;
+  };
   for (const { row, slot } of newestPerDeparture(
     open,
     (k) => `${k.slot}|${k.row.departure_airport}`
   )) {
     if (rowEvidence(row) !== "verified") continue;
-    if (!newestOnDeparture(reader, date, row)) continue;
+    if (!newestOnDeparture(reader, date, row, loggedOn)) continue;
     out.set(
       edgeKey(slot, row.departure_airport, row.arrival_airport),
       row.fleet === "mainline" ? "mainline" : "express"
@@ -2447,12 +2459,17 @@ function confirmSightings(
  * rival under the sighting's own spelling, and a tail read's row is never a
  * sighting: a lookup logs AS3442, while a tail read keeps SkyWest-for-Alaska
  * as SKW3442, so a newer tail there must still outrank the older sighting.
- * Only a few verified sightings reach this a day, each one indexed read.
+ *
+ * The day's log is read once (`logged`, by spelling and departure airport,
+ * newest first) rather than once per sighting. Two tails tied on both stamps
+ * have no order of their own, so a tie asks getLoggedAircraft, whose order
+ * decided it before.
  */
 function newestOnDeparture(
   reader: ScopedReader,
   date: string,
-  row: Pick<Flight, "airline" | "flight_number" | "departure_airport" | "tail_number">
+  row: Pick<Flight, "airline" | "flight_number" | "departure_airport" | "tail_number">,
+  logged: () => ReadonlyMap<string, readonly LoggedDepartureRow[]>
 ): boolean {
   const cfg = AIRLINES[row.airline];
   const digits = flightDigits(row.flight_number);
@@ -2460,9 +2477,32 @@ function newestOnDeparture(
     cfg && digits >= 0
       ? buildAirlineFlightNumberVariants(cfg, `${cfg.iata}${digits}`)
       : [row.flight_number];
-  const newest = reader
-    .getLoggedAircraft(variants, date)
-    .find((a) => a.departure_airport === row.departure_airport);
+  let newest: LoggedDepartureRow | undefined;
+  let tied = false;
+  for (const v of variants) {
+    for (const r of logged().get(`${v}|${row.departure_airport}`) ?? []) {
+      if (
+        !newest ||
+        r.last_seen > newest.last_seen ||
+        (r.last_seen === newest.last_seen && r.first_seen > newest.first_seen)
+      ) {
+        newest = r;
+        tied = false;
+      } else if (
+        r.last_seen === newest.last_seen &&
+        r.first_seen === newest.first_seen &&
+        r.tail_number !== newest.tail_number
+      ) {
+        tied = true;
+      }
+    }
+  }
+  if (tied) {
+    const first = reader
+      .getLoggedAircraft(variants, date)
+      .find((a) => a.departure_airport === row.departure_airport);
+    return !first || first.tail_number === row.tail_number;
+  }
   return !newest || newest.tail_number === row.tail_number;
 }
 
@@ -2487,6 +2527,31 @@ const weekdayOf = (date: string): string => {
   }
   return name;
 };
+
+const localDates = new Map<string, string>();
+/**
+ * matchesLocalDate, with each departure's local date at its airport worked
+ * out once: the confirmed tier asks it of every row of a two-day window, twice
+ * a dated plan.
+ */
+function onLocalDate(
+  date: string,
+  window: { start: number; end: number },
+  r: { departure_airport: string; departure_time: number }
+): boolean {
+  const zone = airportTimezone(r.departure_airport);
+  if (!zone) {
+    return matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
+  }
+  const key = `${zone}|${r.departure_time}`;
+  let local = localDates.get(key);
+  if (local === undefined) {
+    if (localDates.size >= 100_000) localDates.clear();
+    local = localDateISO(r.departure_time, zone);
+    localDates.set(key, local);
+  }
+  return local === date;
+}
 
 const departureClocks = new Map<string, { date: string; minutes: number }>();
 /** The local date and minutes after midnight of a departure at its airport. */

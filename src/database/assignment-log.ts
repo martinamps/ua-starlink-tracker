@@ -531,6 +531,38 @@ export function getLoggedAircraft(
   });
 }
 
+/** One logged tail on a departure, as getLoggedAircraft ranks them. */
+export interface LoggedDepartureRow {
+  flight_number: string;
+  departure_airport: string;
+  tail_number: string;
+  last_seen: number;
+  first_seen: number;
+}
+
+/**
+ * Every printable tail logged on any flight on one local date, newest first
+ * (getLoggedAircraft's order). The planner's confirmed tier checks each of a
+ * day's sightings for a newer rival, and one read of the day serves them all
+ * where one getLoggedAircraft per sighting was most of a dated plan.
+ */
+export function getLoggedDepartures(
+  db: Database,
+  airlines: readonly string[],
+  depDate: string
+): LoggedDepartureRow[] {
+  const a = airlineIn(airlines, "l.airline");
+  const rows = db
+    .query(
+      `SELECT l.flight_number, l.departure_airport, l.tail_number, l.last_seen, l.first_seen
+       FROM flight_assignment_log l
+       WHERE ${a.sql} AND l.dep_date = ?
+       ORDER BY l.last_seen DESC, l.first_seen DESC`
+    )
+    .all(...a.params, depDate) as LoggedDepartureRow[];
+  return rows.filter(printable);
+}
+
 /**
  * Listed tails seen on the flight since the flight updater last read that
  * tail's schedule, shaped as the schedule rows they stand in for. A listed
