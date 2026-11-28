@@ -4,7 +4,7 @@ import {
   type AnswerContext,
   CALENDAR_OFFER_ID,
   type FlightAnswer,
-  answerTails,
+  answerShown,
   calendarOffered,
   datePassed,
   renderFlightAnswer,
@@ -252,12 +252,7 @@ export default function CheckFlightPage({
   // (src/client/recent-checks.ts): only for an answer worth coming back to.
   const seen =
     dated && ctx && answer && !dated.body.error && !datePassed(ctx)
-      ? {
-          tone: answer.tone,
-          firm: answer.firm,
-          tails: answerTails(dated.body),
-          headline: answer.headline,
-        }
+      ? answerShown(answer, dated.body)
       : null;
 
   const accuracyCopy =

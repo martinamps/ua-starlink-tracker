@@ -16,11 +16,13 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
 import {
+  FRESH_SEC,
   RECENT_KEY,
   RECENT_MAX,
   type RecentCheck,
   type RecentStore,
   type RowAnswer,
+  type RowRead,
   type Seen,
   airlineAnswerHtml,
   changeNote,
@@ -29,6 +31,8 @@ import {
   clearChecks,
   currentChecks,
   forgetCheck,
+  freshAnswer,
+  hubAnswerHtml,
   hubSeen,
   hubWords,
   inShowOrder,
@@ -38,8 +42,10 @@ import {
   recentSectionHtml,
   rememberCheck,
   rememberHubCheck,
+  rememberRead,
   writeRecent,
 } from "../src/client/recent-checks";
+import { flightLabel, labelPhrase, probTier } from "../src/components/ui/format";
 import { COUNTERS, metrics, normalizeRecentAction } from "../src/observability/metrics";
 import { createApp } from "../src/server/app";
 import { RECENT_PREFIX, RECENT_TAP_PATH } from "../src/server/recent-checks";
@@ -290,10 +296,80 @@ describe("the change note", () => {
     }
   });
 
-  test("a forecast that drifts is no change", () => {
-    expect(changeNote(forecast("likely"), forecast("maybe"), WHEN)).toBeNull();
-    expect(changeNote(forecast("maybe"), forecast("unlikely"), WHEN)).toBeNull();
-    expect(changeNote(forecast("unknown"), forecast("likely"), WHEN)).toBeNull();
+  const odds = (tone: string, figure: string): Seen => ({ ...forecast(tone), odds: figure });
+
+  test("odds that drift within a tier are no change", () => {
+    expect(changeNote(odds("likely", "74%"), odds("likely", "81%"), WHEN)).toBeNull();
+    expect(changeNote(odds("unlikely", "12%"), odds("unlikely", "21%"), WHEN)).toBeNull();
+    expect(changeNote(odds("maybe", "52%"), odds("maybe", "43%"), WHEN)).toBeNull();
+    // "Not sure yet" either side is no answer to compare.
+    expect(changeNote(forecast("unknown"), odds("likely", "74%"), WHEN)).toBeNull();
+    expect(changeNote(odds("likely", "74%"), forecast("unknown"), WHEN)).toBeNull();
+  });
+
+  test("odds that moved ten points, or across a cut, say what they were", () => {
+    expect(changeNote(odds("likely", "74%"), odds("unlikely", "31%"), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the odds were about 74%."
+    );
+    expect(changeNote(odds("likely", "84%"), odds("likely", "74%"), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the odds were about 84%."
+    );
+    // 71% to 68% is three points, and across the likely cut.
+    expect(changeNote(odds("likely", "71%"), odds("maybe", "68%"), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the odds were about 71%."
+    );
+    expect(changeNote(odds("unlikely", "<1%"), odds("unlikely", "14%"), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the odds were under 1%."
+    );
+    expect(changeNote(odds("likely", ">99%"), odds("likely", "88%"), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the odds were over 99%."
+    );
+  });
+
+  test("a tier that flips while the printed figure stays is no change", () => {
+    // An unseen flight (n=0) prints a floored share; its tier rounds.
+    const unseen = (p: number) => odds(probTier(p), flightLabel(p, 0));
+    for (const [was, now] of [
+      [0.695, 0.692],
+      [0.699, 0.691],
+      [0.397, 0.392],
+      [0.3999, 0.39],
+    ]) {
+      expect(unseen(was).tone).not.toBe(unseen(now).tone);
+      expect(unseen(was).odds).toBe(unseen(now).odds);
+      expect(changeNote(unseen(was), unseen(now), WHEN)).toBeNull();
+      expect(changeNote(unseen(now), unseen(was), WHEN)).toBeNull();
+    }
+    // A figure that did move across the cut still says so.
+    expect(changeNote(unseen(0.701), unseen(0.692), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the odds were about 70%."
+    );
+    expect(changeNote(unseen(0.401), unseen(0.392), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the odds were about 40%."
+    );
+  });
+
+  test("a row kept before figures were names the tier it had", () => {
+    expect(changeNote(forecast("likely"), odds("maybe", "55%"), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the forecast was likely."
+    );
+    expect(changeNote(forecast("unlikely"), forecast("likely"), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the forecast was unlikely."
+    );
+    expect(changeNote(forecast("likely"), odds("likely", "90%"), WHEN)).toBeNull();
+    // A type rule's yes, no longer a yes.
+    expect(changeNote(forecast("yes"), odds("maybe", "48%"), WHEN)).toBe(
+      "Changed since you checked on Nov 25: the answer was a yes."
+    );
+  });
+
+  test("a forecast that firmed up says the odds it had", () => {
+    expect(changeNote(odds("maybe", "48%"), yes(), WHEN)).toBe(
+      "New since you checked on Nov 25: an aircraft is assigned; the odds were about 48%."
+    );
+    expect(
+      changeNote({ tone: "open", firm: false, tails: [], odds: "≥40%" }, no(), WHEN, true)
+    ).toBe("New since you checked on Nov 25: a firm answer; the odds were at least 40%.");
   });
 
   test("a firm answer that is missing today is no change: a failed lookup reads the same", () => {
@@ -397,22 +473,39 @@ describe("the hub's answers", () => {
     const body = { hasStarlink: true, flights: [{ tail_number: "N37529" }] };
     expect(rememberHubCheck(store, form("tracked"), asked(), body, now)).toBe(true);
     expect(readRecent(store)).toEqual([
-      { f: "UA1932", d: SOON, h: "Starlink ·  · ", seen: yes(), at: now },
+      { f: "UA1932", d: SOON, h: "Starlink", c: "text-success", seen: yes(), at: now },
     ]);
   });
 
-  test("an answer's words are kept as a reader sees them, with the airline it named", () => {
+  test("an answer's row words are its label and airline; the sentence is the airline page's", () => {
     const body = {
       hasStarlink: false,
       airline: "United Airlines",
       reason: `Tail N4VIA isn't on our "Starlink" list & <b>never</b> was`,
     };
     expect(hubWords(body)).toEqual({
-      h: `No Starlink · United Airlines · Tail N4VIA isn't on our "Starlink" list & <b>never</b> was`,
+      h: "No Starlink · United Airlines",
       k: "United Airlines",
+      c: "text-muted",
     });
-    // Too long to keep is not kept, and never cut: cut words would hold the wrong room.
-    expect(hubWords({ hasStarlink: false, reason: "x".repeat(400) }).h).toBeUndefined();
+    expect(hubWords({ probability: 0.42, basis: {}, airline: "Alaska Airlines" })).toEqual({
+      h: "≥42% Starlink · Alaska Airlines",
+      k: "Alaska Airlines",
+      c: "text-accent",
+    });
+    expect(
+      hubWords({
+        hasStarlink: null,
+        airline: "Qatar Airways",
+        airline_statement: { answer: "likely", source: { label: "x", url: "https://x" } },
+      })
+    ).toEqual({ h: "Likely yes · Qatar Airways", k: "Qatar Airways", c: "text-accent" });
+    // An airline name too long to be one is neither printed nor kept.
+    expect(hubWords({ hasStarlink: true, airline: "x".repeat(41) })).toEqual({
+      h: "Starlink",
+      k: undefined,
+      c: "text-success",
+    });
     const store = memoryStore();
     rememberHubCheck(store, form(), asked(), body, now);
     expect(readRecent(store)[0]).toMatchObject(hubWords(body));
@@ -453,6 +546,18 @@ describe("the hub's answers", () => {
     ];
     expect(hubSeen({ hasStarlink: true, flights }).tails).toEqual(["N1", "N2"]);
     expect(hubSeen({ hasStarlink: true, flights: "x" }).tails).toEqual([]);
+  });
+
+  test("an open hub answer keeps the figure its label printed; a firm one keeps none", () => {
+    expect(hubSeen({ hasStarlink: null, probability: 0.42, basis: {} })).toEqual({
+      tone: "open",
+      firm: false,
+      tails: [],
+      odds: "≥42%",
+    });
+    expect(hubSeen({ hasStarlink: null, probability: 0.315 })).toMatchObject({ odds: "32%" });
+    expect(hubSeen({ hasStarlink: true, probability: 0.9 })).not.toHaveProperty("odds");
+    expect(hubSeen({ hasStarlink: null, confidence: "type" })).not.toHaveProperty("odds");
   });
 });
 
@@ -510,7 +615,8 @@ describe("the list's markup", () => {
     expect(html).toContain(
       '<span aria-hidden="true" class="invisible block">No Starlink · United Airlines · &lt;b&gt;<a href='
     );
-    expect(html).toContain("See UA500 on ua.example →");
+    expect(html).toContain('aria-label="Full answer for UA500 on ua.example"');
+    expect(html).toContain(">Full answer →</a>");
     // An airline the page has no site for holds no link, whatever the list says.
     expect(recentRowHtml({ ...kept, k: "Nobody" }, now, true, pages)).not.toContain("<a ");
   });
@@ -535,6 +641,163 @@ describe("the list's markup", () => {
     expect(airlineAnswerHtml({ ...answer, tone: "no" }, null)).not.toContain("data-recent-note");
     // A tone this build doesn't know prints in the plain colour, not as a class name.
     expect(airlineAnswerHtml({ ...answer, tone: "text-danger" }, null)).toContain("text-primary");
+  });
+});
+
+describe("rows drawn without asking again", () => {
+  const key = (c: RecentCheck) => checkKey(c);
+  const shown = (f: string, at: number, extra: Partial<RecentCheck> = {}) =>
+    ({ ...check(f), h: `Yes — ${f} has Starlink`, at, ...extra }) as RecentCheck;
+
+  test("a flight its page showed minutes ago is drawn from what the page said", () => {
+    const c = shown("UA1932", now - 120);
+    expect(freshAnswer(c, now, false)).toEqual({ h: c.h, seen: c.seen, at: c.at });
+    // Past the window, or with no words kept, the row asks.
+    expect(freshAnswer(shown("UA1932", now - FRESH_SEC), now, false)).toBeNull();
+    expect(freshAnswer({ ...check("UA1932"), at: now } as RecentCheck, now, false)).toBeNull();
+    // A clock that ran backwards is no fresh answer.
+    expect(freshAnswer(shown("UA1932", now + 600), now, false)).toBeNull();
+  });
+
+  test("the list's own last read is used while fresh, and never one older than the page's", () => {
+    const read: RowRead = { h: "Yes — newer", seen: yes("N27539"), at: now - 60 };
+    expect(freshAnswer(shown("UA1932", now - 3 * HOUR, { r: read }), now, false)).toEqual(read);
+    const stale = { ...read, at: now - 2 * HOUR };
+    expect(freshAnswer(shown("UA1932", now - 3 * HOUR, { r: stale }), now, false)).toBeNull();
+    // Checked on its page after the list read it: the page's answer is the newer one.
+    const c = shown("UA1932", now - 30, { r: { ...read, at: now - 90 } });
+    expect(freshAnswer(c, now, false)?.h).toBe(c.h);
+  });
+
+  test("a hub row needs its label's colour, which rows kept before colours lack", () => {
+    const hubRow = shown("UA1932", now - 60, { h: "Starlink · United Airlines" });
+    expect(freshAnswer(hubRow, now, true)).toBeNull();
+    expect(freshAnswer({ ...hubRow, c: "text-success" }, now, true)?.c).toBe("text-success");
+  });
+
+  test("a read is kept beside the row and leaves the note's baseline alone", () => {
+    const store = memoryStore();
+    rememberCheck(store, check("UA1932"), now - DAY);
+    const before = readRecent(store)[0];
+    const read: RowRead = { h: "No — UA1932", seen: no(), at: now };
+    rememberRead(store, key(before), read);
+    const after = readRecent(store)[0];
+    expect(after.r).toEqual(read);
+    expect(after.seen).toEqual(before.seen);
+    expect(after.at).toBe(before.at);
+    // The note still compares with what the page said.
+    expect(changeNote(after.seen, read.seen, "on Nov 25")).toContain("the answer was a yes");
+    // Checking the flight again starts over from that check.
+    rememberCheck(store, check("UA1932"), now);
+    expect(readRecent(store)[0].r).toBeUndefined();
+  });
+
+  test("a read for a row that is gone, or off-shape, writes nothing", () => {
+    const store = memoryStore();
+    rememberCheck(store, check("UA1932"), now);
+    const kept = store.data.get(RECENT_KEY);
+    rememberRead(store, "UA9|x", { h: "x", seen: yes(), at: now });
+    rememberRead(store, key(readRecent(store)[0]), {
+      h: "x",
+      seen: { tone: "<b>", firm: true, tails: [] },
+      at: now,
+    });
+    expect(store.data.get(RECENT_KEY)).toBe(kept);
+    expect(() => rememberRead(deadStore, "UA1932", { h: "x", seen: yes(), at: now })).not.toThrow();
+  });
+});
+
+describe("saved values from before, and saved values that are hostile", () => {
+  test("a list written by the first release reads as it was", () => {
+    // The shape #295 wrote: no figure, no colour, no read.
+    const old = JSON.stringify([
+      { f: "UA1932", d: SOON, h: "Yes — UA1932 has Starlink", seen: yes(), at: now - DAY },
+      {
+        f: "UA500",
+        d: SOON,
+        h: "No Starlink · United Airlines · Tail N4VIA is not on our list",
+        k: "United Airlines",
+        seen: { tone: "open", firm: false, tails: [] },
+        at: now - DAY,
+      },
+      { f: "UA77", d: SOON, seen: forecast("likely"), at: now - DAY },
+    ]);
+    const rows = readRecent(memoryStore(old));
+    expect(rows.map((c) => c.f)).toEqual(["UA1932", "UA500", "UA77"]);
+    expect(rows[2].seen).toEqual(forecast("likely"));
+    // An old row is not fresh on the hub (no colour), so it asks.
+    expect(freshAnswer({ ...rows[1], at: now }, now, true)).toBeNull();
+  });
+
+  test("a hostile figure or colour drops its row; a hostile read drops the read only", () => {
+    const good = { f: "UA1932", d: SOON, seen: yes(), at: now };
+    const stored = JSON.stringify([
+      { ...good, f: "UA1", seen: { ...forecast(), odds: "<img src=x>" } },
+      { ...good, f: "UA2", seen: { ...forecast(), odds: 74 } },
+      { ...good, f: "UA3", c: "text-[red] onload" },
+      { ...good, f: "UA4", r: { h: "<b>", seen: yes(), c: "javascript:", at: now } },
+      { ...good, f: "UA5", r: "x" },
+      { ...good, f: "UA6", r: { h: "x".repeat(401), seen: yes(), at: now } },
+      { ...good, f: "UA7", r: { h: "ok", seen: yes(), at: Number.NaN } },
+    ]);
+    const rows = readRecent(memoryStore(stored));
+    expect(rows.map((c) => c.f)).toEqual(["UA4", "UA5", "UA6", "UA7"]);
+    for (const c of rows) expect(c.r).toBeUndefined();
+  });
+
+  test("a hub answer prints its words escaped, its colour only from the fixed set", () => {
+    const html = hubAnswerHtml(
+      { h: '<img src=x onerror="alert(1)"> · <b>Air</b>', c: "text-[red]" as never },
+      "Changed <x>",
+      ""
+    );
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<b>");
+    expect(html).not.toContain("text-[red]");
+    expect(html).toContain('<span class="text-muted">&lt;img');
+    expect(html).toContain("Changed &lt;x&gt;");
+  });
+});
+
+describe("a hub row is two lines on a phone", () => {
+  const pages = {
+    "United Airlines": { url: "https://ua.example/check-flight", site: "ua.example" },
+  };
+  test("the label in its colour, the airline, then the link to the airline's page", () => {
+    const link = '<a data-recent-open href="https://ua.example/x" class="mt-1 block py-2">See</a>';
+    const html = hubAnswerHtml(
+      { h: "≥42% Starlink · United Airlines", c: "text-accent" },
+      null,
+      link
+    );
+    expect(html).toBe(
+      `<span class="text-accent">≥42% Starlink</span><span class="text-secondary"> · United Airlines</span>${link}`
+    );
+    // The waiting row holds the same two lines' room.
+    const row = recentRowHtml(
+      {
+        ...check("UA500"),
+        h: "≥42% Starlink · United Airlines",
+        k: "United Airlines",
+        c: "text-accent",
+        at: now,
+      } as RecentCheck,
+      now,
+      true,
+      pages
+    );
+    expect(row).toContain(">≥42% Starlink · United Airlines<a href=");
+    expect(row).toContain(">Full answer →</a>");
+  });
+});
+
+describe("the row's answer carries its figure", () => {
+  test("labelPhrase reads a printed figure back in words", () => {
+    expect(labelPhrase("74%")).toBe("about 74%");
+    expect(labelPhrase("≥40%")).toBe("at least 40%");
+    expect(labelPhrase("<1%")).toBe("under 1%");
+    expect(labelPhrase(">99%")).toBe("over 99%");
+    expect(labelPhrase("100%")).toBe("100%");
   });
 });
 
@@ -644,6 +907,15 @@ describe("a row's answer", () => {
     expect(answer.firm).toBe(false);
     expect(answer.tails).toEqual([]);
     expect(answer.passed).toBe(false);
+    // A figure is kept only as the headline prints it, and only for odds.
+    expect(answer.odds).toMatch(/^(?:[<>]?\d{1,3})%$/);
+    expect(["likely", "maybe", "unlikely"]).toContain(answer.tone);
+    expect(answer.headline.toLowerCase()).toContain(labelPhrase(answer.odds ?? "").toLowerCase());
+    const page = await pageHtml(UA, `/check-flight/UA1932/${LATER}`);
+    const config = JSON.parse(
+      page.match(/id="check-flight-config"[^>]*>(.*?)<\/script>/s)?.[1] ?? "{}"
+    );
+    expect(config.seen.odds).toBe(answer.odds);
   });
 
   test("a date already over says so, and its page tells the browser to keep nothing", async () => {
