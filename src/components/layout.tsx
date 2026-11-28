@@ -8,6 +8,7 @@ import { AIRLINES, SITES, type SiteConfig, liveAirlineSites } from "../airlines/
 import { type ClientScript, clientScriptSrc } from "../client/bundle";
 import { EYEBROW_TEXT, PANEL_PAD, SURFACE } from "./ui/box-classes";
 import { fmt } from "./ui/format";
+import { SLASHED_AIRPORT_WORDS } from "./ui/slashed-airport-words";
 
 /** A page's browser bundle, content-hashed; nothing when it isn't built. */
 export function ClientScriptTag({ name }: { name: ClientScript }) {
@@ -105,28 +106,88 @@ export const PANEL = `${SURFACE} p-5`;
 export const SECTION = "relative mx-auto mb-8 w-full max-w-3xl";
 export const SECTION_WIDE = "relative mx-auto mb-8 w-full max-w-6xl";
 // wrap-break-word is the last resort for a word wider than a phone's column;
-// headingWords offers the better break first.
+// headingWords offers the better break first, in an airport's name.
 const H1 =
   "font-display text-3xl sm:text-4xl tracking-tight text-primary text-balance wrap-break-word";
 export const H2 = "font-display text-xl text-primary wrap-break-word";
 
+// Longest first, so "Wilkes-Barre/Scranton" is never matched by a shorter
+// word that it ends with. A match stands alone: not inside a longer word or
+// a path.
+const SLASHED_AIRPORT_WORD = new RegExp(
+  `(?<![\\p{L}\\p{N}/-])(?:${[...SLASHED_AIRPORT_WORDS]
+    .sort((a, b) => b.length - a.length)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|")})(?![\\p{L}\\p{N}/-])`,
+  "gu"
+);
+
+/** Where a browser may break a line by itself: at a space, and after a hyphen. */
+const breaksBefore = (text: string, i: number) => text[i] === " " || text[i - 1] === "-";
+
 /**
- * A heading's words, with a break offered after a slash that joins two names.
- * A browser breaks after a hyphen by itself but keeps "Carbondale/Murphysboro"
- * whole, and at the display size that one word is wider than a 390px phone's
- * column. Only a slash between letters: "24/7" and a path stay as they are.
+ * A heading's words, with a break inside a slashed airport name that is wider
+ * than the heading's column. A browser breaks after a hyphen by itself but
+ * keeps "Carbondale/Murphysboro" whole, and at the display size that one word
+ * is wider than a 390px phone's column.
+ *
+ * The run a browser would not break, the name with whatever is tied to it
+ * ("Arcata/Eureka\u00a0(ACV)", "Barre/Scranton" after "Wilkes-"), sits in a
+ * box of its own. The box moves to the next line whole, as the unbroken run
+ * did, so "Seattle/Tacoma" is split nowhere it fitted before, and a code
+ * stays tied to its city; only a box wider than the column wraps inside, at
+ * the slash. Only the table's own names get one: "N/A", "and/or" and "24/7"
+ * stay as they are.
+ *
+ * `label` is the heading's name when a break was put in: a browser hands a
+ * screen reader the two halves with a space between them ("Carbondale/
+ * Murphysboro"), and the label says the name as written.
  */
-function headingWords(title: React.ReactNode): React.ReactNode {
-  if (typeof title !== "string" || !title.includes("/")) return title;
-  const parts = title.split(/(?<=\p{L}\/)(?=\p{L})/u);
-  if (parts.length === 1) return title;
-  return parts.map((part, i) => (
-    // biome-ignore lint/suspicious/noArrayIndexKey: the parts of one fixed string, never reordered
-    <React.Fragment key={i}>
-      {i > 0 && <wbr />}
-      {part}
-    </React.Fragment>
-  ));
+function headingWords(title: React.ReactNode): { words: React.ReactNode; label?: string } {
+  if (typeof title !== "string" || !title.includes("/")) return { words: title };
+  // Where a break is offered: after each slash of an airport's name.
+  const cuts: number[] = [];
+  for (const match of title.matchAll(SLASHED_AIRPORT_WORD)) {
+    for (let i = match.index; i < match.index + match[0].length; i++) {
+      if (title[i] === "/") cuts.push(i + 1);
+    }
+  }
+  if (cuts.length === 0) return { words: title };
+  const words: React.ReactNode[] = [];
+  let done = 0;
+  for (let c = 0; c < cuts.length; ) {
+    const slash = cuts[c] - 1;
+    let start = slash;
+    while (start > done && !breaksBefore(title, start)) start--;
+    if (title[start] === " ") start++;
+    let end = slash + 1;
+    while (end < title.length && !breaksBefore(title, end)) end++;
+    // One box for the whole run, with every cut that falls in it: two names
+    // tied by an arrow or a no-break space share a run, and a box each
+    // printed the second name's end twice.
+    const halves: string[] = [];
+    let cut = start;
+    for (; c < cuts.length && cuts[c] <= end; c++) {
+      halves.push(title.slice(cut, cuts[c]));
+      cut = cuts[c];
+    }
+    halves.push(title.slice(cut, end));
+    words.push(
+      title.slice(done, start),
+      <span key={start} className="inline-block max-w-full">
+        {halves.map((half, k) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the halves of one fixed run, never reordered
+          <React.Fragment key={k}>
+            {k > 0 && <wbr />}
+            {half}
+          </React.Fragment>
+        ))}
+      </span>
+    );
+    done = end;
+  }
+  words.push(title.slice(done));
+  return { words, label: title };
 }
 
 type Box = React.HTMLAttributes<HTMLElement> & { as?: "div" | "section" | "nav" | "aside" };
@@ -176,9 +237,12 @@ export function SectionTitle({
   className = "",
   children,
 }: { className?: string; children: React.ReactNode }) {
+  const heading = headingWords(children);
   return (
     <>
-      <h2 className={`${H2} ${className}`}>{headingWords(children)}</h2>{" "}
+      <h2 className={`${H2} ${className}`} aria-label={heading.label}>
+        {heading.words}
+      </h2>{" "}
     </>
   );
 }
@@ -333,12 +397,15 @@ export function PageHeader({
   /** Anything that belongs to the header but isn't prose — a stat strip. */
   children?: React.ReactNode;
 }) {
+  const heading = headingWords(title);
   return (
     <>
       <header className="relative mx-auto w-full max-w-3xl pt-8 pb-6 text-center">
         {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
         {eyebrow && " "}
-        <h1 className={H1}>{headingWords(title)}</h1>{" "}
+        <h1 className={H1} aria-label={heading.label}>
+          {heading.words}
+        </h1>{" "}
         {dek && (
           <p className="mx-auto mt-2 max-w-2xl text-base text-secondary text-pretty">{dek}</p>
         )}{" "}

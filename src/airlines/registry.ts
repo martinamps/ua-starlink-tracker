@@ -371,6 +371,15 @@ export interface AirlineConfig {
   /** Poll non-equipped roster tails for flights with idle updater capacity, so
    * an assigned-but-unconfirmed tail can be named without a live lookup. */
   fleetFallbackFlights?: boolean;
+  /** No public surface reads this airline's upcoming_flights, so its listed
+   * tails leave the main queue and are each polled once per this many hours,
+   * spread over the lap, by getSlowLapTailDue. The lap is the airline's own:
+   * it does not lengthen as other fleets grow. A longer lap hands polls to the
+   * airlines people ask about and costs departures that are never recorded,
+   * because a poll only returns the legs FR24 lists at that moment. Remove it
+   * when the airline gets a per-flight surface
+   * (tests/flight-updater-schedule.test.ts refuses the combination). */
+  flightPollLapHours?: number;
   /** Anchored registration format for tails operated by this airline. Used to
    * reject sheet typos at ingest and gate cleanup scripts. Built by
    * tailPatterns() from the same body as tailScanPattern. */
@@ -841,6 +850,13 @@ const AIRLINE_DEFS = {
       [/787-?9/i, "B787", "787-9"],
     ],
     fleetFallbackFlights: true,
+    // Measured 27 Nov 2026 on 67 days of departure_log counts and 30 days of
+    // polls: FR24 lists most Air France short-haul legs 7 h or more before they
+    // leave and a long-haul leg about 3 h before, so a lap up to 8 h records
+    // within about 1% of what the 7.4 h main queue did; 10 h loses about 6%
+    // and 24 h over 40%. 7.8 and not 8: at three laps a day each tail would be
+    // polled at the same clock times every day and miss the same legs daily.
+    flightPollLapHours: 7.8,
     rollout: {
       status: "in_progress",
       statusLabel: "Mostly done",
