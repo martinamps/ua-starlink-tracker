@@ -3611,19 +3611,59 @@ function computeLeg(
   };
 }
 
+/** The pairs ("ORD-IAD") a flight number departed on in the leg window. */
+export function flownPairs(
+  reader: ScopedReader,
+  flightNumber: string,
+  nowSec = Math.floor(Date.now() / 1000)
+): string[] {
+  if (reader.scope === "ALL") return [];
+  const since = nowSec - LEG_WEIGHTING.windowDays * 86400;
+  const pairs = new Set<string>();
+  for (const l of legIndex(reader).legs.get(flightNumber) ?? []) {
+    if (l.departure_time <= nowSec && l.departure_time >= since) pairs.add(pairOf(l));
+  }
+  return [...pairs];
+}
+
 /**
- * One leg's odds wherever a leg is known: predictLeg, else the flight
- * number's own history. Scoped check-flight, the planner's edges and baseline,
- * and predict_route all price a leg through here, so they agree.
+ * The one pair a flight number has departed on in the leg window, or null
+ * when it flew several (a through flight, a number that changed routes) or
+ * none. Such a number's own odds and its leg's are the same question.
+ */
+function soleLeg(
+  reader: ScopedReader,
+  flightNumber: string,
+  nowSec?: number
+): { origin: string; destination: string } | null {
+  const pairs = flownPairs(reader, flightNumber, nowSec);
+  if (pairs.length !== 1) return null;
+  const [origin, destination] = pairs[0].split("-");
+  return { origin, destination };
+}
+
+/**
+ * A flight's odds, the one figure every surface prints for it. With a leg,
+ * that leg's own draws (predictLeg); with none, the leg of a number that flies
+ * only one, since the planner, the route board and predict_route price it
+ * there; else, and for a leg never logged, the number's own history.
+ * The flight page (dated and undated), /api/predict-flight, the planner's
+ * edges and baseline, predict_route and MCP predict_flight all ask here.
  */
 export function predictLegOrFlight(
   reader: ScopedReader,
   flightNumber: string,
-  origin: string,
-  destination: string,
+  origin?: string | null,
+  destination?: string | null,
   nowSec?: number
 ): Prediction {
-  const leg = predictLeg(reader, flightNumber, origin, destination, nowSec);
+  const pair =
+    origin && destination
+      ? { origin, destination }
+      : !origin && !destination
+        ? soleLeg(reader, flightNumber, nowSec)
+        : null;
+  const leg = pair ? predictLeg(reader, flightNumber, pair.origin, pair.destination, nowSec) : null;
   return leg ? legAsPrediction(leg) : predictFlight(reader, flightNumber);
 }
 

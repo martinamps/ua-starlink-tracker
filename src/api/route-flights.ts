@@ -41,6 +41,7 @@ import {
 import {
   USUAL_TIME_DAYS,
   carrierPrediction,
+  flownPairs,
   legAsPrediction,
   predictLeg,
   predictLegDraws,
@@ -122,6 +123,9 @@ export interface RouteFlightRow {
   /** Aircraft it flies on this leg, most frequent first. */
   aircraft_types: string[];
   assignment: RouteFlightAssignment | null;
+  /** The flight's answer page: dated with the board, and scoped to this leg
+   * when the number flies others, so the page prints the row's figure. */
+  page: string;
   /** The row in one line. */
   summary: string;
 }
@@ -267,6 +271,24 @@ function legOdds(
     odds_label: s.probability === null ? "Depends on aircraft" : approxShare(s.probability),
     aircraft: null,
   };
+}
+
+/** A row's answer page: the board's date, and this leg's scope for a number
+ * that also flies other pairs, whose undated page would print another figure. */
+function flightPage(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  origin: string,
+  destination: string,
+  date: string | null,
+  nowSec: number
+): string {
+  const base = `/check-flight/${flightNumber}${date ? `/${date}` : ""}`;
+  const here = `${origin}-${destination}`;
+  const elsewhere =
+    cfg.flightHistoryModel && flownPairs(reader, flightNumber, nowSec).some((p) => p !== here);
+  return elsewhere ? `${base}?${new URLSearchParams({ origin, destination })}` : base;
 }
 
 const tally = (draws: readonly LegDraw[]): RouteFlightTally => ({
@@ -432,6 +454,7 @@ export function buildRouteFlightBoard(
       odds_label: odds.odds_label,
       aircraft_types: odds.aircraft ?? loggedTypes(days),
       assignment,
+      page: flightPage(cfg, reader, fn, origin, destination, date, nowSec),
     };
     rows.push({
       ...row,

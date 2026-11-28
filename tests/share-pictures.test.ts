@@ -251,7 +251,10 @@ describe("each kind of page points at a picture of its own answer", () => {
     expect(pathOf(undated.og)).toStartWith("/static/share/flight/UA100.png?d=");
     expect(undated.twitter).toBe(undated.og);
     await expectPicture(await get(pathOf(undated.og)));
-    expect(undated.html.split("<body")[1]).toContain(undated.alt ?? "missing alt");
+    // The page can print the sentence mid-line ("On other dates: about 48%…").
+    expect(undated.html.split("<body")[1].toLowerCase()).toContain(
+      (undated.alt ?? "missing alt").toLowerCase()
+    );
 
     // Today or tomorrow, whichever date UA100's seeded departure falls on.
     const dates = [isoDay(now), isoDay(now + DAY)];

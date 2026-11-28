@@ -57,6 +57,7 @@ import {
   airlineOwnTypeSum,
 } from "../airlines/rollout-facts";
 import { retiredCodeNote, untrackedAirlineInfo } from "../airlines/untracked-airline";
+import { allConfirmed, shownJoint } from "../components/itinerary-odds";
 import {
   approxShare as approxShareLabel,
   pct as pctLabel,
@@ -91,7 +92,7 @@ import {
   noModelConfidence,
   planItinerary,
   planRoute,
-  predictFlight,
+  predictLegOrFlight,
   predictRoute,
   routeBaseline,
   storedUnreadAircraft,
@@ -1710,7 +1711,7 @@ async function toolPredictFlightStarlink(
     );
   }
 
-  const pred = predictFlight(reader, forPredict);
+  const pred = predictLegOrFlight(reader, forPredict);
   recordFlightLookup(
     "mcp",
     pred.n_observations > 0 ? "predicted" : "no_data",
@@ -1959,9 +1960,10 @@ function toolPlanStarlinkItinerary(
     }
     const fleetTag = inferSubfleet(cfg, leg.flight_number) === "mainline" ? " [Mainline]" : "";
     const dur = leg.duration_hours !== null ? ` ~${fmtHours(leg.duration_hours)}` : "";
-    const tag = leg.confirmed
-      ? "(assigned to a Starlink-equipped tail)"
-      : confidenceTag(leg.n_observations, leg.confidence);
+    // An assigned verified plane is the flight page's "Yes", not a percent.
+    const odds = leg.confirmed
+      ? "Yes, assigned to a verified Starlink aircraft (planes can be swapped)"
+      : `${listedPct(leg.probability, leg.n_observations)} ${confidenceTag(leg.n_observations, leg.confidence)}`;
     const day = leg.date && dateStr && leg.date !== dateStr ? ` on ${leg.date}` : "";
     const times = `${leg.typical_departure}${leg.typical_arrival ? `–${leg.typical_arrival}` : ""}${day}`;
     const offDay =
@@ -1973,14 +1975,16 @@ function toolPlanStarlinkItinerary(
       : leg.time_basis === undefined || leg.time_basis === "usual"
         ? `, usually ${times}${offDay}`
         : `, ${times} (${seenOnDays(leg.days_seen)}, not yet a usual time${offDay})`;
-    return `${leg.flight_number}${fleetTag} (${leg.route}${dur}${when}) — ${listedPct(leg.probability, leg.n_observations)} ${tag}`;
+    return `${leg.flight_number}${fleetTag} (${leg.route}${dur}${when}) — ${odds}`;
   };
 
   const renderItin = (it: (typeof itineraries)[number], i: number): string => {
     // One decimal so displayed ranking matches sort order. A nonstop with no
     // history is that flight's fleet share, and repeats its own answer.
     const unseen = unseenNonstop(it);
-    const jointPct = unseen ?? `${(it.joint_probability * 100).toFixed(1)}%`;
+    // From the legs as shown: a leg on an assigned verified plane reads Yes.
+    const jointPct =
+      unseen ?? (allConfirmed(it.legs) ? "Yes" : `${(shownJoint(it.legs) * 100).toFixed(1)}%`);
     const stops = it.via.length;
     const viaLabel =
       stops === 0 ? "DIRECT" : `via ${it.via.join("→")} (${stops} stop${stops > 1 ? "s" : ""})`;
@@ -2009,7 +2013,7 @@ function toolPlanStarlinkItinerary(
     } else if (stops === 0) {
       header = `${i + 1}. **${viaLabel}** — ${jointPct} Starlink${timeSummary}`;
     } else {
-      header = `${i + 1}. **${viaLabel}** — ${jointPct} joint${timeSummary}`;
+      header = `${i + 1}. **${viaLabel}** — ${jointPct === "Yes" ? "Yes on every leg" : `${jointPct} joint`}${timeSummary}`;
     }
 
     const legLines = it.legs
