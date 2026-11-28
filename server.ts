@@ -167,6 +167,23 @@ if (JOBS_ENABLED) {
     })
   );
 
+  // Each flight page's answer key, rebuilt with the page's own reads: the
+  // sitemap dates a flight by when its key last changed, so the date moves
+  // when the page says something new, not on every schedule refresh. A pass
+  // took ~17 s for 2,500 flights on a stand-in, in batches that yield.
+  track(
+    startJob({
+      name: "flight_answer_watch",
+      intervalMs: 60 * 60 * 1000,
+      initialDelayMs: 5 * 60 * 1000,
+      run: async () => {
+        for (const r of await app.recordFlightAnswers()) {
+          info(`Flight answers ${r.airline}: ${r.changed} changed of ${r.seen}`);
+        }
+      },
+    })
+  );
+
   // IndexNow: every source that lists a tail (sheet, discovery, verifiers,
   // fleet sync) writes the same table, so one look at it catches them all.
   // The timer only reads the database; a submission happens when a tail has

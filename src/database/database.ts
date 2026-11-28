@@ -106,6 +106,7 @@ import {
 } from "./discovery-cadence";
 import { type FirstReadRule, type FirstReadTakeBackReason, firstReadDecision } from "./first-read";
 import { fleetRejectReason, recordFleetRejection } from "./fleet-admission";
+import { FLIGHT_ANSWERS_DDL, flightAnswerChanges } from "./flight-answers";
 import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
 import { type TailModNote, getSheetModNotes, replaceSheetModNotes } from "./sheet-mod-notes";
 import { readSourceState } from "./source-health";
@@ -847,6 +848,7 @@ export function setupTables(db: Database) {
   dropRedundantIndexes(db);
   runOnce(db, "backfill_alaska_skywest_operator", () => backfillAlaskaSkyWestOperator(db));
   db.exec(ASSIGNMENT_LOG_DDL);
+  db.exec(FLIGHT_ANSWERS_DDL);
   // When a lookup last returned the row's departure without its tail
   // (withdrawUnreturnedSightings); cleared when the tail is seen there again.
   addColumn(db, "flight_assignment_log", "withdrawn_at", "INTEGER");
@@ -2623,9 +2625,9 @@ export interface SitemapFlight {
   /** Latest data touch (unix sec); 0 when unknown. Ages entries out, never a lastmod:
    * every schedule refresh moves it. */
   last_touched: number;
-  /** When the page's flight set last changed (unix sec): the newest assignment
-   * first logged for it or the newest route first seen on it; 0 when unknown —
-   * emit no <lastmod> rather than lie. */
+  /** When the page's answer last changed (unix sec): the newest recorded
+   * change of its answer key (flight-answers.ts) or the newest route first
+   * seen on it; 0 when unknown — emit no <lastmod> rather than lie. */
   changed_at: number;
 }
 
@@ -2738,12 +2740,10 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
       touch(r.flight_number, r.t);
     }
   }
-  const assigned = assignmentFirstSeen(
-    db,
-    airline,
-    (r) => permalinkFlightNumber(cfg, slotFlightKey(r.flight_number, r.airline) ?? r.flight_number),
-    nowSec
-  );
+  // Not the assignment log: it gains a row for every departure, so its
+  // newest first_seen moved nearly every flight's date every day.
+  const answered = flightAnswerChanges(db, airline);
+  const pastOnly = (t: number | undefined) => (t && t <= nowSec ? t : 0);
   const cutoff = sitemapStaleCutoff(db, airline);
   return [...latest]
     .filter(([fn, t]) => inUpcoming.has(fn) || !isSitemapStale(t, cutoff))
@@ -2751,7 +2751,7 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
       flight_number,
       last_touched,
       changed_at: Math.max(
-        assigned.get(flight_number) ?? 0,
+        pastOnly(answered.get(flight_number)),
         routeFirstSeen.get(flight_number) ?? 0
       ),
     }))

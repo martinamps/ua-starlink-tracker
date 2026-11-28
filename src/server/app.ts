@@ -88,6 +88,7 @@ import {
   hubContentAirlines,
   hubLookupAirlines,
   isGuideStale,
+  liveAirlineSites,
   programTypeOf,
   programmeExclusionCaveat,
   publicAirlines,
@@ -193,6 +194,7 @@ import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
+import { flightAnswerKey } from "../components/check-flight/answer-key";
 import { firmDescription } from "../components/check-flight/firm-lead";
 import ChromePage, {
   CHROME_OG_IMAGE_ALT,
@@ -221,6 +223,7 @@ import IsStarlinkFreePage, {
 } from "../components/is-starlink-free-page";
 import type { Link as PageLink } from "../components/layout";
 import { firstReadNote, firstReadTakenBackNote } from "../database/first-read";
+import { recordFlightAnswers } from "../database/flight-answers";
 import type { AirlineChartCount } from "../database/roster";
 import { reportedClause } from "../utils/reported-reason";
 import { type AssetArchive, FINGERPRINTED_ASSET, assetArchive } from "./asset-archive";
@@ -336,6 +339,7 @@ import { article } from "../utils/grammar";
 import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { createLogThrottle } from "../utils/log-throttle";
 import { error as logError, warn as logWarn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import { lruCache, memo, perOwner } from "../utils/ttl-cache";
 import {
   CACHE,
@@ -6478,6 +6482,9 @@ export interface App {
   /** Every value the `route` metric tag can take — the tag's cardinality budget. */
   routeTags: readonly string[];
   dispatch(req: Request, server?: SocketPeer): Promise<Response>;
+  /** Builds each sitemap flight page's answer key with the page's own reads
+   * and records the ones that changed: what the sitemap dates flights by. */
+  recordFlightAnswers(): Promise<Array<{ airline: AirlineCode; seen: number; changed: number }>>;
 }
 
 function finalizeResponse(res: Response, varyHost: boolean): Response {
@@ -6942,5 +6949,32 @@ export function createApp(
     ]),
   ];
 
-  return { routes, routeTags, dispatch };
+  const recordAnswers = async () => {
+    const out: Array<{ airline: AirlineCode; seen: number; changed: number }> = [];
+    for (const { site, airline: cfg } of liveAirlineSites()) {
+      if (!site.features.checkFlightPage) continue;
+      const reader = getReader(cfg.code);
+      const answers: Array<{ flight_number: string; answer: string }> = [];
+      const flights = reader.getSitemapFlights();
+      for (let i = 0; i < flights.length; i++) {
+        const fn = flights[i].flight_number;
+        try {
+          const facts = buildFlightFacts(reader, cfg, fn, buildFlightLookupVariants(cfg, fn));
+          answers.push({ flight_number: fn, answer: flightAnswerKey(facts) });
+        } catch (err) {
+          logError(`Flight answer key failed for ${fn}`, err);
+        }
+        // The reads are synchronous; yield so requests are served between batches.
+        if (i % ANSWER_BATCH === ANSWER_BATCH - 1) await sleep(0);
+      }
+      out.push({ airline: cfg.code, ...recordFlightAnswers(db, cfg.code, answers, unixNow()) });
+    }
+    return out;
+  };
+
+  return { routes, routeTags, dispatch, recordFlightAnswers: recordAnswers };
 }
+
+/** Flight pages keyed between yields to the event loop: about 7 ms each on
+ * a stand-in, so a batch holds requests back by well under 100 ms. */
+const ANSWER_BATCH = 10;
