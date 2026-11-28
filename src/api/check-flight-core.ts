@@ -37,6 +37,7 @@ import type {
   UnequippedAssignment,
 } from "../database/database";
 import { firstReadNote } from "../database/first-read";
+import { newestPerDeparture } from "../database/newest-row";
 import type { Scope, ScopedReader } from "../database/reader";
 import { rowEvidence } from "../database/sql/equipped";
 import { TRAILING_WINDOW_DAYS, TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
@@ -936,23 +937,18 @@ function assignmentRowsOn(
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
   const fetchEnd = window.queryEnd + THROUGH_SPAN_SEC;
 
-  // Query is last_updated DESC, so dedupe by departure_time keeps the
-  // most-recent row after an aircraft swap; then keep only the rows that fly
-  // on the queried date (legsOnFlightDate: its local date at the departure
-  // airport, or a through flight's later legs past local midnight).
-  const seen = new Set<number>();
+  // The newest row of each departure, so a swap answers from the new tail;
+  // then keep only the rows that fly on the queried date (legsOnFlightDate:
+  // its local date at the departure airport, or a through flight's later legs
+  // past local midnight).
   // Every carrier's unequipped rows can claim a pair for its own local date
   // (the earlier night of a daily through flight); only a community carrier's
   // are read for the answer.
   const unequippedHeld = reader.getUnequippedAssignments(variants, window.queryStart, fetchEnd);
   const unequippedAll = cfg.communitySource ? unequippedHeld : [];
-  const scheduledAll = reader
-    .getFlightAssignments(variants, window.queryStart, fetchEnd)
-    .filter((r) => {
-      if (seen.has(r.departure_time)) return false;
-      seen.add(r.departure_time);
-      return true;
-    });
+  const scheduledAll = newestPerDeparture(
+    reader.getFlightAssignments(variants, window.queryStart, fetchEnd)
+  );
   const onDate = legsOnFlightDate<DatedLeg>(
     date,
     [...scheduledAll, ...unequippedAll],

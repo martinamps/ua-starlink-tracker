@@ -74,7 +74,6 @@ import {
   withdrawUnreturnedSightings,
 } from "./assignment-log";
 import {
-  type ConfirmedEdge,
   type DepartureSlot,
   type DepartureSlotQuery,
   type DirectRouteEdge,
@@ -96,6 +95,7 @@ import {
   type RouteSummary,
   type SitemapFlight,
   type SitemapRoute,
+  type StarlinkEdgeRow,
   type SubfleetPenetration,
   type TypeProgress,
   type UnequippedAssignment,
@@ -115,7 +115,6 @@ import {
   getAirportDepartures,
   getCachedFlightRoutes,
   getConfirmedFleetTails,
-  getConfirmedStarlinkEdges,
   getDailyInstalls,
   getDepartureSlots,
   getDirectRouteEdge,
@@ -161,6 +160,7 @@ import {
   getSheetListedTails,
   getSitemapFlights,
   getSitemapRoutes,
+  getStarlinkEdgeRows,
   getStarlinkPlaneByTail,
   getStarlinkPlanes,
   getSubfleetPenetration,
@@ -321,7 +321,7 @@ export interface ScopedReader {
   getRouteGraphSightings(): RouteGraphSighting[];
   /** Every ORIG-DEST the carrier flies; null when no route census exists for the scope. */
   getServedRoutePairs(): ReadonlySet<string> | null;
-  getConfirmedStarlinkEdges(queryStart: number, queryEnd: number): ConfirmedEdge[];
+  getStarlinkEdgeRows(queryStart: number, queryEnd: number): StarlinkEdgeRow[];
   airlineServesAirports(prefixes: readonly string[], ...airports: string[]): boolean;
   getSubfleetPenetration(): Map<string, SubfleetPenetration>;
   getObservedDirectFlightNumbers(
@@ -657,7 +657,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
     getRouteGraphSightings: () => getRouteGraphSightings(db, airlines),
     getServedRoutePairs: () => getServedRoutePairs(db, airlines),
-    getConfirmedStarlinkEdges: (s, e) => getConfirmedStarlinkEdges(db, s, e, airlines),
+    getStarlinkEdgeRows: (s, e) => getStarlinkEdgeRows(db, s, e, airlines),
     airlineServesAirports: (px, ...aps) => airlineServesAirports(db, soleAirline(), px, ...aps),
     getSubfleetPenetration: () => getSubfleetPenetration(db, soleAirline()),
     getObservedDirectFlightNumbers: (px, o, d) =>
